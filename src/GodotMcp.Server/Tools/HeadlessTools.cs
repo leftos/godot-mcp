@@ -258,7 +258,9 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         }
 
         string relative = path.StartsWith("res://", StringComparison.Ordinal) ? path["res://".Length..] : path;
-        string full = Path.GetFullPath(Path.IsPathRooted(relative) ? relative : Path.Combine(projectDir, relative));
+        // A trailing separator names the folder itself (res://scenes/), so it is not part of the path.
+        string full = Path.GetFullPath(Path.IsPathRooted(relative) ? relative : Path.Combine(projectDir, relative))
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string inProject = Path.GetRelativePath(projectDir, full);
         if (IsOutside(inProject))
         {
@@ -277,11 +279,14 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             : throw new McpException($"{path} differs in case from the file on disk, {ResOf(projectDir, onDisk)}; use the exact case.");
     }
 
-    /// <summary>full, a path inside the project, with each segment that exists spelled as its directory lists it.</summary>
+    /// <summary>
+    /// full, a path inside the project, with each segment that exists spelled as its directory lists it. The project folder itself is
+    /// spelled by the relative path's "." (and by a trailing separator's empty segment), which no directory lists.
+    /// </summary>
     internal static string OnDiskCase(string projectDir, string full)
     {
         string current = projectDir;
-        foreach (string segment in Path.GetRelativePath(projectDir, full).Split(Path.DirectorySeparatorChar))
+        foreach (string segment in Path.GetRelativePath(projectDir, full).Split(Path.DirectorySeparatorChar).Where(part => part is not ("" or ".")))
         {
             string? listed = Directory.Exists(current)
                 ? Directory

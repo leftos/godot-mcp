@@ -1,6 +1,7 @@
 extends RefCounted
-## The headless scene edits operations.gd dispatches: create_scene, save_scene, and the edits that
-## open a scene, apply one change and save it: delete_nodes and the edits of one node
+## The headless scene edits operations.gd dispatches: create_scene, save_scene and stamp_uids, a
+## file-level op that opens no scene, and the edits that open a scene, apply one change and save
+## it: delete_nodes and the edits of one node
 ## (attach_script, duplicate_node, move_node, load_sprite) in scene_nodes.gd, add_node and the
 ## property ops (set_node_properties, and get_node_properties, a read) in scene_props.gd, the
 ## signal ops (get_node_signals, a read, connect_signal, disconnect_signal) in scene_signals.gd, and
@@ -10,8 +11,9 @@ extends RefCounted
 ## and changes nothing when it refuses; opening and saving are separate, so several edits can be
 ## applied to one open scene and saved once. context is {scene, build}: the res:// path of the
 ## scene the edit is applied to, and the prep's C# build state (params.build, which the server adds
-## to every request); an edit reads them there, never in its own params. A new op is registered in
-## EDIT_MODULES alone, and in READ_OPS too when it never saves. A scene that uses C# scripts is
+## to every request); an edit reads them there, never in its own params. A new op that opens a scene
+## is registered in EDIT_MODULES alone, and in READ_OPS too when it never saves; an op that opens no
+## scene is an arm of run. A scene that uses C# scripts is
 ## not saved while the build failed. batch_scene_operations applies several edits to one open
 ## scene and saves it once, export_mesh_library's writes deferred until after the save.
 
@@ -70,6 +72,8 @@ static func run(op: String, params: Dictionary) -> Dictionary:
 			return create_scene(params)
 		"save_scene":
 			return save_scene(params)
+		"stamp_uids":
+			return SceneFiles.stamp_uids(params)
 		"batch_scene_operations":
 			return batch_scene(params)
 	if op in READ_OPS:

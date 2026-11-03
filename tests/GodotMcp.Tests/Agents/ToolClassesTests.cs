@@ -36,6 +36,7 @@ public sealed class ToolClassesTests
     [InlineData("add_node", ToolClasses.EditScene)]
     [InlineData("delete_nodes", ToolClasses.EditScene)]
     [InlineData("batch_scene_operations", ToolClasses.EditScene)]
+    [InlineData("stamp_uids", ToolClasses.EditScene)]
     [InlineData("run_script", ToolClasses.EditLive)]
     [InlineData("call_method", ToolClasses.EditLive)]
     [InlineData("batch_drive", ToolClasses.EditLive)]

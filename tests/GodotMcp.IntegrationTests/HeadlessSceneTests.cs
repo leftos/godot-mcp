@@ -11,10 +11,11 @@ using ModelContextProtocol;
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
-/// The headless scene edits against the real Godot: create_scene, save_scene, delete_nodes, attach_script, duplicate_node and
-/// load_sprite on scenes the tests write into InputProbe and CsProbe copies (never into the tracked fixtures), read back with
-/// get_scene_file_tree and as text. The copies are never imported (but for load_sprite's new PNG), so Godot's uid cache is
-/// empty and every uid comes from the files themselves.
+/// The headless scene edits against the real Godot: create_scene, save_scene, stamp_uids, delete_nodes, attach_script,
+/// duplicate_node and load_sprite on scenes the tests write into InputProbe and CsProbe copies (never into the tracked fixtures),
+/// read back with get_scene_file_tree and as text. The copies are not imported (but for load_sprite's new PNG and stamp_uids'
+/// project, which imports its copy for its uid cache), so Godot's uid cache is empty and every uid comes from the files
+/// themselves.
 /// </summary>
 public sealed class HeadlessSceneTests : IAsyncDisposable
 {
@@ -250,6 +251,82 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal($"[gd_scene format=3 uid=\"{LevelUid}\"]", FirstLine(probe.Directory, "level.tscn"));
         AssertExtUid(probe.Directory, "level.tscn", EnemyUid, "res://enemy.tscn");
         Assert.Equal([".", "Boss", "Boss/Sprite", "Btn", "Box"], Paths(await TreeAsync(probe.Directory, "level.tscn", cancellation)));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task StampUidsGivesAHandWrittenSceneAndResourceTheirHeaderUid()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        // Imported first, so .godot/uid_cache.bin exists and the stamp records the uids there.
+        await RunGodotAsync(probe.Directory, ["--import"], cancellation);
+        File.WriteAllText(
+            Path.Combine(probe.Directory, "hand.tscn"),
+            "[gd_scene load_steps=2 format=3]\r\n\r\n[node name=\"Hand\" type=\"Node2D\"]\r\n"
+        );
+        File.WriteAllText(Path.Combine(probe.Directory, "hand.tres"), "[gd_resource type=\"Resource\" format=3]\n\n[resource]\n");
+
+        JsonNode stamped = JsonNode.Parse(await _tools.StampUidsAsync(probe.Directory, cancellationToken: cancellation))!;
+
+        JsonArray changed = stamped["stamped"]!.AsArray();
+        string sceneUid = StampEntry(changed, "res://hand.tscn")["uid"]!.GetValue<string>();
+        string resourceUid = StampEntry(changed, "res://hand.tres")["uid"]!.GetValue<string>();
+        Assert.Equal(0, (int)stamped["alreadyHad"]!.GetValue<double>());
+        Assert.Equal(changed.Count, (int)stamped["checked"]!.GetValue<double>());
+        // Only the header line changed: the header's load_steps is gone and the CRLF after it stays.
+        Assert.Equal(
+            $"[gd_scene format=3 uid=\"{sceneUid}\"]\r\n\r\n[node name=\"Hand\" type=\"Node2D\"]\r\n",
+            File.ReadAllText(Path.Combine(probe.Directory, "hand.tscn"))
+        );
+        Assert.Equal(
+            $"[gd_resource type=\"Resource\" format=3 uid=\"{resourceUid}\"]\n\n[resource]\n",
+            File.ReadAllText(Path.Combine(probe.Directory, "hand.tres"))
+        );
+        List<(long Id, string Path)> cache = ReadUidCache(Path.Combine(probe.Directory, ".godot", "uid_cache.bin"));
+        Assert.Contains((PrepScan.TextToId(sceneUid)!.Value, "res://hand.tscn"), cache);
+        Assert.Contains((PrepScan.TextToId(resourceUid)!.Value, "res://hand.tres"), cache);
+
+        JsonNode again = JsonNode.Parse(await _tools.StampUidsAsync(probe.Directory, ["hand.tscn", "hand.tres"], cancellation))!;
+
+        Assert.Equal(2, (int)again["alreadyHad"]!.GetValue<double>());
+        Assert.Empty(again["stamped"]!.AsArray());
+        JsonNode saved = JsonNode.Parse(await _tools.SaveSceneAsync(probe.Directory, "hand.tscn", cancellationToken: cancellation))!;
+        Assert.Equal(sceneUid, saved["uid"]!.GetValue<string>());
+        Assert.Equal($"[gd_scene format=3 uid=\"{sceneUid}\"]", FirstLine(probe.Directory, "hand.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task StampUidsGivesAHandRewrittenSceneTheUidItsCacheHeld()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await RunGodotAsync(probe.Directory, ["--import"], cancellation);
+        JsonNode created = JsonNode.Parse(await _tools.CreateSceneAsync(probe.Directory, "made.tscn", cancellationToken: cancellation))!;
+        string uid = created["uid"]!.GetValue<string>();
+        File.WriteAllText(Path.Combine(probe.Directory, "made.tscn"), "[gd_scene format=3]\n\n[node name=\"Made\" type=\"Node2D\"]\n");
+
+        JsonNode stamped = JsonNode.Parse(await _tools.StampUidsAsync(probe.Directory, ["made.tscn"], cancellation))!;
+
+        Assert.Equal(0, (int)stamped["alreadyHad"]!.GetValue<double>());
+        Assert.Equal(uid, StampEntry(stamped["stamped"]!.AsArray(), "res://made.tscn")["uid"]!.GetValue<string>());
+        Assert.Equal($"[gd_scene format=3 uid=\"{uid}\"]", FirstLine(probe.Directory, "made.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task StampUidsListsAMalformedFileAndStampsTheOthers()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "bad.tscn"), "not a header\n");
+        File.WriteAllText(Path.Combine(probe.Directory, "good.tscn"), "[gd_scene format=3]\n\n[node name=\"Good\" type=\"Node2D\"]\n");
+
+        JsonNode stamped = JsonNode.Parse(await _tools.StampUidsAsync(probe.Directory, ["bad.tscn", "good.tscn"], cancellation))!;
+
+        JsonObject failed = Assert.Single(stamped["failed"]!.AsArray().OfType<JsonObject>());
+        Assert.Equal("res://bad.tscn", failed["path"]!.GetValue<string>());
+        Assert.False(string.IsNullOrEmpty(failed["error"]!.GetValue<string>()));
+        Assert.Equal("not a header\n", File.ReadAllText(Path.Combine(probe.Directory, "bad.tscn")));
+        Assert.Equal("res://good.tscn", StampEntry(stamped["stamped"]!.AsArray(), "res://good.tscn")["path"]!.GetValue<string>());
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -2034,6 +2111,10 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(count, (uint)entries.Count);
         return entries;
     }
+
+    /// <summary>The entry of stamp_uids' stamped list for the file at path.</summary>
+    private static JsonObject StampEntry(JsonArray stamped, string path) =>
+        stamped.OfType<JsonObject>().Single(entry => entry["path"]!.GetValue<string>() == path);
 
     /// <summary>The uid="…" of a text scene's header line.</summary>
     private static string HeaderUid(string scene)

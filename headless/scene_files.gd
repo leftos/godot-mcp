@@ -269,6 +269,69 @@ static func uid_or_new(path: String, written: PackedStringArray) -> int:
 	return id
 
 
+## Gives each file in params.files that has no uid in its header the uid the editor would give it,
+## changing the header line alone: ResourceSaver.set_uid writes a fresh header and copies the rest
+## of the file byte for byte (4.7.2 scene/resources/resource_format_text.cpp L2161-2231). A stamped
+## file's uid is registered here and, when the project has a cache, in .godot/uid_cache.bin
+## (register_uid). {checked, stamped: [{path, uid}], alreadyHad, failed?}: stamped lists the files
+## changed, alreadyHad counts those that had a uid already, and a file that fails is listed in
+## failed while the others are still stamped.
+static func stamp_uids(params: Dictionary) -> Dictionary:
+	var files: Array = params.get("files", [])
+	var stamped: Array = []
+	var failed: Array = []
+	var already_had: int = 0
+	for path: String in files:
+		if not header_uid_of(path).is_empty():
+			already_had += 1
+			continue
+		var id: int = _uid_to_stamp(path)
+		var error: int = ResourceSaver.set_uid(path, id)
+		if error != OK:
+			failed.append({"path": path, "error": error_string(error)})
+			continue
+		register_uid(id, path)
+		stamped.append({"path": path, "uid": ResourceUID.id_to_text(id)})
+	var result: Dictionary = {
+		"checked": files.size(), "stamped": stamped, "alreadyHad": already_had
+	}
+	if not failed.is_empty():
+		result["failed"] = failed
+	return {"ok": true, "result": result}
+
+
+## The uid:// text the header of the text file at path carries, or "": read from the file itself,
+## never from the uid cache, since a hand-rewritten file may have lost a uid the cache still lists.
+## A header that carries a uid the cache does not decode counts too.
+static func header_uid_of(path: String) -> String:
+	var header: String = _header_of(path)
+	return "" if header.is_empty() else quoted_value(header, "uid")
+
+
+## The uid to stamp the file at path with: the one this run's uid cache lists for it, since
+## ResourceLoader.get_resource_uid reads only that cache outside the editor (4.7.2
+## core/io/resource_loader.cpp L1412-1416) and other files' uid:// references still name it, else
+## the one the editor would create for it (editor_file_system.cpp L927-929).
+static func _uid_to_stamp(path: String) -> int:
+	var id: int = ResourceLoader.get_resource_uid(path)
+	return id if id != ResourceUID.INVALID_ID else ResourceUID.create_id_for_path(path)
+
+
+## The header of the text file at path: its first tag, from "[" to "]", which may start after blank
+## lines and run over several lines, joined by a space; "" when the file cannot be read or holds no
+## tag.
+static func _header_of(path: String) -> String:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ""
+	var header: String = ""
+	while not file.eof_reached() and not header.contains("]"):
+		var line: String = file.get_line().strip_edges()
+		if not line.is_empty():
+			header = line if header.is_empty() else header + " " + line
+	return header if header.begins_with("[") else ""
+
+
 ## Registers id for path in this run's ResourceUID and, when the id was not known yet (not in
 ## .godot/uid_cache.bin, which the run loaded, nor added earlier in this run), records it in that
 ## cache too (cache_uid), so a run started outside the server finds it.

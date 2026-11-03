@@ -325,6 +325,120 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         Assert.Equal("res://levels/new.tscn", HeadlessTools.CheckNewScenePath(_project, "levels/new.tscn", "newPath", overwrite: false));
     }
 
+    [Fact]
+    public void StampUidsRefusesAnythingButSceneAndResourceFiles()
+    {
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckStampPaths(_project, ["main.gd"]));
+
+        Assert.Equal("paths 'main.gd' is not a scene or resource: stamp_uids takes .tscn and .tres files and folders.", refused.Message);
+        Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["levels/a.tscn"]));
+    }
+
+    [Fact]
+    public void StampUidsExpandsAFolderAndSkipsWhatGodotDoesNotScan()
+    {
+        string project = ProjectFolder("stamp");
+        File.WriteAllText(Path.Combine(project, "a.tscn"), string.Empty);
+        Directory.CreateDirectory(Path.Combine(project, "sub"));
+        File.WriteAllText(Path.Combine(project, "sub", "b.tres"), string.Empty);
+        Directory.CreateDirectory(Path.Combine(project, ".hidden"));
+        File.WriteAllText(Path.Combine(project, ".hidden", "c.tscn"), string.Empty);
+        Directory.CreateDirectory(Path.Combine(project, "ignored"));
+        File.WriteAllText(Path.Combine(project, "ignored", ".gdignore"), string.Empty);
+        File.WriteAllText(Path.Combine(project, "ignored", "d.tscn"), string.Empty);
+        Directory.CreateDirectory(Path.Combine(project, "nested"));
+        File.WriteAllText(Path.Combine(project, "nested", "project.godot"), "config_version=5\n");
+        File.WriteAllText(Path.Combine(project, "nested", "e.tscn"), string.Empty);
+
+        Assert.Equal(["res://a.tscn", "res://sub/b.tres"], HeadlessTools.CheckStampPaths(project, null));
+        Assert.Equal(["res://sub/b.tres"], HeadlessTools.CheckStampPaths(project, ["sub"]));
+    }
+
+    [Fact]
+    public void StampUidsRefusesMoreThan500Files()
+    {
+        string project = ProjectFolder("sweep");
+        for (int index = 0; index <= HeadlessTools.MaxSweep; index++)
+        {
+            File.WriteAllText(Path.Combine(project, $"s{index}.tscn"), string.Empty);
+        }
+
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckStampPaths(project, null));
+
+        Assert.Equal(
+            $"stamp_uids found {HeadlessTools.MaxSweep + 1} .tscn and .tres files; it stamps at most {HeadlessTools.MaxSweep} at once: "
+                + "pass paths.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void StampUidsRefusesEmptyPaths()
+    {
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckStampPaths(_project, []));
+
+        Assert.Equal("paths takes at least one file or folder; leave it out to stamp the whole project.", refused.Message);
+    }
+
+    [Fact]
+    public void StampUidsAcceptsTheProjectFolderAndATrailingSlash()
+    {
+        Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["res://"]));
+        Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["."]));
+        Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["res://levels/"]));
+    }
+
+    [Fact]
+    public void StampUidsRefusesANamedFolderGodotDoesNotScanByName()
+    {
+        string project = ProjectFolder("named-hidden");
+        string folder = Path.Combine(project, ".hidden");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "s.tscn"), string.Empty);
+
+        AssertNamedFolderRefused(project, ".hidden", "a name starting with \".\"");
+    }
+
+    [Fact]
+    public void StampUidsRefusesANamedFolderGodotDoesNotScanByGdignore()
+    {
+        string project = ProjectFolder("named-ignored");
+        string folder = Path.Combine(project, "ignored");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, ".gdignore"), string.Empty);
+        File.WriteAllText(Path.Combine(folder, "s.tscn"), string.Empty);
+
+        AssertNamedFolderRefused(project, "ignored", "a .gdignore");
+    }
+
+    [Fact]
+    public void StampUidsRefusesANamedFolderGodotDoesNotScanByNestedProject()
+    {
+        string project = ProjectFolder("named-nested");
+        string folder = Path.Combine(project, "nested");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "project.godot"), "config_version=5\n");
+        File.WriteAllText(Path.Combine(folder, "s.tscn"), string.Empty);
+
+        AssertNamedFolderRefused(project, "nested", "a nested project.godot");
+    }
+
+    /// <summary>A project folder of its own under the temporary folder, with its project.godot.</summary>
+    private string ProjectFolder(string name)
+    {
+        string project = _temp.Combine(name);
+        Directory.CreateDirectory(project);
+        File.WriteAllText(Path.Combine(project, "project.godot"), "config_version=5\n");
+        return project;
+    }
+
+    private static void AssertNamedFolderRefused(string project, string folder, string reason) =>
+        Assert.Equal(
+            $"paths '{folder}' is a folder Godot's scan skips ({reason}), so its files get no uid from the editor either; name scanned "
+                + "files or folders.",
+            Assert.Throws<McpException>(() => HeadlessTools.CheckStampPaths(project, [folder])).Message
+        );
+
     private static void AssertNodePathRefused(string path)
     {
         McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckNodePaths(["Boss", path]));
