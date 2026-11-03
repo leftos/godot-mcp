@@ -33,5 +33,10 @@ Each runs through `run.ps1`, which wraps it in `gate run` through `tools/gate.ps
 A Ship (`/monitor-inbox`, `/ship`, a `nextup` checkpoint) cuts a release without asking whenever `CHANGELOG.md` has an `## Unreleased` section with bullets; landings that took no bullet (docs only) wait for the next one.
 
 1. Run the release gates: `pwsh run.ps1 build`, `test`, `gdtest`, `format-check` and the full `pwsh run.ps1 itest`. A red gate holds the release and becomes the next item, booked Urgent.
-2. Run DEVELOPMENT.md's "CI and releases" procedure as written: choose the version by CLAUDE.md's rule, land the version commit, push the tag, `linear release complete`, `pwsh run.ps1 install` from the main checkout, then the announcement to every repo that registers `godot`.
-3. The install's stale-session, `install: stopped …`, `unmarked, skipped` and sweep-error lines go into the reply, as CLAUDE.md says.
+2. Run DEVELOPMENT.md's "CI and releases" procedure as written: choose the version by its rule, land the version commit, push the tag, `linear release complete`, `pwsh run.ps1 install` from the main checkout, then the announcement to every repo that registers `godot`.
+3. The install adds a version folder behind the launcher and stops no running server: each keeps the version it started with. It prints a line for every Claude session whose server still runs an older version, naming the session and its project folder, so the user can `/mcp` it; each such line goes into the reply, as does any `install: stopped the godot-mcp server …` line (only the migration of an install from before the versioned layout prints one).
+4. The install also runs `--sweep-agents` (the `godot-agent-sweep` skill), so a new tool reaches every agent that drives Godot: an agent spawns with only the tools its `tools:` list names. Its `unmarked, skipped` and error lines go into the reply with the install's own.
+
+## Orchestration
+
+- Source and test edits go to the `implementer` agent; the main session owns docs, plans and commits, and never commits while an implementer has work in the tree.

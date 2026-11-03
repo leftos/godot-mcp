@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 # godot-mcp
 
 An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScript, `bridge/`) that let agents run, see and drive the user's Godot projects; it replaces the third-party `godot-mcp-runtime`. This file is a router: each line names the document that owns a question.
@@ -9,58 +5,24 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 ## Start here
 
 - `docs/README.md`: the map and the glossary.
-- The plan lives in Linear: every task is a Linear issue in team GMCP, grouped into projects worked in order (the `godot-mcp-nextup` profile names the order). `docs/plans/MAIN.md` is a generated snapshot of it, never edited by hand: change Linear, then regenerate it. A steer or finding mid-task gets an **add** first, before any reply in prose.
-
-  The operations (**add**, **land**, **triage** and the rest) are in `~/.claude/docs/plan-operations.md`. A design for open work stays in `docs/plans/<name>.md`, linked from its issue; once its last step lands it moves to `docs/plans/archive/`, after its rulings are in `docs/DECISIONS.md`.
-- `README.md`: the user-facing page: what the server lets an agent do, and the prompt that installs it; a new tool or capability, or a change to install or requirements, updates it in the same commit.
-- `CHANGELOG.md`: what each version changed, newest first.
+- The plan is Linear team GMCP; the `godot-mcp-nextup` profile names its project order, its release step and its gates. `docs/plans/MAIN.md` is a generated snapshot, never edited by hand.
+- `README.md`: the user-facing page. `CHANGELOG.md`: what each version changed.
 - `docs/DECISIONS.md`: the user's decisions and the engine facts behind them; read it before reversing one.
-- `docs/TOOLS.md`: the agent-facing guide to every tool; a change to a tool's arguments, defaults or edges updates it in the same commit.
-- `skills/godot-mcp/SKILL.md`: the tutorial agents in the game repos load (published with the server and linked into `~/.claude/skills` from the install folder by `pwsh run.ps1 install`, so the game repos see an edit only after a release's install; the publish ships `docs/TOOLS.md` beside it as `TOOLS.md` and refuses a shipped skill that names an absolute path, so it names files relatively or by URL); a new tool, or a change to the drive loop or the rules that bite, updates it in the same commit as `docs/TOOLS.md`.
-- `skills/godot-agent-sweep/SKILL.md`: how an agent file declares its godot tool classes and what `--sweep-agents` does at install; a change to the classes, the marker or the sweep's output updates it in the same commit.
-- `docs/agents/implementer.md`: the overlay the `implementer` agent reads in place of this file; a change to the Non-negotiables or the everyday commands below updates it in the same commit.
-- `docs/DEVELOPMENT.md`: toolchain, commands, gates, what each test class covers, and the footguns: read the footguns before touching process launching, a tool's signature, logging, or the bridge's input handling.
-- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class; `pwsh run.ps1 itest -Since origin/main` runs only the itest groups a change touches (`itest-groups -Since <ref>` lists them; `itest` chooses them locally and sends the builder the list), a landing's itest, the full `itest` at a release; `pwsh run.ps1 drive -Calls <file.json>` drives this tree's own server build against a game without installing it; `pwsh run.ps1 package` builds the release zip.
-
-  A release is a pushed `vX.Y.Z` tag (the procedure is DEVELOPMENT.md's "CI and releases"); pushing a tag publishes to everyone, and a Ship cuts one without asking whenever `## Unreleased` has bullets (the `godot-mcp-nextup` profile's "Release step"). Each writes `.tmp/<command>.log` and prints its tail.
-
-  An `itest` goes out as one heavy gate run that the gate routes to the builder, so it writes `.tmp/itest-gate.log` here, with the verdicts and tails, while the lane logs (`.tmp/itest-<group>.log`) stay on the builder; when the builder's desktop stays busy for 60 s the gate runs it locally and they are local. `itest -InGate` is the inner form the gate runs, never run by hand.
-
-## Architecture
-
-- `docs/ARCHITECTURE.md`: the components, a request's path from tool to bridge and back, the session lifecycle, every tool with its bridge command and result, and the recipe for a new tool. Read it before exploring the code; a change to any of those updates it in the same commit.
+- `docs/TOOLS.md`: the agent-facing guide to every tool. `.claude/rules/tool-docs.md` names the docs a tool change updates.
+- `docs/ARCHITECTURE.md`: the components, a request's path, the session lifecycle, every tool's bridge command, the recipe for a new tool. Read it before exploring the code.
+- `docs/DEVELOPMENT.md`: toolchain, commands, gates, tests, releases, and the footguns: read them before touching process launching, a tool's signature, logging, or the bridge's input handling.
+- Everyday commands: `pwsh run.ps1 build|test|itest [-Filter "*Class"] [-Since origin/main]`.
 
 ## Non-negotiables
 
-- The bridge never enters a project's tracked files: a game gets it through a marked `override.cfg` hidden by `.git/info/exclude`, and an `override.cfg` without the marker is the user's and is refused, never overwritten; an editor session gets it from the installed editor host passed to `--script`, writing nothing into the project.
+- The bridge never enters a project's tracked files: a game gets it through a marked `override.cfg` hidden by `.git/info/exclude`, and an `override.cfg` without the marker is the user's and is refused, never overwritten; an editor session gets it from the installed editor host passed to `--script`.
 - The server's stdout is the MCP protocol: every log goes to stderr.
 - Every request on the wire carries an id; a reply for a timed-out id is dropped.
 - Input tools take viewport coordinates and map them to the window; a drag's motion events carry `button_mask` and `relative`.
-- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed: the source is `F:\Godot\src-4.7.2` (DEVELOPMENT.md, Toolchain); `F:\Godot\repo` is a stale 4.5.1 checkout.
-- Commit messages go in a file (`git commit -F .tmp/msg-<slug>.txt -- <paths>`, a file new to each commit, written in an earlier turn than the commit); enumerate files, never `git add -A`; never `--amend` or `--no-verify`.
-- Temporary files go in the untracked `.tmp/`.
-- Every build and test runs through `run.ps1`, which runs it under `gate run` through the repo's wrapper `tools/gate.ps1` (which hands it to the installed gate, and on a machine without one runs the command directly, with no log, slot or ceiling) with a ceiling. The ceiling counts load-adjusted time, so a run slowed by other agents is not killed for it.
-
-  The kill line (exit 124) says why: `STALLED` (no output and no CPU for 120 s) has hung, so read the log; `TIMED OUT` kept working past the ceiling even allowing for load, a busy loop or a ceiling set too tight, so read the log before touching the ceiling; `BACKSTOP` (5 times the ceiling in wall time) with a low "machine free" figure means the machine was busy, so re-run it once alone.
-
-  Never re-run a command to read its output differently. A machine without `gate.exe` has no ceiling or watchdog, so it installs the gate from the gate repo (`X:\dev\gate`, `pwsh tools/install.ps1`); a gate finding or request goes to the `gate` repo's inbox (`inbox.ps1 send -To gate`), where the gate is developed.
-- Cyclomatic complexity ≤ 8 per method (CA1502; the threshold is `CodeMetricsConfig.txt`), ≤ 100 lines per method, warnings are errors.
+- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed: the source is `F:\Godot\src-4.7.2`; `F:\Godot\repo` is a stale 4.5.1 checkout.
+- Every build and test runs through `run.ps1`.
 
 ## Workflow
 
-- Source and test edits go to the `implementer` agent with a brief naming the files, the change and a proving command; the main session owns docs, plans and commits.
-- Work here runs autonomously, with as few questions to the owner as possible. Only agents file this repo's tickets, so a design or briefing decision is settled by the best educated guess (the recommended option), recorded in the design doc and as a comment on its issue, and reversible from there.
-
-  When a guess is not enough, the question goes to the ticket's filer: a comment on the issue, or an inbox request to the repo that filed it, and the item is **block**ed on it. The owner is asked only for what this file reserves to them: a revert, a history edit, a force-push.
-- Commits are pre-approved: commit a step whose gates are green, whose diff is reviewed and whose docs are updated, without asking. Anything unusual still asks: a revert, a history edit, a force-push.
-- The repo is public at `github.com/leftos/godot-mcp`; a landed item is committed on `main` and pushed straight to `origin/main`, no PR.
-- A landing never bumps `VersionPrefix`: its bullets go under `## Unreleased` at the top of `CHANGELOG.md` (no number, no date; opened above the last tagged version when absent), with `### Added` / `### Changed` / `### Fixed`, each bullet one sentence of at most 25 words in the agent's words (tool and option names, no class or file names), per the `changelog-and-commit` skill's rules; a landing with no behaviour change takes no bullet.
-
-  The release decides the version, judiciously, by what an agent can now do: the minor for a new capability an agent would reach for, a new tool, option or mode; the patch for everything else, a fix, a clearer refusal or error, a new field in an existing result, a wider reach of an existing tool. The sha is stamped by the build.
-- A landing never installs: `pwsh run.ps1 install` runs from the main checkout only once a release is cut (its tag pushed), so the game repos run released builds only.
-
-  The install adds a version folder behind the launcher and stops no running server: each keeps the version it started with, and the install prints a line for every Claude session whose server still runs an older version, naming the session and its project folder, so the user can `/mcp` it. Every such line goes into the reply to the user, as does any `install: stopped the godot-mcp server …` line, which only the migration of an install from before the versioned layout prints.
-
-  After the install, every repo that registers the `godot` server gets an inbox request naming the version and what changed for its agents, asking, for a repo whose `godot` entry does not run through the MCP front, its session to have the user `/mcp` reconnect the server through `AskUserQuestion` (one through the front reloads by itself once no session is live) (the user-level rule "An installed MCP release is announced to every repo that uses it"; DEVELOPMENT.md's "CI and releases" has the command).
-- Never commit while an implementer has work in the tree.
-- An install that brings a new tool also brings it to every agent that drives Godot, since an agent spawns with only the tools its `tools:` list names and a missing one sends it to a workaround: the user-level `~/.claude/agents/implementer.md` gets every tool and `debugger.md` every tool that edits no file, and each repo under `X:\dev` has its `.claude/agents/*.md` swept too, each agent getting the tools of its classes: the install runs `--sweep-agents` (the `godot-agent-sweep` skill), and its `unmarked, skipped` and error lines go into the reply to the user with the install's own.
+- Work here runs autonomously. Only agents file this repo's tickets, so a design or briefing decision is settled by the best educated guess (the recommended option), recorded in the design doc and as a comment on its issue. When a guess is not enough, the question goes to the ticket's filer and the item is **block**ed on it; the owner is asked only for a revert, a history edit or a force-push.
+- Commits are pre-approved once gates are green, the diff is reviewed and docs are updated. The repo is public at `github.com/leftos/godot-mcp`; a landed item is committed on `main` and pushed to `origin/main`, no PR.
