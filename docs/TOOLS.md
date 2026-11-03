@@ -1492,8 +1492,8 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 ### `compare_screenshot`
 
 - **Does:** captures the next frame with the baseline's crop and counts pixels whose channel differs by more than `tolerance` (0 to 255, default 2): `{changedPixels, totalPixels, changedRatio, bbox, match, diffPath?, ...}` and a diff image (changed pixels red).
-- **Use:** `name`; `options {maxChangedRatio, responseMode, previewMaxWidth}`, `maxChangedRatio` default 0.
-- **Edges:** a mismatch is a result, not an error. A missing baseline fails (checked after the headless refusal, which a headless game gets first), and so does a capture of another size (a different `--resolution` or window size from when it was saved). Pause the game (`frame_control`) first for a stable frame.
+- **Use:** `name`; `options {maxChangedRatio, colors, colorsIn, responseMode, previewMaxWidth}`, `maxChangedRatio` default 0.
+- **Edges:** `colors` (1 to 16 `#RRGGBB`) counts, among the changed pixels, those whose colour in the capture (`colorsIn: baseline`: in the baseline) is within `tolerance` of each colour: the result gains `colorCounts: [{color, changedPixels}]`, in the order given with each `color` as passed, and `colorsIn`. A pixel counts for every colour it matches, alpha takes no part in the match, and `match` still reads all changed pixels. Use it with `tolerance: 0` to tell one layer's own pixels from what it covers. An empty or over-long list, a malformed colour, a `colorsIn` other than `capture` or `baseline`, and `colorsIn: baseline` without `colors` are refused. A mismatch is a result, not an error. A missing baseline fails (checked after the headless refusal, which a headless game gets first), and so does a capture of another size (a different `--resolution` or window size from when it was saved). Pause the game (`frame_control`) first for a stable frame.
 
 ## Recording
 

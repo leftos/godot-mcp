@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Added
 
+- `compare_screenshot` takes `options.colors` and returns `colorCounts`: how many changed pixels match each colour, in the capture or the baseline.
 - `watch` gains the `frame_work_ms` monitor: a frame's own work time, without the frame cap's wait, vsync or the draw.
 
 ### Fixed

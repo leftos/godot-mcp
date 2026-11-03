@@ -66,7 +66,10 @@ internal sealed partial class RuntimeTools
             + "width, height, tolerance, changedPixels, totalPixels, changedRatio, bbox, match}, bbox {x, y, width, height} "
             + "around the changed pixels (null when none) and match changedRatio <= options.maxChangedRatio; when pixels "
             + "changed, also diffPath (a dimmed grey copy with the changed pixels red), diffPreviewPath when scaled down, and "
-            + "the diff image unless responseMode is path_only. A mismatch is a result, not an error; a missing baseline or "
+            + "the diff image unless responseMode is path_only. options.colors (1 to 16 as #RRGGBB) counts, among the changed "
+            + "pixels, those whose colour in the capture (options.colorsIn: baseline, in the baseline) is within tolerance of "
+            + "each, and the result then also holds colorCounts, one {color, changedPixels} per colour in the order asked, and "
+            + "colorsIn. A mismatch is a result, not an error; a missing baseline or "
             + "a screenshot of another size fails. Pause an animating game with frame_control before saving and before "
             + "comparing, or the animation counts as changed pixels."
     )]
@@ -74,13 +77,14 @@ internal sealed partial class RuntimeTools
         [Description("The baseline's name, as save_screenshot_baseline saved it.")] string name,
         [Description("The crop the baseline was saved with; may be left out, and any other crop is refused.")] ScreenshotCrop? crop = null,
         [Description("How many levels (0-255) a channel may differ by and still count as unchanged; 2 by default.")] int tolerance = 2,
-        [Description("{maxChangedRatio, responseMode, previewMaxWidth}.")] CompareOptions? options = null,
+        [Description("{maxChangedRatio, colors, colorsIn, responseMode, previewMaxWidth}.")] CompareOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         ScreenshotBaseline.CheckName(name);
         CompareOptions settings = options ?? new CompareOptions();
+        (AskedColor[] colors, string colorsIn) = ScreenshotBaseline.ParseColors(settings.Colors, settings.ColorsIn);
         ScreenshotMode mode = CheckCompareArguments(crop, tolerance, settings);
         GodotSession target = Find(session);
         string folder = ScreenshotBaseline.Folder(target.ProjectDir);
@@ -93,9 +97,10 @@ internal sealed partial class RuntimeTools
             ["tolerance"] = tolerance,
             ["previewMaxWidth"] = mode == ScreenshotMode.Preview ? settings.PreviewMaxWidth : 0,
         };
+        AddColors(parameters, colors, colorsIn);
         BridgeCall call = new("compare_screenshot", "compare_screenshot", parameters, CompareTimeout);
         BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
-        JsonObject text = ShapeComparison(name, baselinePath, tolerance, settings.MaxChangedRatio, result.Reply);
+        JsonObject text = ShapeComparison(name, baselinePath, tolerance, settings.MaxChangedRatio, result.Reply, colors, colorsIn);
         List<ContentBlock> blocks = [new TextContentBlock { Text = ErrorReport.AddTo(text, result.Errors).ToJsonString() }];
         string? imagePath = DiffImagePath(text, mode);
         if (imagePath is not null)
@@ -108,9 +113,18 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// The bridge's comparison reply as compare_screenshot's result: {name, baselinePath, path, width, height, tolerance,
-    /// changedPixels, totalPixels, changedRatio, bbox, match[, diffPath, diffPreviewPath]}, with native paths.
+    /// changedPixels, totalPixels, changedRatio, bbox, match[, colorCounts, colorsIn][, diffPath, diffPreviewPath]}, with
+    /// native paths; colorCounts and colorsIn only when colours were asked.
     /// </summary>
-    internal static JsonObject ShapeComparison(string name, string baselinePath, int tolerance, double maxChangedRatio, JsonNode? reply)
+    internal static JsonObject ShapeComparison(
+        string name,
+        string baselinePath,
+        int tolerance,
+        double maxChangedRatio,
+        JsonNode? reply,
+        IReadOnlyList<AskedColor>? colors = null,
+        string colorsIn = "capture"
+    )
     {
         JsonObject found = CheckComparisonReply(reply);
         ScreenshotFiles capture = ReadScreenshotFiles(found);
@@ -131,6 +145,12 @@ internal sealed partial class RuntimeTools
             ["bbox"] = ReadBox(found["bbox"]),
             ["match"] = ratio <= maxChangedRatio,
         };
+        if (colors is { Count: > 0 })
+        {
+            result["colorCounts"] = ShapeColorCounts(found["colorCounts"], colors);
+            result["colorsIn"] = colorsIn;
+        }
+
         AddNativePath(result, found, "diffPath");
         AddNativePath(result, found, "diffPreviewPath");
         return result;
@@ -191,6 +211,68 @@ internal sealed partial class RuntimeTools
             _ => null,
         };
     }
+
+    /// <summary>The colours as the bridge takes them: each an [r, g, b] of 0-255, and which image it reads.</summary>
+    private static void AddColors(JsonObject parameters, AskedColor[] colors, string colorsIn)
+    {
+        if (colors.Length == 0)
+        {
+            return;
+        }
+
+        JsonArray array = [];
+        foreach (AskedColor color in colors)
+        {
+            array.Add(new JsonArray(color.Red, color.Green, color.Blue));
+        }
+
+        parameters["colors"] = array;
+        parameters["colorsIn"] = colorsIn;
+    }
+
+    /// <summary>The bridge's colour counts as the result's colorCounts: one per colour asked, in that order, each colour
+    /// as it was asked.</summary>
+    /// <exception cref="McpException">The reply's counts are missing, their number differs, or a count names other channels.</exception>
+    private static JsonArray ShapeColorCounts(JsonNode? reply, IReadOnlyList<AskedColor> wanted)
+    {
+        int asked = wanted.Count;
+        if (reply is not JsonArray counts || counts.Count != asked)
+        {
+            throw CountsMismatch(reply is JsonArray found ? found.Count : 0, asked);
+        }
+
+        JsonArray shaped = [];
+        for (int index = 0; index < asked; index++)
+        {
+            if (counts[index] is not JsonObject entry || ReadInt(entry["changedPixels"]) is not int changed)
+            {
+                throw CountsMismatch(counts.Count, asked);
+            }
+
+            AskedColor color = wanted[index];
+            if (!HasChannels(entry["color"], color))
+            {
+                throw CountsMismatch(counts.Count, asked);
+            }
+
+            shaped.Add(new JsonObject { ["color"] = color.Text, ["changedPixels"] = changed });
+        }
+
+        return shaped;
+    }
+
+    private static McpException CountsMismatch(int counts, int asked) =>
+        new(
+            $"The bridge's compare_screenshot reply has {counts} colour counts for the {asked} colours asked; "
+                + "the bridge and the server may be different versions."
+        );
+
+    private static bool HasChannels(JsonNode? color, AskedColor wanted) =>
+        color is JsonArray channels
+        && channels.Count == 3
+        && ReadInt(channels[0]) == wanted.Red
+        && ReadInt(channels[1]) == wanted.Green
+        && ReadInt(channels[2]) == wanted.Blue;
 
     private static JsonObject? ReadBox(JsonNode? box) =>
         box is JsonObject found

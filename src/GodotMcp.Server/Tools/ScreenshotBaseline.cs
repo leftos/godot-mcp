@@ -20,7 +20,13 @@ internal sealed record CompareOptions(
             + "full-size diff image. No image is returned when no pixel changed."
     )]
         string ResponseMode = "preview",
-    [property: Description("The widest the diff preview may be, in pixels; 480 by default.")] int PreviewMaxWidth = 480
+    [property: Description("The widest the diff preview may be, in pixels; 480 by default.")] int PreviewMaxWidth = 480,
+    [property: Description(
+        "The colours, 1 to 16 as #RRGGBB, to count among the changed pixels: each changed pixel whose colour (in the capture, "
+            + "or the baseline with colorsIn) is within tolerance of one is counted for it; the result adds colorCounts."
+    )]
+        string[]? Colors = null,
+    [property: Description("capture (default) or baseline: which image's colour a counted pixel is matched in.")] string ColorsIn = "capture"
 );
 
 /// <summary>
@@ -39,8 +45,40 @@ internal static partial class ScreenshotBaseline
         .. Enumerable.Range(1, 9).Select(number => $"LPT{number}"),
     ];
 
+    /// <summary>The most colours compare_screenshot counts in one call.</summary>
+    internal const int MaxColors = 16;
+
+    private const string Capture = "capture";
+    private const string BaselineImage = "baseline";
+
     /// <summary>The baselines folder of a project.</summary>
     internal static string Folder(string projectDir) => Path.Combine(projectDir, ".godot", "godot-mcp", "baselines");
+
+    /// <summary>compare_screenshot's colours and the image a counted pixel's colour is read in.</summary>
+    /// <exception cref="McpException">
+    /// colorsIn is not capture or baseline, colorsIn is baseline with no colors, colors has no entry or over
+    /// <see cref="MaxColors"/> entries, or an entry is not #RRGGBB.
+    /// </exception>
+    internal static (AskedColor[] Colors, string ColorsIn) ParseColors(string[]? colors, string colorsIn)
+    {
+        string image = colorsIn switch
+        {
+            Capture => Capture,
+            BaselineImage => BaselineImage,
+            _ => throw new McpException($"colorsIn takes capture or baseline; got '{colorsIn}'."),
+        };
+        if (colors is null)
+        {
+            return image == Capture ? ([], image) : throw new McpException("colorsIn needs options.colors.");
+        }
+
+        if (colors.Length is < 1 or > MaxColors)
+        {
+            throw new McpException($"colors takes 1 to 16 colours as #RRGGBB; got {colors.Length}.");
+        }
+
+        return ([.. colors.Select(ParseColor)], image);
+    }
 
     /// <exception cref="McpException">
     /// The name is not 1-64 of letters, digits, '.', '_', '-' starting with a letter or digit, or is a Windows device name.
@@ -164,6 +202,21 @@ internal static partial class ScreenshotBaseline
                 ["height"] = crop.Height,
             };
 
+    /// <exception cref="McpException">The text is not six hex digits, with the # optional and the hex case-insensitive.</exception>
+    private static AskedColor ParseColor(string? entry)
+    {
+        string text = entry ?? string.Empty;
+        string digits = text.StartsWith('#') ? text[1..] : text;
+        if (digits.Length != 6 || !digits.All(Uri.IsHexDigit))
+        {
+            throw new McpException($"colors entry '{text}' is not a #RRGGBB colour.");
+        }
+
+        return new AskedColor(text, Hex(digits, 0), Hex(digits, 2), Hex(digits, 4));
+    }
+
+    private static int Hex(string digits, int start) => int.Parse(digits.AsSpan(start, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+
     private static string ImagePath(string folder, string name) => Path.Combine(folder, name + ".png");
 
     private static string SidecarPath(string folder, string name) => Path.Combine(folder, name + ".json");
@@ -180,3 +233,6 @@ internal static partial class ScreenshotBaseline
 
 /// <summary>A capture the bridge saved for a new baseline: its file, its size and the crop it was taken with.</summary>
 internal sealed record BaselineCapture(string Path, int Width, int Height, ScreenshotCrop? Crop);
+
+/// <summary>A colour compare_screenshot counts among the changed pixels: the text it was asked as, and its 0-255 channels.</summary>
+internal sealed record AskedColor(string Text, int Red, int Green, int Blue);

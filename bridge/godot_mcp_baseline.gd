@@ -12,17 +12,30 @@ extends Node
 const HALF_LEVEL := 0.5
 ## How much of its brightness the diff image keeps for unchanged pixels, shown grey.
 const DIFF_BRIGHTNESS := 0.4
+## Which image a changed pixel's colour is read in for the colour counts: the capture just taken,
+## or the baseline it was compared with.
+const CAPTURE_SIDE := "capture"
+const BASELINE_SIDE := "baseline"
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
 
 
 ## Compares current with baseline, both converted to RGBA8: a pixel is changed when one of its
-## channels, alpha included, differs by more than tolerance levels (0-255). Returns {changed,
-## total, bbox, diff}: bbox {x, y, width, height} around the changed pixels and diff a dimmed
-## grey copy of current with the changed pixels red, both null when nothing changed; or a String
+## channels, alpha included, differs by more than tolerance levels (0-255). With colors (each an
+## [r, g, b] of 0-255), each changed pixel is also counted for every colour whose RGB channels
+## are within tolerance of its, read in current (colors_in "capture", the default) or in
+## baseline. Returns {changed, total, bbox, diff[, colorCounts]}: bbox {x, y, width, height}
+## around the changed pixels and diff a dimmed grey copy of current with the changed pixels red,
+## both null when nothing changed, colorCounts each colour as asked with its count; or a String
 ## when the sizes differ.
-static func compare(current: Image, baseline: Image, tolerance: int) -> Variant:
+static func compare(
+	current: Image,
+	baseline: Image,
+	tolerance: int,
+	colors: Array = [],
+	colors_in: String = "capture"
+) -> Variant:
 	var now: Image = current.duplicate() as Image
 	now.convert(Image.FORMAT_RGBA8)
 	var then: Image = baseline.duplicate() as Image
@@ -33,18 +46,18 @@ static func compare(current: Image, baseline: Image, tolerance: int) -> Variant:
 			"the screenshot is %dx%d but baseline is %dx%d"
 			% [now.get_width(), now.get_height(), then.get_width(), then.get_height()]
 		)
+	var total: int = now.get_width() * now.get_height()
 	if now.compute_image_metrics(then, false)["max"] <= tolerance:
-		return {
-			"changed": 0, "total": now.get_width() * now.get_height(), "bbox": null, "diff": null
-		}
-	return _diff(now, then, (tolerance + HALF_LEVEL) / 255.0)
+		return _unchanged(total, colors)
+	return _diff(now, then, (tolerance + HALF_LEVEL) / 255.0, colors, colors_in)
 
 
 ## Captures the next drawn frame (cropped to params.crop), saves it as a screenshot does, and
-## compares it with the PNG at params.baselinePath within params.tolerance. Returns {path,
-## width, height, changedPixels, totalPixels, bbox[, diffPath, diffPreviewPath]}, or a String
-## saying why it could not: on a headless game, the frame module's headless refusal, before the
-## baseline is looked at.
+## compares it with the PNG at params.baselinePath within params.tolerance, counting the changed
+## pixels of each colour in params.colors (read in params.colorsIn) as compare does. Returns
+## {path, width, height, changedPixels, totalPixels, bbox[, colorCounts, diffPath,
+## diffPreviewPath]}, or a String saying why it could not: on a headless game, the frame module's
+## headless refusal, before the baseline is looked at.
 func compare_screenshot(params: Dictionary) -> Variant:
 	var baseline_path: String = str(params.get("baselinePath", ""))
 	var refusal: String = _refusal(baseline_path)
@@ -57,7 +70,11 @@ func compare_screenshot(params: Dictionary) -> Variant:
 	var baseline: Image = Image.load_from_file(baseline_path)
 	if baseline == null:
 		return "the baseline %s could not be read as an image" % baseline_path
-	var compared: Variant = compare(capture, baseline, int(params.get("tolerance", 0)))
+	var colors: Array = params.get("colors", [])
+	var colors_in: String = str(params.get("colorsIn", CAPTURE_SIDE))
+	var compared: Variant = compare(
+		capture, baseline, int(params.get("tolerance", 0)), colors, colors_in
+	)
 	if compared is String:
 		return compared
 	var saved: Variant = bridge._frame.save_screenshot(capture, {})
@@ -76,8 +93,15 @@ func _refusal(baseline_path: String) -> String:
 
 
 ## The changed pixels of two RGBA8 images of one size, counted pixel by pixel: get_pixel pairs
-## measured faster than a loop over get_data's bytes (62 ms against 112 ms at 1280x720).
-static func _diff(now: Image, then: Image, threshold: float) -> Dictionary:
+## measured faster than a loop over get_data's bytes (62 ms against 112 ms at 1280x720). With
+## colors, each changed pixel is also counted for every colour it matches.
+static func _diff(
+	now: Image, then: Image, threshold: float, colors: Array, colors_in: String
+) -> Dictionary:
+	var targets: Array[Color] = _targets(colors)
+	var counts: PackedInt32Array = PackedInt32Array()
+	counts.resize(targets.size())
+	var from_baseline: bool = colors_in == BASELINE_SIDE
 	var diff: Image = now.duplicate() as Image
 	diff.adjust_bcs(DIFF_BRIGHTNESS, 1.0, 0.0)
 	var changed: int = 0
@@ -88,18 +112,67 @@ static func _diff(now: Image, then: Image, threshold: float) -> Dictionary:
 			var a: Color = now.get_pixel(x, y)
 			var b: Color = then.get_pixel(x, y)
 			var rgb_gap: float = maxf(absf(a.r - b.r), maxf(absf(a.g - b.g), absf(a.b - b.b)))
-			if maxf(rgb_gap, absf(a.a - b.a)) > threshold:
-				changed += 1
-				diff.set_pixel(x, y, Color.RED)
-				low = Vector2i(mini(low.x, x), mini(low.y, y))
-				high = Vector2i(maxi(high.x, x), maxi(high.y, y))
+			if maxf(rgb_gap, absf(a.a - b.a)) <= threshold:
+				continue
+			changed += 1
+			diff.set_pixel(x, y, Color.RED)
+			low = Vector2i(mini(low.x, x), mini(low.y, y))
+			high = Vector2i(maxi(high.x, x), maxi(high.y, y))
+			if not targets.is_empty():
+				_count_matches(counts, targets, b if from_baseline else a, threshold)
 	var total: int = now.get_width() * now.get_height()
 	if changed == 0:
-		return {"changed": 0, "total": total, "bbox": null, "diff": null}
+		return _unchanged(total, colors)
 	var bbox: Dictionary = {
 		"x": low.x, "y": low.y, "width": high.x - low.x + 1, "height": high.y - low.y + 1
 	}
-	return {"changed": changed, "total": total, "bbox": bbox, "diff": diff}
+	var result: Dictionary = {"changed": changed, "total": total, "bbox": bbox, "diff": diff}
+	if not targets.is_empty():
+		result["colorCounts"] = _color_counts(colors, counts)
+	return result
+
+
+## The colours asked, each as a 0-255 colour, in the order asked.
+static func _targets(colors: Array) -> Array[Color]:
+	var targets: Array[Color] = []
+	for color: Array in colors:
+		targets.append(Color.from_rgba8(int(color[0]), int(color[1]), int(color[2])))
+	return targets
+
+
+## Adds pixel to every target whose RGB channels are within threshold of it; alpha takes no part.
+static func _count_matches(
+	counts: PackedInt32Array, targets: Array[Color], pixel: Color, threshold: float
+) -> void:
+	for index in targets.size():
+		var target: Color = targets[index]
+		var red: bool = absf(pixel.r - target.r) <= threshold
+		var green: bool = absf(pixel.g - target.g) <= threshold
+		var blue: bool = absf(pixel.b - target.b) <= threshold
+		if red and green and blue:
+			counts[index] += 1
+
+
+## Nothing changed: no bbox and no diff image, and a zero count for each colour asked.
+static func _unchanged(total: int, colors: Array) -> Dictionary:
+	var result: Dictionary = {"changed": 0, "total": total, "bbox": null, "diff": null}
+	if colors.is_empty():
+		return result
+	var counts: PackedInt32Array = PackedInt32Array()
+	counts.resize(colors.size())
+	result["colorCounts"] = _color_counts(colors, counts)
+	return result
+
+
+## Each colour as it was asked, its [r, g, b] of 0-255, with the changed pixels counted for it.
+static func _color_counts(colors: Array, counts: PackedInt32Array) -> Array:
+	var result: Array = []
+	for index in colors.size():
+		var color: Array = colors[index]
+		result.append(
+			{"color": [int(color[0]), int(color[1]), int(color[2])], "changedPixels": counts[index]}
+		)
+	return result
 
 
 ## The root viewport's image, cropped to crop when it is a Dictionary; a String when there is
@@ -124,6 +197,8 @@ func _reply(saved: Dictionary, compared: Dictionary, preview_max_width: int) -> 
 		"totalPixels": compared["total"],
 		"bbox": compared["bbox"],
 	}
+	if compared.has("colorCounts"):
+		reply["colorCounts"] = compared["colorCounts"]
 	if compared["diff"] == null:
 		return reply
 	var diff: Image = compared["diff"]

@@ -1,7 +1,7 @@
 extends "res://gd_test.gd"
 ## The screenshot comparison's pure logic (bridge/godot_mcp_baseline.gd): the changed-pixel
-## count against a tolerance, the bounding box, the diff image and the size check, on synthetic
-## images. The node is never created; compare is static.
+## count against a tolerance, the per-colour counts among them, the bounding box, the diff image
+## and the size check, on synthetic images. The node is never created; compare is static.
 
 const GREY := Color8(100, 100, 100)
 
@@ -82,6 +82,89 @@ func test_the_diff_marks_changes_red_on_a_dimmed_grey_copy() -> void:
 	assert_approx(unchanged.g, 0.4, "an unchanged pixel's green is white dimmed")
 	assert_approx(unchanged.b, 0.4, "an unchanged pixel's blue is white dimmed")
 	assert_approx(unchanged.a, 1.0, "an unchanged pixel stays opaque")
+
+
+func test_colors_are_counted_among_the_changed_pixels() -> void:
+	var current: Image = _image(8, 6, GREY)
+	current.set_pixel(1, 1, Color.BLUE)
+	current.set_pixel(2, 1, Color.BLUE)
+	current.set_pixel(3, 1, Color.BLUE)
+	current.set_pixel(4, 1, Color.RED)
+	current.set_pixel(5, 1, Color.RED)
+	var result: Variant = _baseline_script.compare(
+		current, _image(8, 6, GREY), 2, [[0, 0, 255], [255, 0, 0]]
+	)
+	var counts: Array = result["colorCounts"]
+	assert_eq(result["changed"], 5, "the blue and the red pixels")
+	assert_eq(counts.size(), 2, "one count per colour asked")
+	assert_eq(counts[0]["color"], [0, 0, 255], "the first colour's [r, g, b]")
+	assert_eq(counts[0]["changedPixels"], 3, "the blue pixels, matching the first colour exactly")
+	assert_eq(counts[1]["color"], [255, 0, 0], "the second colour's [r, g, b]")
+	assert_eq(counts[1]["changedPixels"], 2, "the red pixels")
+
+
+func test_a_colour_within_the_tolerance_matches() -> void:
+	var current: Image = _image(8, 6, GREY)
+	current.set_pixel(3, 2, Color8(255, 2, 2))
+	var result: Variant = _baseline_script.compare(current, _image(8, 6, GREY), 2, [[255, 0, 0]])
+	assert_eq(result["changed"], 1, "the pixel differs from the grey baseline")
+	assert_eq(result["colorCounts"][0]["changedPixels"], 1, "off by 2 at tolerance 2")
+
+
+func test_a_colour_past_the_tolerance_is_not_counted() -> void:
+	var current: Image = _image(8, 6, GREY)
+	current.set_pixel(3, 2, Color8(255, 3, 2))
+	var result: Variant = _baseline_script.compare(current, _image(8, 6, GREY), 2, [[255, 0, 0]])
+	assert_eq(result["changed"], 1, "the pixel still differs from the grey baseline")
+	assert_eq(result["colorCounts"][0]["changedPixels"], 0, "off by 3 at tolerance 2")
+
+
+func test_an_unchanged_pixel_of_the_colour_is_not_counted() -> void:
+	var baseline: Image = _image(8, 6, GREY)
+	baseline.set_pixel(0, 0, Color.RED)
+	var current: Image = baseline.duplicate() as Image
+	current.set_pixel(1, 1, Color8(103, 100, 100))
+	var result: Variant = _baseline_script.compare(current, baseline, 2, [[255, 0, 0]])
+	assert_eq(result["changed"], 1, "only the pixel that moved")
+	assert_eq(result["colorCounts"][0]["changedPixels"], 0, "the red pixel did not change")
+
+
+func test_a_pixel_matching_two_colours_is_counted_for_each() -> void:
+	var current: Image = _image(8, 6, GREY)
+	current.set_pixel(3, 2, Color8(255, 1, 0))
+	var result: Variant = _baseline_script.compare(
+		current, _image(8, 6, GREY), 2, [[255, 0, 0], [254, 1, 0]]
+	)
+	assert_eq(result["changed"], 1, "one changed pixel")
+	assert_eq(result["colorCounts"][0]["changedPixels"], 1, "counted for the first colour")
+	assert_eq(
+		result["colorCounts"][1]["changedPixels"], 1, "and for the second, within tolerance of it"
+	)
+
+
+func test_colors_in_baseline_matches_the_baseline_colour() -> void:
+	var baseline: Image = _image(8, 6, GREY)
+	baseline.set_pixel(2, 2, Color.RED)
+	var current: Image = _image(8, 6, GREY)
+	current.set_pixel(2, 2, Color.BLUE)
+	var in_baseline: Variant = _baseline_script.compare(
+		current, baseline, 2, [[255, 0, 0]], "baseline"
+	)
+	var in_capture: Variant = _baseline_script.compare(current, baseline, 2, [[255, 0, 0]])
+	assert_eq(in_baseline["changed"], 1, "the pixel turned blue")
+	assert_eq(in_baseline["colorCounts"][0]["changedPixels"], 1, "red in the baseline")
+	assert_eq(in_capture["colorCounts"][0]["changedPixels"], 0, "blue in the capture")
+
+
+func test_no_change_gives_zero_counts() -> void:
+	var result: Variant = _baseline_script.compare(
+		_image(8, 6, GREY), _image(8, 6, GREY), 2, [[255, 0, 0], [0, 255, 0]]
+	)
+	var counts: Array = result["colorCounts"]
+	assert_eq(result["changed"], 0, "nothing changed")
+	assert_eq(counts.size(), 2, "one count per colour asked")
+	assert_eq(counts[0]["changedPixels"], 0, "the red count")
+	assert_eq(counts[1]["changedPixels"], 0, "the green count")
 
 
 func _image(width: int, height: int, color: Color) -> Image:

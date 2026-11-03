@@ -140,7 +140,7 @@ An error raised inside a parallel member's call shows only in that member's own 
 
 A `wait` assertion takes any `wait_for` condition, `{output}` included: the server answers it from the run's captured output, so it works while paused and refuses an attached session.
 
-`save_screenshot_baseline` stores a cropped frame once; `compare_screenshot` diffs a later frame against it. A game that animates draws a different frame each time, so pause it with `frame_control` before saving a baseline, before comparing, and around a `take_screenshot` before/after pair (pause, shot, change, shot, resume).
+`save_screenshot_baseline` stores a cropped frame once; `compare_screenshot` diffs a later frame against it, and `options.colors` adds `colorCounts`, how many changed pixels are each colour you name. A game that animates draws a different frame each time, so pause it with `frame_control` before saving a baseline, before comparing, and around a `take_screenshot` before/after pair (pause, shot, change, shot, resume).
 
 To compare several shots in one Read, tile them with image-cut's sheet mode (`uv run --project ~/.claude/tools/image-cut python -m image_cut sheet <png>... --cols 3`), which labels each with its file name.
 

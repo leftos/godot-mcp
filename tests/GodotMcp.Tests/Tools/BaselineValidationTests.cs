@@ -103,6 +103,65 @@ public sealed class BaselineValidationTests : IDisposable
         Assert.StartsWith("maxChangedRatio takes values from 0 to 1; got ", refused.Message, StringComparison.Ordinal);
     }
 
+    public static TheoryData<string[]> WrongColorCounts =>
+        new() { Array.Empty<string>(), Enumerable.Range(1, 17).Select(index => $"#{index:X6}").ToArray() };
+
+    [Theory]
+    [MemberData(nameof(WrongColorCounts))]
+    public async Task AColorsListOfNoneOrOverSixteenIsRefused(string[] colors)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CompareScreenshotAsync("probe", options: new CompareOptions(Colors: colors), cancellationToken: Token)
+        );
+
+        Assert.Equal($"colors takes 1 to 16 colours as #RRGGBB; got {colors.Length}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("GGGGGG")]
+    [InlineData("#ff00")]
+    [InlineData("#ff00ff00")]
+    [InlineData("red")]
+    [InlineData("")]
+    public async Task AMalformedColorIsRefused(string entry)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CompareScreenshotAsync("probe", options: new CompareOptions(Colors: [entry]), cancellationToken: Token)
+        );
+
+        Assert.Equal($"colors entry '{entry}' is not a #RRGGBB colour.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AUnknownColorsInIsRefused()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CompareScreenshotAsync("probe", options: new CompareOptions(Colors: ["#ff0000"], ColorsIn: "both"), cancellationToken: Token)
+        );
+
+        Assert.Equal("colorsIn takes capture or baseline; got 'both'.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AnUnknownColorsInWithoutColorsReportsTheValue()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CompareScreenshotAsync("probe", options: new CompareOptions(ColorsIn: "both"), cancellationToken: Token)
+        );
+
+        Assert.Equal("colorsIn takes capture or baseline; got 'both'.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AColorsInWithoutColorsIsRefused()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CompareScreenshotAsync("probe", options: new CompareOptions(ColorsIn: "baseline"), cancellationToken: Token)
+        );
+
+        Assert.Equal("colorsIn needs options.colors.", refused.Message);
+    }
+
     [Fact]
     public async Task AnUnknownResponseModeOrANarrowPreviewIsRefused()
     {
@@ -279,6 +338,64 @@ public sealed class BaselineValidationTests : IDisposable
         );
 
         Assert.StartsWith("The bridge's compare_screenshot reply names no file", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheComparisonKeepsColorCounts()
+    {
+        JsonObject reply = CannedReply(96, withPreview: true);
+        reply["colorCounts"] = ColorCounts((0, 0, 255, 96), (255, 0, 0, 0));
+        AskedColor[] colors = [new("#0000ff", 0, 0, 255), new("#FF0000", 255, 0, 0)];
+
+        JsonObject shaped = RuntimeTools.ShapeComparison("hud", @"C:\game\baselines\hud.png", 2, 0, reply, colors, "baseline");
+
+        Assert.Equal("""[{"color":"#0000ff","changedPixels":96},{"color":"#FF0000","changedPixels":0}]""", shaped["colorCounts"]!.ToJsonString());
+        Assert.Equal("baseline", shaped["colorsIn"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AComparisonWithoutColorsHasNoColorCounts()
+    {
+        JsonObject shaped = Shape(CannedReply(96, withPreview: true));
+
+        Assert.False(shaped.ContainsKey("colorCounts"));
+        Assert.False(shaped.ContainsKey("colorsIn"));
+    }
+
+    [Fact]
+    public void AReplyWithTheWrongColourCountsIsRefused()
+    {
+        AskedColor[] colors = [new("#0000ff", 0, 0, 255), new("#ff0000", 255, 0, 0)];
+        JsonObject short_ = CannedReply(96, withPreview: true);
+        short_["colorCounts"] = ColorCounts((0, 0, 255, 96));
+        JsonObject swapped = CannedReply(96, withPreview: true);
+        swapped["colorCounts"] = ColorCounts((255, 0, 0, 96), (0, 0, 255, 0));
+
+        McpException missing = Assert.Throws<McpException>(() =>
+            RuntimeTools.ShapeComparison("hud", @"C:\game\baselines\hud.png", 2, 0, short_, colors)
+        );
+        McpException other = Assert.Throws<McpException>(() =>
+            RuntimeTools.ShapeComparison("hud", @"C:\game\baselines\hud.png", 2, 0, swapped, colors)
+        );
+
+        Assert.Equal(CountsRefusal(1, 2), missing.Message);
+        Assert.Equal(CountsRefusal(2, 2), other.Message);
+    }
+
+    private static string CountsRefusal(int counts, int asked) =>
+        $"The bridge's compare_screenshot reply has {counts} colour counts for the {asked} colours asked; "
+        + "the bridge and the server may be different versions.";
+
+    // A bridge reply's colorCounts as the server reads it off the wire, every number a float: the colour's [r, g, b] and its count.
+    private static JsonArray ColorCounts(params (int R, int G, int B, int Count)[] counts)
+    {
+        JsonArray array = [];
+        foreach ((int red, int green, int blue, int count) in counts)
+        {
+            array.Add(new JsonObject { ["color"] = new JsonArray((double)red, (double)green, (double)blue), ["changedPixels"] = (double)count });
+        }
+
+        return array;
     }
 
     [Fact]

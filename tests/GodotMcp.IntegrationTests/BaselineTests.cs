@@ -124,6 +124,24 @@ public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, I
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AChangedSquaresColorIsCountedByColor()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await SaveAsync(Full, null, null, cancellation);
+        await SetSquareBlueAsync(cancellation);
+        JsonNode changed = Text(await CompareColorsAsync(Full, ["#0000ff", "#ff0000"], cancellation));
+
+        JsonArray counts = changed["colorCounts"]!.AsArray();
+        Assert.Equal(2, counts.Count);
+        Assert.Equal("#0000ff", counts[0]!["color"]!.GetValue<string>());
+        Assert.Equal(SquarePixels, counts[0]!["changedPixels"]!.GetValue<int>());
+        Assert.Equal("#ff0000", counts[1]!["color"]!.GetValue<string>());
+        Assert.Equal(0, counts[1]!["changedPixels"]!.GetValue<int>());
+        Assert.Equal("capture", changed["colorsIn"]!.GetValue<string>());
+        Assert.Equal(SquarePixels, changed["changedPixels"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AMissingBaselineAndAnExistingNameAreRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -178,6 +196,9 @@ public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, I
 
     private Task<IEnumerable<ContentBlock>> CompareAsync(string name, ScreenshotCrop? crop, int tolerance, CancellationToken cancellation) =>
         _tools.CompareScreenshotAsync(name, crop, tolerance, cancellationToken: cancellation);
+
+    private Task<IEnumerable<ContentBlock>> CompareColorsAsync(string name, string[] colors, CancellationToken cancellation) =>
+        _tools.CompareScreenshotAsync(name, null, 2, new GodotMcp.Server.Tools.CompareOptions(Colors: colors), cancellationToken: cancellation);
 
     private async Task SetSquareBlueAsync(CancellationToken cancellation) =>
         await _tools.SetPropertyAsync(
