@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- `prep.buildGate`, `importGate` and `gate` report a routed gate run's verdict or kill line, not the `gate: restored …` line printed after it.
 - `run_scratches` finds a scratch folder's `.xscn` and `.scn` scenes beside its `.tscn` ones, and refuses two scene files sharing one name.
 
 ## 0.29.0 - 2026-11-02

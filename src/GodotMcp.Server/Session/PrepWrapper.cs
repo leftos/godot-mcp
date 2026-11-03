@@ -19,8 +19,11 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
 
     public const string CeilingToken = "{ceiling}";
 
-    /// <summary>The prefix of a verdict line, as the gate prints it at the end of its own output.</summary>
-    public const string VerdictPrefix = "gate: ";
+    /// <summary>The prefixes of the lines a gate prints as its closing verdict.</summary>
+    private static readonly string[] VerdictForms = ["gate: passed in ", "gate: FAILED (status "];
+
+    /// <summary>The prefixes of the lines a gate prints when its watchdog killed the run: each names the cause.</summary>
+    private static readonly string[] KillForms = ["gate: STALLED", "gate: TIMED OUT", "gate: BACKSTOP", "gate: TRANSFER"];
 
     /// <summary>How much of a verdict line a result carries.</summary>
     public const int VerdictLength = 200;
@@ -63,19 +66,23 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     public string CaptureLog(string stepLog) => OwnsLog ? WrapperLog(stepLog) : stepLog;
 
     /// <summary>
-    /// The last line of a wrapper's capture log that starts with <see cref="VerdictPrefix"/>: a gate's closing verdict
-    /// (<c>gate: passed in …</c>, <c>gate: FAILED …</c>, <c>gate: TIMED OUT</c>), which comes after the lines it prints as it
-    /// starts, so the last is the one the step ended with. Null when the log holds none, which is what a wrapper that is not
-    /// a gate leaves. A line loses a trailing carriage return and is cut to <see cref="VerdictLength"/> characters.
+    /// The closing verdict line of a wrapper's capture log: the last line that starts with one of <see cref="VerdictForms"/>,
+    /// or, when the gate killed the run, the last line that starts with one of <see cref="KillForms"/>, since the
+    /// <c>gate: FAILED (status 124)</c> after a kill hides which kill it was. The prose a gate prints around its verdict
+    /// (<c>gate: waiting for a heavy slot</c>, and a routed run's <c>gate: restoring here</c> and <c>gate: restored …</c>
+    /// after it) is never a verdict. Null when the log holds none, which is what a wrapper that is not a gate leaves.
+    /// A line loses a trailing carriage return and is cut to <see cref="VerdictLength"/> characters.
     /// </summary>
     public static string? GateVerdict(string logText)
     {
-        string? verdict = logText
-            .Split('\n')
-            .Select(line => line.TrimEnd('\r'))
-            .LastOrDefault(line => line.StartsWith(VerdictPrefix, StringComparison.Ordinal));
+        string[] lines = [.. logText.Split('\n').Select(line => line.TrimEnd('\r'))];
+        string? verdict = LastLineStartingWith(lines, KillForms) ?? LastLineStartingWith(lines, VerdictForms);
         return verdict is null || verdict.Length <= VerdictLength ? verdict : verdict[..VerdictLength];
     }
+
+    /// <summary>The last of <paramref name="lines"/> that starts with one of <paramref name="forms"/>, or null when none does.</summary>
+    private static string? LastLineStartingWith(string[] lines, string[] forms) =>
+        lines.LastOrDefault(line => forms.Any(form => line.StartsWith(form, StringComparison.Ordinal)));
 
     /// <summary>
     /// <paramref name="request"/> run through the wrapper, from the project folder, with its output captured into

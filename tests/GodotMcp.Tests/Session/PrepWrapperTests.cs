@@ -122,7 +122,7 @@ public sealed class PrepWrapperTests : IDisposable
     [Fact]
     public void AVerdictIsCutToTwoHundredCharacters()
     {
-        string verdict = "gate: " + new string('x', 300);
+        string verdict = "gate: passed in " + new string('x', 300);
 
         string? cut = PrepWrapper.GateVerdict(verdict);
 
@@ -133,6 +133,50 @@ public sealed class PrepWrapperTests : IDisposable
     [Fact]
     public void AGatePrefixInsideALineIsNoVerdict() =>
         Assert.Null(PrepWrapper.GateVerdict("2026-01-01 out gate: passed in 1 s\nout gate: FAILED (status 1)\n"));
+
+    [Fact]
+    public void ATrailingRestoredLineIsNotTheVerdict()
+    {
+        const string verdict = "gate: passed in 10 s on builder@leftos-buildbox (load-adjusted 9 s, ceiling 300 s; command 8 s). Full output: x";
+        const string log =
+            verdict
+            + "\n"
+            + "gate: restoring here\n"
+            + "gate: restored X:\\a\\G.csproj here in 1.9 s, so a --no-build run here can use the routed build's outputs\n";
+
+        Assert.Equal(verdict, PrepWrapper.GateVerdict(log));
+    }
+
+    [Fact]
+    public void AFailedRunsVerdictIsItsFailedLine()
+    {
+        const string log =
+            "gate: FAILED (status 1). Full output: l\n" + "gate: dotnet restore of X:\\a\\G.csproj here failed: the command exited 1\n";
+
+        Assert.Equal("gate: FAILED (status 1). Full output: l", PrepWrapper.GateVerdict(log));
+    }
+
+    [Theory]
+    [InlineData("gate: STALLED: no output and no CPU for 120 s (the whole tree idle); killed it")]
+    [InlineData("gate: TIMED OUT after 300 s of load-adjusted time (ceiling 300 s)")]
+    [InlineData("gate: BACKSTOP: 1500 s of wall time (five times the 300 s ceiling)")]
+    [InlineData("gate: TRANSFER TIMED OUT after 1800 s fetching the outputs")]
+    [InlineData("gate: TRANSFER FAILED: the command exited 1 on host; sync-back failed")]
+    public void AKillLineBeatsTheFailedLineThatFollowsIt(string kill) =>
+        Assert.Equal(kill, PrepWrapper.GateVerdict(kill + "\ngate: FAILED (status 124). Full output: l\n"));
+
+    [Fact]
+    public void ALogOfOnlyProseHasNoVerdict() =>
+        Assert.Null(PrepWrapper.GateVerdict("gate: waiting for a heavy slot\ngate: not routed: no builder free\n"));
+
+    [Fact]
+    public void AStampedGateLogLineIsNoVerdict() =>
+        Assert.Null(
+            PrepWrapper.GateVerdict(
+                "2026-01-01T10:00:00+00:00 gat gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)\n"
+                    + "2026-01-01T10:00:01+00:00 gat gate: FAILED (status 1). Full output: l\n"
+            )
+        );
 
     [Theory]
     [InlineData("tools/gate.cmd")]
