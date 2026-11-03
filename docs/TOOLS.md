@@ -93,6 +93,14 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   An import that is due while another session's game runs on the folder is refused, not run under the live game: stop those sessions, or pass `options.prepare: "never"` to go on without it.
 
+  A headless write is refused while an editor session is open on the folder, since the editor's own copy of a scene and the file would race: `create_scene`, `save_scene`, `delete_nodes`, `attach_script`, `duplicate_node`, `move_node`, `add_node`, `set_node_properties`, `connect_signal`, `disconnect_signal`, `export_mesh_library`, `batch_scene_operations`, `load_sprite` and `stamp_uids`. The refusal names the session: `the editor session '<name>' is open on <dir>, so headless writes there are refused: they would race the editor's own copy of the scene. Make the change in the editor and save it with editor {action: save}, or stop the editor session with stop_project first; reads stay allowed.`
+
+  With several editor sessions it names them all (`the editor sessions 'a', 'b' are open on <dir>, …`) and says to stop the editor sessions.
+
+  Reads (`validate`, `get_scene_file_tree`, `get_node_properties`, `get_node_signals`, `describe_class`) run beside the editor.
+
+  The refusal is checked under the folder's prep lock before the prep runs, counts an editor that is still starting, and stays after a save while the editor session is open: "save it" means make the change in the editor instead. It sees this server's sessions only: an editor another server holds, one opened on the folder through a junction or other alias, and one opened outside the server are not seen.
+
   An import is also due when a built assembly declares a `[GlobalClass]` class deriving directly from `ResourceFormatLoader` or `ResourceFormatSaver`, named after its file, that the class cache lacks (an import before the first C# build leaves the cache empty, and a build does not refresh it). A class deriving through an intermediate base is not seen, and a plain `[GlobalClass]` makes no import due.
 
   One that registers a new `[GlobalClass]` loader or saver runs twice, since only a later pass's scan uses the new loaders, and says so in `prep`: `The import ran twice, because its first pass registered the project's [GlobalClass] loaders or savers, which only a later pass's scan uses: <a> ms, then <b> ms; …`. A `.xres` never counts as needing an import.

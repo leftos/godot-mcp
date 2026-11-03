@@ -23,6 +23,12 @@ internal sealed record HeadlessRequest(string ProjectDir, string Operation, Json
     public string ImportSkipHint { get; init; } = string.Empty;
 
     /// <summary>
+    /// Whether the operation writes the folder: a write is refused while an editor session is open on it, since the editor's own
+    /// copy of a scene and the file would race; a read runs beside the editor.
+    /// </summary>
+    public bool Writes { get; init; }
+
+    /// <summary>
     /// Whether the result carries the last saved C# build (<see cref="HeadlessResult.LastBuild"/>), which the prep then makes
     /// when none is saved yet (<see cref="PrepContext.BuildWhenUnsaved"/>): validate's .cs targets.
     /// </summary>
@@ -56,7 +62,7 @@ internal static class HeadlessRunner
 
     /// <exception cref="SessionException">
     /// Godot or the script was not found, the prep failed, the run passed its ceiling or wrote
-    /// no result, or the operation refused.
+    /// no result, an editor session is open on the folder a write names, or the operation refused.
     /// </exception>
     public static async Task<HeadlessResult> RunAsync(SessionRegistry registry, HeadlessRequest request, CancellationToken cancellationToken)
     {
@@ -65,6 +71,7 @@ internal static class HeadlessRunner
         await folderLock.WaitAsync(cancellationToken);
         try
         {
+            RefuseEditorWrite(registry, request);
             ClearFolder(registry, projectDir);
             string godot = Installation.FindGodot();
             string script = Installation.FindHeadlessScript();
@@ -96,6 +103,31 @@ internal static class HeadlessRunner
         {
             folderLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Refuses a write whose folder an editor session holds open, under the folder's prep lock and before anything of the request
+    /// runs: the editor's copy of a scene and the file would race. A read runs beside the editor.
+    /// </summary>
+    /// <exception cref="SessionException">The request writes and an editor session is open on its folder.</exception>
+    private static void RefuseEditorWrite(SessionRegistry registry, HeadlessRequest request)
+    {
+        IReadOnlyList<string> editors = request.Writes ? registry.EditorSessionNames(request.ProjectDir) : [];
+        if (editors.Count > 0)
+        {
+            throw new SessionException(EditorWriteRefusal(editors, request.ProjectDir));
+        }
+    }
+
+    /// <summary>What refuses a headless write on a folder an editor session holds open, naming every session holding it.</summary>
+    private static string EditorWriteRefusal(IReadOnlyList<string> editors, string projectDir)
+    {
+        string noun = editors.Count == 1 ? "session" : "sessions";
+        string verb = editors.Count == 1 ? "is" : "are";
+        string named = string.Join(", ", editors.Select(name => $"'{name}'"));
+        return $"the editor {noun} {named} {verb} open on {projectDir}, so headless writes there are refused: they would race the "
+            + "editor's own copy of the scene. Make the change in the editor and save it with editor {action: save}, or stop the "
+            + $"editor {noun} with stop_project first; reads stay allowed.";
     }
 
     /// <summary>

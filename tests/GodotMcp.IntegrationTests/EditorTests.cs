@@ -24,6 +24,7 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
     private readonly SessionHarness _harness = new();
     private readonly ProjectTools _project;
     private readonly RuntimeTools _runtime;
+    private readonly List<IDisposable> _projects = [];
 
     public EditorTests(OpenedProbeProject opened)
     {
@@ -32,7 +33,21 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
         _runtime = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
     }
 
-    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        // A probe a headless run made the warm host of is deleted only after the harness stopped that host: it holds the log open.
+        await _harness.DisposeAsync();
+        foreach (IDisposable project in _projects)
+        {
+            project.Dispose();
+        }
+    }
+
+    private ProbeProject Track(ProbeProject project)
+    {
+        _projects.Add(project);
+        return project;
+    }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task RunEditorOpensTheEditorQuietlyAndListsTheFileSystemDock()
@@ -209,6 +224,62 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
             "restart_project does not restart an editor session; stop it with stop_project and start it again with run_editor.",
             refused.Message
         );
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task EditorSessionNamesListsTheEditorOnItsOwnFolderAlone()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        ProbeProject other = Track(new ProbeProject());
+        await RunEditorAsync(token);
+
+        IReadOnlyList<string> mine = _harness.Sessions.EditorSessionNames(_opened.Directory);
+        IReadOnlyList<string> theirs = _harness.Sessions.EditorSessionNames(other.Directory);
+
+        Assert.Equal([Session], mine);
+        Assert.Empty(theirs);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task HeadlessWritesRefuseAFolderAnEditorSessionHolds()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        Git.CommitAll(probe.Directory);
+        HeadlessTools tools = new(_harness.Sessions);
+        _ = await _project.RunEditorAsync(probe.Directory, options: new EditorOptions(Session: Session), cancellationToken: token);
+        string folder = ProjectPaths.Normalise(probe.Directory);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            tools.SetNodePropertiesAsync(probe.Directory, MainScene, [new PropertyUpdate(".", "editor_description", JsonValue("refused"))], token)
+        );
+        JsonNode read = JsonNode.Parse(
+            await tools.GetNodePropertiesAsync(
+                probe.Directory,
+                MainScene,
+                [new NodePropertyQuery(".")],
+                options: new HeadlessOptions(Prepare: "never"),
+                cancellationToken: token
+            )
+        )!;
+        _ = await _project.StopProjectAsync(Session, discard: true, cancellationToken: token);
+        JsonNode written = JsonNode.Parse(
+            await tools.SetNodePropertiesAsync(
+                probe.Directory,
+                MainScene,
+                [new PropertyUpdate(".", "editor_description", JsonValue("written"))],
+                token
+            )
+        )!;
+
+        Assert.Equal(
+            $"the editor session '{Session}' is open on {folder}, so headless writes there are refused: they would race the editor's "
+                + "own copy of the scene. Make the change in the editor and save it with editor {action: save}, or stop the editor "
+                + "session with stop_project first; reads stay allowed.",
+            refused.Message
+        );
+        Assert.Single(read["results"]!.AsArray());
+        Assert.Single(written["results"]!.AsArray());
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

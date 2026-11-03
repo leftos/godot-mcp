@@ -372,6 +372,7 @@ internal sealed partial class HeadlessTools
             HeadlessRequest request = new(projectDir, "load_sprite", parameters, Prepare: true, RunCeiling)
             {
                 ImportAssets = LoadSpriteImportAssets(projectDir, texturePath),
+                Writes = true,
             };
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
@@ -503,7 +504,11 @@ internal sealed partial class HeadlessTools
     }
 
     private Task<HeadlessResult> RunWriteAsync(string projectDir, string operation, JsonObject parameters, CancellationToken cancellationToken) =>
-        HeadlessRunner.RunAsync(sessions, new HeadlessRequest(projectDir, operation, parameters, Prepare: true, RunCeiling), cancellationToken);
+        HeadlessRunner.RunAsync(
+            sessions,
+            new HeadlessRequest(projectDir, operation, parameters, Prepare: true, RunCeiling) { Writes = true },
+            cancellationToken
+        );
 
     /// <summary>The operation's result, with <see cref="AddBuildAndErrors"/> applied.</summary>
     private static string WithErrors(HeadlessResult run) => AddBuildAndErrors(run.Result?.DeepClone() as JsonObject ?? [], run).ToJsonString();

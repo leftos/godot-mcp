@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Changed
+
+- Headless scene edits are refused on a project while an editor session from `run_editor` is open on it; reads still work.
+
 ### Fixed
 
 - A quiet run stays unfocused and off-screen, and the pad shut-out holds, even when the project sets per-platform variants of those settings.

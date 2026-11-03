@@ -9,6 +9,15 @@ public sealed class EditorSessionTests
     public void ListSessionsNamesTheKindEditor() => Assert.Equal("editor", SessionRegistry.KindName(SessionKind.Editor));
 
     [Fact]
+    public async Task EditorSessionNamesIsEmptyForAFolderWithoutAnEditorSession()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("alpha");
+
+        Assert.Empty(harness.Sessions.EditorSessionNames(project));
+    }
+
+    [Fact]
     public async Task RestartProjectRefusesAnEditorSession()
     {
         await using RegistryHarness harness = new();

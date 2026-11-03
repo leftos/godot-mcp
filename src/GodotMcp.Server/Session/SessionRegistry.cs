@@ -1225,6 +1225,23 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
+    /// <summary>
+    /// The names of the live editor sessions on the folder, ordered: a still-starting editor counts. A headless write is refused
+    /// while one is open, since the editor's own copy of a scene and the file would race.
+    /// </summary>
+    internal IReadOnlyList<string> EditorSessionNames(string projectDir)
+    {
+        lock (_lock)
+        {
+            return
+            [
+                .. Ordered()
+                    .Where(other => other.Kind == SessionKind.Editor && other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir))
+                    .Select(other => other.Name),
+            ];
+        }
+    }
+
     /// <summary>Drops the session from the registry, if it still holds its name.</summary>
     internal void Forget(GodotSession session)
     {
