@@ -232,7 +232,7 @@ $itestGroups = [ordered]@{
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests', 'HeadlessXscnTests', 'HeadlessLoadErrorTests')
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
     csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests', 'CSharpWatchTests', 'CSharpFiredSignalsTests', 'ScratchCSharpStateTests')
-    scratch   = @('ScratchRunnerTests', 'ScratchLookRunTests')
+    scratch   = @('ScratchRunnerTests', 'ScratchLookRunTests', 'ScratchCommandRunTests')
     scratchsteps = @('ScratchStepsRunTests')
     scratchpace = @('ScratchPaceRunTests')
     scratchfolder = @('ScratchFolderTests', 'ScratchExpectRunTests')
@@ -349,6 +349,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/CSharp/**', 'csharp'),
     @('src/GodotMcp.Dotnet*/**', 'csharp'),
     @('dotnet/**', 'csharp'),
+    @('src/GodotMcp.Server/Agents/ScratchCommand.cs', @('scratch')),
     @('src/GodotMcp.Server/Agents/**', 'none'),
     @('src/GodotMcp.Launcher/**', 'none'),
     @('tools/InstallLayout.psm1', 'none'),

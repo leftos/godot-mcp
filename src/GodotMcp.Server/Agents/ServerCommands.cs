@@ -10,15 +10,20 @@ internal sealed record CommandEnvironment(string Home, string? SweepRoots);
 
 /// <summary>
 /// The server exe's commands, which print to stdout and exit without starting the MCP server: <c>--list-tools</c> prints
-/// every tool with its class as JSON, and <c>--sweep-agents [--dry-run] [--root &lt;folder&gt;]...</c> runs
-/// <see cref="AgentSweep"/>.
+/// every tool with its class as JSON, <c>--sweep-agents [--dry-run] [--root &lt;folder&gt;]...</c> runs
+/// <see cref="AgentSweep"/>, and <c>--run-scratches &lt;projectPath&gt; [options]</c> runs run_scratches from a terminal
+/// (<see cref="ScratchCommand"/>).
 /// </summary>
 internal static class ServerCommands
 {
     public const string ListTools = "--list-tools";
     public const string SweepAgents = "--sweep-agents";
+    public const string RunScratches = "--run-scratches";
 
-    private const string Usage = "usage: godot-mcp --list-tools | godot-mcp --sweep-agents [--dry-run] [--root <folder>]...";
+    private const string Usage =
+        "usage: godot-mcp --list-tools | godot-mcp --sweep-agents [--dry-run] [--root <folder>]... | "
+        + "godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] "
+        + "[--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--json]";
 
     /// <summary>
     /// Runs the command <paramref name="args"/> names and returns its exit status: 0 on success, 1 when a sweep failed, 2
@@ -40,6 +45,7 @@ internal static class ServerCommands
             ListTools when args.Count == 1 => PrintTools(output),
             ListTools => Refuse(error, $"{ListTools} takes no arguments."),
             SweepAgents => Sweep(args, output, error, environment),
+            RunScratches => ScratchCommand.Run(args, output, error),
             // An option the server does not know would otherwise start the MCP server on the terminal.
             string option when option.StartsWith("--", StringComparison.Ordinal) => Refuse(error, $"'{option}' is not a command."),
             _ => null,
@@ -91,7 +97,8 @@ internal static class ServerCommands
         return new AgentSweep(output).Run(new AgentSweepRequest(environment.Home, roots, dryRun, ToolClasses.ByTool));
     }
 
-    private static int Refuse(TextWriter error, string message)
+    /// <summary>A command's refusal as the exe prints it, its one usage text after the message; the status is a usage error's.</summary>
+    internal static int Refuse(TextWriter error, string message)
     {
         error.WriteLine($"godot-mcp: {message} {Usage}");
         return 2;

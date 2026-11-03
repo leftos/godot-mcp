@@ -1,15 +1,13 @@
 using GodotMcp.Server;
 using GodotMcp.Server.Agents;
-using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
-using GodotMcp.Server.Wire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 
-// --list-tools and --sweep-agents print to stdout and exit; with no command the exe is the MCP server.
+// --list-tools, --sweep-agents and --run-scratches run and exit; with no command the exe is the MCP server.
 CommandEnvironment commandEnvironment = new(
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
     Environment.GetEnvironmentVariable(AgentSweep.RootsVariable)
@@ -26,16 +24,17 @@ HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 // stdout is the MCP protocol: every log line goes to stderr.
 builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
 
-builder.Services.AddSingleton<BridgeListener>();
-builder.Services.AddSingleton<SessionRegistry>();
+// The listener, the registry over it and the C# tools' half of the bridge, built where --run-scratches builds them too, so the
+// command and the host cannot drift. GameServices is built first and disposed last, so the registry goes before the listener
+// it listens on.
+builder.Services.AddSingleton(services => GameServices.Create(services.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton(services => services.GetRequiredService<GameServices>().Sessions);
+builder.Services.AddSingleton(services => services.GetRequiredService<GameServices>().CSharp);
 builder.Services.AddSingleton(services => new FrontBusy(
     services.GetRequiredService<SessionRegistry>(),
     Environment.GetEnvironmentVariable("MCP_FRONT"),
     services.GetRequiredService<ILogger<FrontBusy>>()
 ));
-
-// The C# tools' half of the bridge: the copies of the helper the game loads, and where a published server finds its build.
-builder.Services.AddSingleton(new CSharpBridge(new HelperCache(HelperCache.DefaultRoot), Installation.FindDotnetExtension));
 builder
     .Services.AddMcpServer(options => options.ServerInfo = new Implementation { Name = "godot-mcp", Version = ServerVersion.Value })
     .WithStdioServerTransport()

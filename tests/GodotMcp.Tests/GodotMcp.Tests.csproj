@@ -4,6 +4,8 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>GodotMcp.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
+    <!-- The launcher's ServerProcess.cs is compiled in here for its wait loop, and its LibraryImport P/Invokes need unsafe. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -43,5 +45,6 @@
     <Compile Include="..\..\src\GodotMcp.Launcher\CommandLine.cs" Link="Launcher\CommandLine.cs" />
     <Compile Include="..\..\src\GodotMcp.Launcher\LauncherException.cs" Link="Launcher\LauncherException.cs" />
     <Compile Include="..\..\src\GodotMcp.Launcher\ServerPointer.cs" Link="Launcher\ServerPointer.cs" />
+    <Compile Include="..\..\src\GodotMcp.Launcher\ServerProcess.cs" Link="Launcher\ServerProcess.cs" />
   </ItemGroup>
 </Project>

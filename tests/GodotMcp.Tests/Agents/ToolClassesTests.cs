@@ -125,6 +125,7 @@ public sealed class ToolClassesTests
     [InlineData("--list-tools extra")]
     [InlineData("--sweep-agents --root")]
     [InlineData("--sweep-agents --bogus")]
+    [InlineData("--run-scratches")]
     [InlineData("--some-host-option")]
     public void UnreadableArgumentsAreRefusedWithStatus2(string line)
     {
@@ -134,6 +135,17 @@ public sealed class ToolClassesTests
 
         Assert.Equal(2, status);
         Assert.Contains("usage: godot-mcp", error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RunScratchesIsACommandAndTheUsageNamesIt()
+    {
+        StringWriter error = new();
+
+        int? status = ServerCommands.Run(["--run-scratches"], new StringWriter(), error, new CommandEnvironment("unused", null));
+
+        Assert.Equal(2, status);
+        Assert.Contains("godot-mcp --run-scratches <projectPath>", error.ToString(), StringComparison.Ordinal);
     }
 
     private static string[] Words(string line) => line.Split(' ', StringSplitOptions.RemoveEmptyEntries);

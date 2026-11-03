@@ -25,26 +25,39 @@ internal static partial class ServerProcess
     /// <exception cref="LauncherException">A step failed; a server already created is ended before it ran.</exception>
     public static int Run(string server, string commandLine)
     {
-        nint job = CreateKillOnCloseJob(server);
-        ProcessInformation native = CreateSuspendedServer(server, commandLine);
-        if (!AssignProcessToJobObject(job, native.Process))
+        // Ctrl+C reaches this process and the server on one console alike. The server decides what it means (a command stops
+        // its games and exits 130) and this process only carries that exit code out to the shell; the default handler would end
+        // the launcher first, and the kill-on-close job would then end the server before it could clean up. The handler is
+        // removed once the server has gone, so a Ctrl+C after it ends the launcher as any other process ends.
+        ConsoleCancelEventHandler keepWaiting = (_, cancel) => cancel.Cancel = true;
+        Console.CancelKeyPress += keepWaiting;
+        try
         {
-            throw Abandon(native, "AssignProcessToJobObject", server);
-        }
+            nint job = CreateKillOnCloseJob(server);
+            ProcessInformation native = CreateSuspendedServer(server, commandLine);
+            if (!AssignProcessToJobObject(job, native.Process))
+            {
+                throw Abandon(native, "AssignProcessToJobObject", server);
+            }
 
-        if (ResumeThread(native.Thread) == uint.MaxValue)
+            if (ResumeThread(native.Thread) == uint.MaxValue)
+            {
+                throw Abandon(native, "ResumeThread", server);
+            }
+
+            _ = CloseHandle(native.Thread);
+            if (WaitForSingleObject(native.Process, Infinite) == WaitFailed || !GetExitCodeProcess(native.Process, out uint exitCode))
+            {
+                throw Failure(server, "could not be waited for", "WaitForSingleObject or GetExitCodeProcess");
+            }
+
+            // The job's handle is left open for this process's exit to close, so the server is ended with it however it ends.
+            return unchecked((int)exitCode);
+        }
+        finally
         {
-            throw Abandon(native, "ResumeThread", server);
+            Console.CancelKeyPress -= keepWaiting;
         }
-
-        _ = CloseHandle(native.Thread);
-        if (WaitForSingleObject(native.Process, Infinite) == WaitFailed || !GetExitCodeProcess(native.Process, out uint exitCode))
-        {
-            throw Failure(server, "could not be waited for", "WaitForSingleObject or GetExitCodeProcess");
-        }
-
-        // The job's handle is left open for this process's exit to close, so the server is ended with it however it ends.
-        return unchecked((int)exitCode);
     }
 
     private static nint CreateKillOnCloseJob(string server)
