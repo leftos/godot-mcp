@@ -40,7 +40,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     /// <summary>What run_project's, attach_project's and arm_project's mute option does, without its default.</summary>
     internal const string MuteEffect =
         "Silence the game by muting its Master audio bus through the bridge, for the whole session: the bus is muted again "
-        + "whenever the game unmutes it. Independent of quiet, which always silences the game.";
+        + "whenever the game unmutes it. Independent of quiet, which silences the game unless options.audible keeps its real audio "
+        + "driver.";
 
     /// <summary>What attach_project's quiet and shutOutRealGamepads are when left out.</summary>
     internal const string ArmedDefault = " Left out on an armed folder, the arm's value; else false.";
@@ -89,9 +90,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         )]
             string[]? engineArgs = null,
         [Description(
-            "{quiet, mute, shutOutRealGamepads, session, prepare, preset, record, dropIdle, repickHover, env}; when left out, quiet is "
-                + "true unless "
-                + "godot-mcp.json sets it, mute and shutOutRealGamepads are false, prepare is auto (a stale C# assembly is built and "
+            "{quiet, audible, mute, shutOutRealGamepads, session, prepare, preset, record, dropIdle, repickHover, env}; when left "
+                + "out, quiet is true unless godot-mcp.json sets it, audible is false, "
+                + "mute and shutOutRealGamepads are false, prepare is auto (a stale C# assembly is built and "
                 + "missing or outdated imports are run first; the result's prep says what was done), no preset is used, the session is named by "
                 + "the preset's session, else after the project folder, record is false (with record, the result's recording.path "
                 + "is the movie), dropIdle is false, repickHover is true, and env gives the game no extra environment variables."

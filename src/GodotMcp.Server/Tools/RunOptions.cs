@@ -5,18 +5,25 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// How run_project sets up the game's window and pads, the session's name, whether the project is prepared first, and which
-/// preset of the project's godot-mcp.json it launches, whether it is recorded, whether its clips drop idle frames and whether
-/// the bridge re-picks the hover every frame, and the environment variables the game's process gets.
-/// <see cref="Quiet"/> and <see cref="Mute"/> are null when not given.
+/// preset of the project's godot-mcp.json it launches, whether it is recorded, whether its clips drop idle frames, whether the
+/// bridge re-picks the hover every frame, whether a quiet run keeps its sound, and the environment variables the game's process gets.
+/// <see cref="Quiet"/>, <see cref="Mute"/> and <see cref="Audible"/> are null when not given.
 /// </summary>
 internal sealed record RunOptions(
     [property: Description(
         "Starts the game quiet: created unfocused and off-screen, click-through, with the Dummy audio driver, so it takes no "
-            + "focus, shows nothing and plays no sound. false gives a normal visible, audible, focusable window. Default true, "
-            + "unless the project's godot-mcp.json sets quiet."
+            + "focus, shows nothing and plays no sound unless audible is true. false gives a normal visible, audible, focusable "
+            + "window. Default true, unless the project's godot-mcp.json sets quiet."
     )]
         bool? Quiet = null,
-    [property: Description(ProjectTools.MuteEffect + " Default false; false is refused on a quiet run, which is always silent.")] bool? Mute = null,
+    [property: Description(ProjectTools.MuteEffect + " Default false; false is refused on a quiet run, which is silent unless audible is true.")]
+        bool? Mute = null,
+    [property: Description(
+        "With a quiet run: keeps the real audio driver, so the game is heard while its window stays unfocused and off-screen on "
+            + "the hidden desktop. Default false; refused on a run that is not quiet, with mute true or with record. record_mark "
+            + "cannot record a quiet window; use record for a clip with sound."
+    )]
+        bool? Audible = null,
     [property: Description(ProjectTools.ShutOutDescription)] bool ShutOutRealGamepads = false,
     [property: Description(ProjectTools.NewSessionDescription)] string? Session = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
@@ -33,7 +40,7 @@ internal sealed record RunOptions(
             + "gamepad sweep) count clip time, 60 frames a second, and a wait's result adds clipMs. Mark the parts to "
             + "keep with record_mark; stop_project finalises the file and cuts them into .mp4 clips. Capped at 10 minutes of "
             + "frames. Not with "
-            + "--headless. If the server itself exits, a recording game is killed and its movie is not finalised."
+            + "--headless or options.audible. If the server itself exits, a recording game is killed and its movie is not finalised."
     )]
         bool? Record = null,
     [property: Description(
@@ -61,9 +68,23 @@ internal sealed record RunOptions(
         + "run a Godot import when imported files are missing, a source asset changed since it was imported, or its import "
         + "settings changed since the server last saw them (log in .godot/godot-mcp/import.log). never: launch as it is.";
 
-    /// <summary>What refuses an explicit mute: false on a run whose quiet resolves true.</summary>
+    /// <summary>What refuses an explicit mute: false on a run whose quiet resolves true and audible does not.</summary>
     internal const string UnmuteQuietRefusal =
-        "options.mute: false cannot unmute a quiet run, which is always silent; pass options.quiet: false to hear the game.";
+        "options.mute: false cannot unmute a quiet run, which is always silent; pass options.audible: true to hear it off-screen, "
+        + "or options.quiet: false to hear it on screen.";
+
+    /// <summary>What refuses options.audible on a run that is not quiet.</summary>
+    internal const string AudibleOffQuietRefusal =
+        "options.audible: true applies to a quiet run, and this run is not quiet, so it already plays sound (options.mute: true "
+        + "silences it); drop options.audible.";
+
+    /// <summary>What refuses options.audible with an explicit mute: true.</summary>
+    internal const string AudibleWithMuteRefusal = "options.audible: true and options.mute: true contradict; drop one.";
+
+    /// <summary>What refuses options.audible on a recording run.</summary>
+    internal const string AudibleRecordingRefusal =
+        "options.audible has no effect on a recording run: Movie Maker mixes on the Dummy driver and writes the sound into the "
+        + "clip; drop options.audible.";
 
     /// <summary>Whether prepare asks for the prep: true for auto or when left out, false for never.</summary>
     /// <exception cref="McpException">prepare is anything else.</exception>
@@ -71,8 +92,36 @@ internal sealed record RunOptions(
 
     /// <summary>Whether the bridge mutes the run: <see cref="Mute"/> when given, else false.</summary>
     /// <param name="quiet">Whether the run is quiet, as the options and the project's godot-mcp.json resolve it.</param>
-    /// <exception cref="McpException">mute is false and the run is quiet.</exception>
-    internal bool MuteFor(bool quiet) => Mute == false && quiet ? throw new McpException(UnmuteQuietRefusal) : Mute ?? false;
+    /// <param name="audible">Whether a quiet run keeps the real audio driver, so leaving mute out leaves its sound on.</param>
+    /// <exception cref="McpException">mute is false, and the run is quiet and not audible.</exception>
+    internal bool MuteFor(bool quiet, bool audible) =>
+        Mute == false && quiet && !audible ? throw new McpException(UnmuteQuietRefusal) : Mute ?? false;
+
+    /// <summary>Refuses options.audible: true on a run that is not quiet, with an explicit mute: true, or with record.</summary>
+    /// <param name="quiet">Whether the run is quiet, as the options and the project's godot-mcp.json resolve it.</param>
+    /// <exception cref="McpException">audible is true and the run is not quiet, is muted, or records.</exception>
+    internal void CheckAudible(bool quiet)
+    {
+        if (Audible != true)
+        {
+            return;
+        }
+
+        if (!quiet)
+        {
+            throw new McpException(AudibleOffQuietRefusal);
+        }
+
+        if (Mute == true)
+        {
+            throw new McpException(AudibleWithMuteRefusal);
+        }
+
+        if (Record == true)
+        {
+            throw new McpException(AudibleRecordingRefusal);
+        }
+    }
 
     /// <summary>Whether a prepare value asks for the prep: true for auto or null, false for never.</summary>
     /// <exception cref="McpException">The value is anything else.</exception>

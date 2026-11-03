@@ -44,6 +44,46 @@ public sealed class GodotCommandLineTests : IDisposable
     }
 
     [Fact]
+    public void AnAudibleQuietRunHasNoAudioDriverArgumentAndKeepsTheQuietFlag()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+        var profile = ProjectProfile.Empty(Project);
+        LaunchRequest audibleQuiet = profile.Merge(null, [], [], new RunOptions(Quiet: true, Audible: true)).Request;
+        LaunchRequest quiet = profile.Merge(null, [], [], new RunOptions(Quiet: true)).Request;
+        // A restart relaunches the session's last request with only its prepare replaced.
+        LaunchRequest restarted = audibleQuiet with
+        {
+            Prepare = false,
+        };
+
+        ProcessStartInfo audible = GodotCommandLine.CreateStartInfo("godot.exe", audibleQuiet, bridge, moviePath: null);
+        ProcessStartInfo restartedInfo = GodotCommandLine.CreateStartInfo("godot.exe", restarted, bridge, moviePath: null);
+        ProcessStartInfo plainQuiet = GodotCommandLine.CreateStartInfo("godot.exe", quiet, bridge, moviePath: null);
+
+        Assert.DoesNotContain("--audio-driver", GodotCommandLine.BuildArguments(audibleQuiet, moviePath: null));
+        Assert.DoesNotContain("--audio-driver", GodotCommandLine.BuildArguments(restarted, moviePath: null));
+        Assert.Equal("1", audible.Environment[GodotCommandLine.QuietVariable]);
+        Assert.Equal("1", restartedInfo.Environment[GodotCommandLine.QuietVariable]);
+        Assert.Contains("Dummy", GodotCommandLine.BuildArguments(quiet, moviePath: null));
+        Assert.False(plainQuiet.Environment.ContainsKey(GodotCommandLine.MuteVariable));
+        Assert.False(audible.Environment.ContainsKey(GodotCommandLine.MuteVariable));
+    }
+
+    [Fact]
+    public void AFileAudibleWithACallMuteStillMutes()
+    {
+        File.WriteAllText(Path.Combine(_temp.Path, ProjectProfile.FileName), """{ "audible": true }""");
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+        LaunchRequest request = ProjectProfile.Load(_temp.Path).Merge(null, [], [], new RunOptions(Mute: true)).Request;
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, bridge, moviePath: null);
+
+        Assert.Equal((true, true), (request.Quiet, request.Audible));
+        Assert.Equal("1", startInfo.Environment[GodotCommandLine.MuteVariable]);
+        Assert.DoesNotContain("--audio-driver", GodotCommandLine.BuildArguments(request, moviePath: null));
+    }
+
+    [Fact]
     public void AQuietEditorLaunchOpensTheEditorWindowedWithItsHostThenTheSceneAndTheDummyDriver()
     {
         const string host = @"C:\Program Files\godot-mcp\bridge\godot_mcp_editor_host.gd";

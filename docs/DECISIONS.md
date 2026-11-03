@@ -63,6 +63,8 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       It stays click-through. Audio is off through `--audio-driver Dummy`, placed before the user's engine arguments, never by touching the game's buses, so the game's own mute stays testable and no muted state leaks into its saved settings.
 
+      `options.audible` (GMCP-405) is the way to hear an off-screen run: it drops the Dummy argument and the project's own audio driver plays (Godot reads `audio/driver/driver` when no `--audio-driver` is given), while the window stays hidden. It beats `quiet: false` for a listening check because the window never takes focus, and `mute: false` on a quiet run stays refused, since the Dummy driver cannot be unmuted. It is refused off a quiet run (that run already plays), with `mute: true` (a contradiction) and with `record` (Movie Maker forces Dummy and writes the sound into the clip); `record_mark`'s real-time recording stays refused on a quiet session, since window capture cannot see the hidden desktop.
+
       Real input is kept out by the window never receiving it, not by swallowing: an always-on swallow also killed input the game synthesises itself (on-screen keyboards, virtual cursors) and never reached scene `_input` handlers or `Input` polling. The real mouse is still swallowed while a gesture plays, as before. Sessions on one folder must agree on quiet (the override holds one value).
 
       An attach is quiet only with `quiet: true` (user, 2026-09-27, #14): the override and the bridge's parking apply, but only a launcher can put a game on the hidden desktop or pass `--audio-driver Dummy`, so a debugger-launched game still shows for a moment at start and needs that argument in its own launch for silence.

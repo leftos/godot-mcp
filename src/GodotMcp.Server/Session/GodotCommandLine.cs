@@ -8,8 +8,8 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// What <c>run_project</c> asked for, with <see cref="ProjectPath"/> the project folder. With <see cref="Quiet"/> the window is
-/// created unfocused, off-screen and click-through, with the Dummy audio driver; with
-/// <see cref="ShutOutRealGamepads"/> it shuts the machine's real pads out of the game. With <see cref="Prepare"/> (prepare
+/// created unfocused, off-screen and click-through, with the Dummy audio driver unless <see cref="Audible"/> keeps the project's
+/// own; with <see cref="ShutOutRealGamepads"/> it shuts the machine's real pads out of the game. With <see cref="Prepare"/> (prepare
 /// "auto") a stale C# assembly is built and missing or outdated imports are run before the launch. With <see cref="Record"/> each start
 /// of the run is recorded with Godot's Movie Maker.
 /// </summary>
@@ -31,9 +31,16 @@ internal sealed record LaunchRequest(
 
     /// <summary>
     /// Whether the bridge mutes the game's Master bus. A quiet run needs no mute, since its Dummy audio driver plays nothing,
-    /// so only a mute without <see cref="Quiet"/> reaches the bridge (<see cref="GodotCommandLine.MuteVariable"/>).
+    /// so only a mute without <see cref="Quiet"/>, or with <see cref="Audible"/>, reaches the bridge
+    /// (<see cref="GodotCommandLine.MuteVariable"/>).
     /// </summary>
     public bool Mute { get; init; }
+
+    /// <summary>
+    /// Whether a quiet run keeps the project's own audio driver, so it is heard while its window stays unfocused, off-screen and
+    /// click-through. A run that is not quiet already plays sound, so it ignores this.
+    /// </summary>
+    public bool Audible { get; init; }
 
     /// <summary>
     /// Whether the bridge re-picks the hover at the injected pointer every frame; false reaches the bridge as
@@ -77,7 +84,7 @@ internal static partial class GodotCommandLine
     public const string TokenVariable = "GODOT_MCP_TOKEN";
     public const string QuietVariable = "GODOT_MCP_QUIET";
 
-    /// <summary>Set to "1" for a run that is muted and not quiet: the bridge mutes the game's Master bus.</summary>
+    /// <summary>Set to "1" for a heard run with mute: not quiet, or quiet and audible. The bridge mutes the game's Master bus.</summary>
     public const string MuteVariable = "GODOT_MCP_MUTE";
     public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
 
@@ -121,7 +128,7 @@ internal static partial class GodotCommandLine
     public static bool UsesHiddenDesktop(bool quiet) => quiet && OperatingSystem.IsWindows();
 
     /// <summary>
-    /// A quiet run's audio driver. The Dummy driver still mixes on its own thread, so playback advances
+    /// A quiet run's audio driver, unless the run is audible. The Dummy driver still mixes on its own thread, so playback advances
     /// (4.7.2 <c>servers/audio/audio_driver_dummy.cpp</c> L49-51, L56-73), and plays nothing.
     /// </summary>
     public static readonly IReadOnlyList<string> QuietAudioDriverArgs = ["--audio-driver", "Dummy"];
@@ -190,8 +197,9 @@ internal static partial class GodotCommandLine
             arguments.Add(request.Scene);
         }
 
-        // Godot keeps the last --audio-driver it reads (main.cpp L1234-1237 in 4.7.2), so one in EngineArgs wins.
-        if (request.Quiet)
+        // Godot keeps the last --audio-driver it reads (main.cpp L1234-1237 in 4.7.2), so one in EngineArgs wins. Without one it
+        // reads audio/driver/driver (main.cpp L2802-2811), the project's own driver.
+        if (request.Quiet && !request.Audible)
         {
             arguments.AddRange(QuietAudioDriverArgs);
         }
@@ -368,7 +376,7 @@ internal static partial class GodotCommandLine
         startInfo.Environment[PortVariable] = bridge.Port.ToString(CultureInfo.InvariantCulture);
         startInfo.Environment[TokenVariable] = bridge.Token;
         SetFlag(startInfo, QuietVariable, request.Quiet);
-        SetFlag(startInfo, MuteVariable, request.Mute && !request.Quiet);
+        SetFlag(startInfo, MuteVariable, request.Mute && (!request.Quiet || request.Audible));
         SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
         SetFlag(startInfo, PreviewVariable, request.Preview);
         SetFlag(startInfo, NoRepickHoverVariable, !request.RepickHover);

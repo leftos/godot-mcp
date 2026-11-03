@@ -77,6 +77,31 @@ public sealed class QuietTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnAudibleQuietRunIsOffScreenWithTheRealAudioDriver()
+    {
+        string launched = await _project.RunProjectAsync(
+            _probe.Directory,
+            options: new RunOptions(Audible: true),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        JsonNode state = await RunAsync(ReadWindowAndAudio);
+
+        Assert.True(JsonNode.Parse(launched)!["quiet"]!.GetValue<bool>(), launched);
+        Assert.False(state["focused"]!.GetValue<bool>(), state.ToJsonString());
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.True(state["hiddenDesktop"]!.GetValue<bool>(), state.ToJsonString());
+        }
+        else
+        {
+            Assert.False(state["onScreen"]!.GetValue<bool>(), state.ToJsonString());
+        }
+
+        Assert.NotEqual("Dummy", state["driver"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ANotQuietRunIsOnScreenAndAudible()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

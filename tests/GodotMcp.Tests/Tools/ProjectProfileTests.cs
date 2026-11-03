@@ -8,10 +8,10 @@ namespace GodotMcp.Tests.Tools;
 
 public sealed class ProjectProfileTests : IDisposable
 {
-    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, env, presets, prepWrapper, scratch, processes";
+    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, audible, env, presets, prepWrapper, scratch, processes";
     private const string PrepWrapperShape =
         "(top level): \"prepWrapper\" must be a non-empty array of non-empty strings, the program and then its arguments";
-    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, env, session";
+    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, audible, env, session";
 
     private const string Layered = """
         {
@@ -247,13 +247,53 @@ public sealed class ProjectProfileTests : IDisposable
     public void AnExplicitMuteFalseOnAQuietRunIsRefused()
     {
         Write(Layered);
-        const string refusal = "options.mute: false cannot unmute a quiet run, which is always silent; pass options.quiet: false to hear the game.";
+        const string refusal =
+            "options.mute: false cannot unmute a quiet run, which is always silent; pass options.audible: true to hear it off-screen, "
+            + "or options.quiet: false to hear it on screen.";
 
         string byDefault = Refused(() => ProjectProfile.Empty(_temp.Path).Merge(null, [], [], new RunOptions(Mute: false)));
         string byPreset = Refused(() => Merge(new RunOptions(Mute: false, Preset: "client")));
         string byOption = Refused(() => Merge(new RunOptions(Quiet: true, Mute: false)));
+        ProfileLaunch audible = Merge(new RunOptions(Quiet: true, Mute: false, Audible: true));
 
         Assert.Equal((refusal, refusal, refusal), (byDefault, byPreset, byOption));
+        Assert.Equal((true, false), (audible.Request.Quiet, audible.Request.Mute));
+    }
+
+    [Fact]
+    public void AudibleIsTakenFromOptionPresetAndTopLevelAndRefusedOffAQuietRun()
+    {
+        Write(
+            """
+            {
+              "audible": true,
+              "presets": {
+                "silent": { "quiet": true, "audible": false },
+                "bare": {}
+              }
+            }
+            """
+        );
+        const string notQuiet =
+            "options.audible: true applies to a quiet run, and this run is not quiet, so it already plays sound (options.mute: true "
+            + "silences it); drop options.audible.";
+        const string contradicts = "options.audible: true and options.mute: true contradict; drop one.";
+        const string recording =
+            "options.audible has no effect on a recording run: Movie Maker mixes on the Dummy driver and writes the sound into the "
+            + "clip; drop options.audible.";
+
+        ProfileLaunch byTop = Merge(new RunOptions());
+        ProfileLaunch byPreset = Merge(new RunOptions(Preset: "silent"));
+        ProfileLaunch byOption = Merge(new RunOptions(Preset: "silent", Audible: true));
+        ProfileLaunch leftOut = ProjectProfile.Empty(_temp.Path).Merge(null, [], [], new RunOptions());
+
+        Assert.Equal((true, true), (byTop.Request.Quiet, byTop.Request.Audible));
+        Assert.Equal((true, false), (byPreset.Request.Quiet, byPreset.Request.Audible));
+        Assert.Equal((true, true), (byOption.Request.Quiet, byOption.Request.Audible));
+        Assert.False(leftOut.Request.Audible);
+        Assert.Equal(notQuiet, Refused(() => Merge(new RunOptions(Quiet: false, Audible: true))));
+        Assert.Equal(contradicts, Refused(() => Merge(new RunOptions(Mute: true, Audible: true))));
+        Assert.Equal(recording, Refused(() => Merge(new RunOptions(Record: true, Audible: true))));
     }
 
     [Fact]

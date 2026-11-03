@@ -20,13 +20,14 @@ internal sealed record ProfileValues(
     IReadOnlyList<string> EngineArgs,
     string? Resolution,
     bool? Quiet,
+    bool? Audible,
     string? Session,
     string? Description,
     IReadOnlyDictionary<string, string> Env
 )
 {
     /// <summary>Values that set nothing.</summary>
-    public static readonly ProfileValues None = new(null, [], [], null, null, null, null, new Dictionary<string, string>());
+    public static readonly ProfileValues None = new(null, [], [], null, null, null, null, null, new Dictionary<string, string>());
 }
 
 /// <summary>
@@ -52,13 +53,25 @@ internal sealed partial class ProjectProfile
         "engineArgs",
         "resolution",
         "quiet",
+        "audible",
         "env",
         "presets",
         PrepWrapperKey,
         ScratchKey,
         ProcessesKey,
     ];
-    private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "env", "session", "description"];
+    private static readonly string[] PresetKeys =
+    [
+        "scene",
+        "userArgs",
+        "engineArgs",
+        "resolution",
+        "quiet",
+        "audible",
+        "env",
+        "session",
+        "description",
+    ];
     private static readonly string[] ScratchKeys =
     [
         "folder",
@@ -163,19 +176,21 @@ internal sealed partial class ProjectProfile
     }
 
     /// <summary>
-    /// Layers the top level, then <paramref name="options"/>' preset, then the explicit arguments: scene, resolution and quiet
-    /// are replaced by each later layer, the argument lists append in that order, and the resolution becomes
+    /// Layers the top level, then <paramref name="options"/>' preset, then the explicit arguments: scene, resolution, quiet and
+    /// audible are replaced by each later layer, the argument lists append in that order, and the resolution becomes
     /// <c>--resolution WxH</c> ahead of every engine argument, so an explicit one wins.
     /// </summary>
     /// <returns>The request to launch, and the session name: options' session, else the preset's, else null for the default.</returns>
     /// <exception cref="McpException">
     /// The preset is not in the file, or there is no file; or options' prepare is invalid; or options' mute is false on a quiet
-    /// run; or options' env names a variable that cannot be set.
+    /// run; or options' audible is true on a run that is not quiet, with mute true or with record; or options' env names a variable
+    /// that cannot be set.
     /// </exception>
     public ProfileLaunch Merge(string? scene, IReadOnlyList<string> userArgs, IReadOnlyList<string> engineArgs, RunOptions options)
     {
         ProfileValues preset = PresetFor(options.Preset);
         bool quiet = QuietFor(preset, options.Quiet);
+        bool audible = AudibleFor(preset, options, quiet);
         if (options.Env is not null)
         {
             CheckEnvironment(options.Env, "options.env", problem => new McpException(problem + "."));
@@ -183,7 +198,7 @@ internal sealed partial class ProjectProfile
 
         LaunchRequest request = new(
             ProjectDir,
-            scene ?? preset.Scene ?? _defaults.Scene,
+            SceneFor(preset, scene),
             EngineArgsFor(preset, engineArgs),
             [.. _defaults.UserArgs, .. preset.UserArgs, .. userArgs],
             quiet,
@@ -193,7 +208,8 @@ internal sealed partial class ProjectProfile
         {
             Record = options.Record ?? false,
             DropIdle = options.DropIdle ?? false,
-            Mute = options.MuteFor(quiet),
+            Mute = options.MuteFor(quiet, audible),
+            Audible = audible,
             RepickHover = options.RepickHover ?? true,
             Env = EnvironmentFor(preset, options.Env),
         };
@@ -241,6 +257,20 @@ internal sealed partial class ProjectProfile
     }
 
     private bool QuietFor(ProfileValues preset, bool? quiet) => quiet ?? preset.Quiet ?? _defaults.Quiet ?? true;
+
+    private string? SceneFor(ProfileValues preset, string? scene) => scene ?? preset.Scene ?? _defaults.Scene;
+
+    /// <summary>
+    /// The run's audibility: options', else the preset's, else the top level's, false when all three leave it out; refused when it
+    /// is true off a quiet run, with mute true or with record.
+    /// </summary>
+    /// <exception cref="McpException">audible is true and the run is not quiet, is muted, or records.</exception>
+    private bool AudibleFor(ProfileValues preset, RunOptions options, bool quiet)
+    {
+        bool audible = options.Audible ?? preset.Audible ?? _defaults.Audible ?? false;
+        options.CheckAudible(quiet);
+        return audible;
+    }
 
     private ProfileValues PresetFor(string? name)
     {
@@ -327,6 +357,7 @@ internal sealed partial class ProjectProfile
             ReadStrings(keys, "engineArgs", place),
             ReadResolution(keys, place),
             ReadBool(keys, "quiet", place),
+            ReadBool(keys, "audible", place),
             session,
             description,
             env
