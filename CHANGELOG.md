@@ -6,6 +6,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Added
 
+- `editor {action: play}` on a C# project with a `prepWrapper` builds through it first, and `play` and `build` replies carry `buildGate`.
+- `drag` takes `release: false` to stop with the button held; `click` and `drag` refuse while their button is held.
 - `watch` signal tracks take `stack: true`, adding each emission's call stack (GDScript then C# frames) to its event.
 - `stamp_uids`, a headless tool, gives hand-written `.tscn` and `.tres` files without a header uid the uid the editor would give them.
 - `run_project` takes `options.audible`, and godot-mcp.json an `audible` key, so a quiet off-screen run keeps its sound.
