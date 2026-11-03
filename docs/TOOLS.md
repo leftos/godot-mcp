@@ -572,9 +572,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A whole result that cannot be written still comes back capped, without `full`, its `cut` ending `the whole result could not be written to {path}: {message}`.
 
-  **From a terminal:** `godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--json]` runs the same runner on the same `godot-mcp.json`, headless, and a game repo calls it through the installed launcher as it does `--sweep-agents`.
+  **From a terminal:** `godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--user-arg <arg>]... [--engine-arg <arg>]... [--json]` runs the same runner on the same `godot-mcp.json`, headless, and a game repo calls it through the installed launcher as it does `--sweep-agents`.
 
   Each option is the `options` key of the same name, and a name the command does not take is refused; `windowed`, `background`, `steps`, `watch` and `capture` are the tool's only. The run's session is `cli-<pid>`.
+
+  Each `--user-arg` adds one element to `options.userArgs` and each `--engine-arg` one to `options.engineArgs`, in order. Their value is the next argument as it stands, even one that begins with `--` (`--user-arg --shadow-quality=Low`), and the tool's own checks refuse what they refuse.
 
   stdout holds only the result: one `<scene>: <verdict> (<played>/<total> steps, <seconds>s)` line per scene, a red one followed by `  failed at step <index> <name>: <error>` and one `  exit: <text>` line for each missing pattern, error or kill, then a last `scratch: passed (<green> green, <known> known, <noSteps> no steps)` or `scratch: failed (<green> green, <red> red, <killed> killed, <known> known, <noSteps> no steps)` line; with `--json` it is the tool's JSON instead. Logs go to stderr.
 

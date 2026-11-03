@@ -23,7 +23,8 @@ internal static class ServerCommands
     private const string Usage =
         "usage: godot-mcp --list-tools | godot-mcp --sweep-agents [--dry-run] [--root <folder>]... | "
         + "godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] "
-        + "[--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--json]";
+        + "[--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] "
+        + "[--user-arg <arg>]... [--engine-arg <arg>]... [--json]";
 
     /// <summary>
     /// Runs the command <paramref name="args"/> names and returns its exit status: 0 on success, 1 when a sweep failed, 2

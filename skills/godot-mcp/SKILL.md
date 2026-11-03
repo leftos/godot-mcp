@@ -100,6 +100,8 @@ Its folder, paces, ceilings, setup steps (`setup {"<scene>": [step, ...]}`, an i
 
 A terminal, hook or CI step runs the same runner on the same `godot-mcp.json` with `godot-mcp --run-scratches <projectPath>` (the installed launcher; `--scene` repeats, `--pace`, `--time-scale`, `--keep-going`, `--parallel`, `--prepare`, `--details`, `--only red` and `--json` are the options of the same name): stdout is a verdict line per scene and a `scratch: passed|failed (...)` line, and the exit status is 0 passed, 1 not passed, 2 a usage error or a refusal.
 
+A repeated `--user-arg <arg>` or `--engine-arg <arg>` adds one element to `userArgs` or `engineArgs`, its value taken as it stands even when it begins with `--` (`--user-arg --shadow-quality=Low`).
+
 A run of many minutes goes in the background: `run_scratches` with `options.background: true` returns `{runId, statusFile, logFile, scenes}` at once and plays on in the server (one background run per project; `run_scratches` on it is refused until it ends).
 
 Wait on its log with a `Monitor` running `timeout <limit> tail -n +1 -F <logFile>` and matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`) rather than holding a call open.

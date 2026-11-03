@@ -227,12 +227,12 @@ internal static class ScratchCommand
             return $"{Name} does not take '{arg}'.";
         }
 
-        if (arg is not "--scene" && !flags.Given.Add(arg))
+        if (!Repeatable(arg) && !flags.Given.Add(arg))
         {
             return $"{arg} is given twice; give it once.";
         }
 
-        if (index + 1 == args.Count || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        if (MissingValue(args, index, arg))
         {
             return $"{arg} needs a value.";
         }
@@ -241,9 +241,25 @@ internal static class ScratchCommand
         return Value(flags, scenes, arg, value);
     }
 
-    /// <summary>The options the command takes, each once but <c>--scene</c>, and each of them in the usage text.</summary>
+    /// <summary>The options given more than once, each occurrence appending one value: --scene, --user-arg and --engine-arg.</summary>
+    private static bool Repeatable(string option) => option is "--scene" or "--user-arg" or "--engine-arg";
+
+    /// <summary>
+    /// Whether <paramref name="option"/> is the last argument or is followed by another option. --user-arg and --engine-arg take
+    /// the next argument verbatim, even when it begins with --, so only being last refuses them.
+    /// </summary>
+    private static bool MissingValue(IReadOnlyList<string> args, int index, string option) =>
+        index + 1 == args.Count || (!TakesAnyValue(option) && args[index + 1].StartsWith("--", StringComparison.Ordinal));
+
+    /// <summary>The options whose next argument is their value verbatim, even when it begins with --.</summary>
+    private static bool TakesAnyValue(string option) => option is "--user-arg" or "--engine-arg";
+
+    /// <summary>
+    /// The options the command takes, each once but <c>--scene</c>, <c>--user-arg</c> and <c>--engine-arg</c>, and each of them in
+    /// the usage text.
+    /// </summary>
     private static bool Known(string option) =>
-        option is "--scene" or "--pace" or "--time-scale" or "--parallel" or "--prepare" or "--details" or "--only";
+        option is "--scene" or "--pace" or "--time-scale" or "--parallel" or "--prepare" or "--details" or "--only" or "--user-arg" or "--engine-arg";
 
     /// <summary>One known option's value, as the tool itself reads it: the command holds no check of its own.</summary>
     private static string? Value(Flags flags, List<string> scenes, string option, string value)
@@ -251,6 +267,12 @@ internal static class ScratchCommand
         if (option is "--scene")
         {
             scenes.Add(value);
+            return null;
+        }
+
+        if (option is "--user-arg" or "--engine-arg")
+        {
+            (option is "--user-arg" ? flags.UserArgs : flags.EngineArgs).Add(value);
             return null;
         }
 
@@ -398,7 +420,16 @@ internal static class ScratchCommand
 
         public bool Json { get; set; }
 
-        /// <summary>The options read so far, so a second one of them is refused; --scene is not one, being repeatable.</summary>
+        /// <summary>The --user-arg values in the order given, which the tool appends to the profile's own.</summary>
+        public List<string> UserArgs { get; } = [];
+
+        /// <summary>The --engine-arg values in the order given, which the tool places in that order.</summary>
+        public List<string> EngineArgs { get; } = [];
+
+        /// <summary>
+        /// The options read so far, so a second one of them is refused; --scene, --user-arg and --engine-arg are not ones, being
+        /// repeatable.
+        /// </summary>
         public HashSet<string> Given { get; } = new(StringComparer.Ordinal);
 
         /// <summary>The options left out stay null, so every one of them keeps the tool's own default.</summary>
@@ -410,7 +441,9 @@ internal static class ScratchCommand
                 Details: Details,
                 Parallel: Parallel,
                 KeepGoing: KeepGoing ? true : null,
-                Only: Only
+                Only: Only,
+                UserArgs: UserArgs.Count == 0 ? null : [.. UserArgs],
+                EngineArgs: EngineArgs.Count == 0 ? null : [.. EngineArgs]
             );
     }
 }

@@ -67,7 +67,45 @@ public sealed class ScratchCommandTests : IDisposable
         Assert.Null(parsed.Options.Details);
         Assert.Null(parsed.Options.Only);
         Assert.Null(parsed.Options.KeepGoing);
+        Assert.Null(parsed.Options.UserArgs);
+        Assert.Null(parsed.Options.EngineArgs);
         Assert.False(parsed.Json);
+    }
+
+    [Fact]
+    public void ParseCollectsEachUserArgAndEngineArgInOrder()
+    {
+        ScratchArguments? parsed = ScratchCommand.Parse(
+            [
+                "--run-scratches",
+                "C:/game",
+                "--user-arg",
+                "--shadow-quality=Low",
+                "--engine-arg",
+                "--resolution",
+                "--engine-arg",
+                "1280x720",
+                "--user-arg",
+                "plain",
+            ],
+            out string? error
+        );
+
+        Assert.Null(error);
+        Assert.NotNull(parsed);
+        Assert.Equal(["--shadow-quality=Low", "plain"], parsed.Options.UserArgs!);
+        Assert.Equal(["--resolution", "1280x720"], parsed.Options.EngineArgs!);
+    }
+
+    [Fact]
+    public void ParseKeepsReadingOptionsAfterAUserArgValueThatLooksLikeOne()
+    {
+        ScratchArguments? parsed = ScratchCommand.Parse(["--run-scratches", "C:/game", "--user-arg", "--x", "--json"], out string? error);
+
+        Assert.Null(error);
+        Assert.NotNull(parsed);
+        Assert.True(parsed.Json);
+        Assert.Equal(["--x"], parsed.Options.UserArgs!);
     }
 
     [Theory]
@@ -76,6 +114,8 @@ public sealed class ScratchCommandTests : IDisposable
     [InlineData("--run-scratches game --bogus value", "--run-scratches does not take '--bogus'.")]
     [InlineData("--run-scratches game --scene", "--scene needs a value.")]
     [InlineData("--run-scratches game --scene --json", "--scene needs a value.")]
+    [InlineData("--run-scratches game --user-arg", "--user-arg needs a value.")]
+    [InlineData("--run-scratches game --engine-arg", "--engine-arg needs a value.")]
     [InlineData("--run-scratches game --pace abc", "--pace takes a number, not 'abc'.")]
     [InlineData("--run-scratches game --time-scale soon", "--time-scale takes a number, not 'soon'.")]
     [InlineData("--run-scratches game --parallel two", "--parallel takes a number, not 'two'.")]
