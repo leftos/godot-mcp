@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `watch` gains the `frame_work_ms` monitor: a frame's own work time, without the frame cap's wait, vsync or the draw.
+
 ### Fixed
 
 - `prep.buildGate`, `importGate` and `gate` report a routed gate run's verdict or kill line, not the `gate: restored …` line printed after it.

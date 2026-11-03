@@ -405,6 +405,57 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task FrameWorkMsAnswersWithSamplesAndNoOver()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        await WatchAsync("start", cancellation, new WatchTracks(Monitors: ["frame_ms", "frame_work_ms"]));
+        await _tools.WaitForAsync(new WaitCondition(Frames: 5), cancellationToken: cancellation);
+        JsonObject timeline = await WatchAsync("stop", cancellation);
+
+        JsonArray monitors = timeline["monitors"]!.AsArray();
+        JsonObject frameMs = monitors[0]!.AsObject();
+        JsonObject work = monitors[1]!.AsObject();
+        Assert.Equal("frame_work_ms", work["name"]!.GetValue<string>());
+        int samples = Int(work["samples"]);
+        Assert.True(samples > 0 && samples <= Int(timeline["frames"]), work.ToJsonString());
+        Assert.False(work.ContainsKey("over"), work.ToJsonString());
+        Assert.True(work.ContainsKey("spikes"), work.ToJsonString());
+        foreach (JsonNode? spike in work["spikes"]!.AsArray())
+        {
+            JsonArray entry = spike!.AsArray();
+            Assert.Equal(2, entry.Count);
+            Assert.True(Int(entry[0]) >= 0, work.ToJsonString());
+            Assert.True(entry[1]!.GetValue<double>() >= 0, work.ToJsonString());
+        }
+
+        // A frame's work ends at its draw, before the next frame's stamp, so it cannot top the wall interval between frames.
+        Assert.True(work["max"]!.GetValue<double>() <= frameMs["max"]!.GetValue<double>(), timeline.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task FrameWorkMsHasNoReadingOnAPausedFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.FrameControlAsync("pause", cancellationToken: cancellation);
+        try
+        {
+            await WatchAsync("start", cancellation, new WatchTracks(Monitors: ["frame_ms", "frame_work_ms"]));
+            await Task.Delay(200, cancellation);
+            JsonObject timeline = await WatchAsync("stop", cancellation);
+
+            Assert.Equal(0, Int(timeline["frames"]));
+            JsonObject work = timeline["monitors"]![1]!.AsObject();
+            Assert.Equal(0, Int(work["samples"]));
+            Assert.False(work.ContainsKey("over"), work.ToJsonString());
+        }
+        finally
+        {
+            await _tools.FrameControlAsync("resume", cancellationToken: cancellation);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ObjectNodesFollowsTheNodesRunScriptAdds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

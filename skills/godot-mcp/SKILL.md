@@ -223,7 +223,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
   To line up two games (a host and a guest), `watch` each and compare the items' `at`: it is on the drive clock, as `metAt` and `startMs` are, and `clockErrorMs` bounds its error.
 
-  To see what happened while you acted (a dialog leaving after a click, a value across stepped frames), `watch start` first and `watch stop` after. A hitch: add `monitors: ["frame_ms"]` to the tracks, and its `spikes` name the frames over budget beside the signals and values of the moment (a hitch is one long frame, then one near 0).
+  To see what happened while you acted (a dialog leaving after a click, a value across stepped frames), `watch start` first and `watch stop` after. A hitch: add `monitors: ["frame_ms"]` to the tracks, and its `spikes` name the frames over budget beside the signals and values of the moment (a hitch is one long frame, then one near 0). Add `"frame_work_ms"` to read what a frame's own work cost under a frame cap or vsync, which `frame_ms` includes; it is refused with `unit: "physics"`, and a paused or undrawn frame has no reading.
 
   A sound: `tracks.audio.players` (`{players: {under?}}`) lists each voice's `start` (stream, bus), `pause`, `resume` and `end` (`finished`, `stopped` or `freed`) on the same frame clock as the click that caused it, which a `run_script` read after the call misses for a short sound; a `start` says the game asked for the sound (a quiet run plays on the Dummy driver), and an `end` with no `start` is a voice `start`'s `players.playing` listed.
 

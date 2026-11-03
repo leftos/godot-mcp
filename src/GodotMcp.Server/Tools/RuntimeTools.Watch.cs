@@ -27,6 +27,7 @@ internal sealed partial class RuntimeTools
     internal const int DefaultWatchFrames = 600;
     private const string WatchCommand = "watch";
     private const string FrameMsMonitor = "frame_ms";
+    private const string FrameWorkMsMonitor = "frame_work_ms";
     private static readonly string[] WatchActions = ["start", "stop", "run"];
 
     /// <summary>The built-in monitors Godot sets once a second (main/main.cpp L5121-5141 in 4.7.2, time/navigation_process at
@@ -66,6 +67,8 @@ internal sealed partial class RuntimeTools
             + "tracks.monitors adds monitors?: [{name, samples, p50, p95, p99, max, maxAt, mean, spikes?: [[frame, "
             + "value]], over?, custom?, nonNumeric?}], each read once a sampled frame and summarised in the game: frame_ms (the wall "
             + "time between frames, over: {budget, count, frames} against options.budgetMs, a hitch reading as one long frame), "
+            + "frame_work_ms (the frame's own work: its process_frame to its draw, free of the frame cap and vsync; no over, a "
+            + "frame that is not drawn has no reading), "
             + "a built-in monitor by its Performance.get_monitor_name path (object/nodes, raster/total_draw_calls), or a custom "
             + "monitor id; warning? says when a reading misleads. "
             + "tracks.audio.players follows every AudioStreamPlayer, 2D and 3D at or under players.under (default the root), "
@@ -106,7 +109,8 @@ internal sealed partial class RuntimeTools
         [Description("start, stop or run.")] string action,
         [Description(
             "start and run: {properties: [{node, property, name?, minDelta?}], expressions: [{name, expression, node?, minDelta?}], "
-                + "signals: [{node | group, signal}], monitors: [\"frame_ms\" | a built-in monitor such as \"object/nodes\" | a custom "
+                + "signals: [{node | group, signal}], monitors: [\"frame_ms\" | \"frame_work_ms\" | a built-in monitor such as "
+                + "\"object/nodes\" | a custom "
                 + "monitor id], audio: {players?: {under?}, buses?: [name] | [\"*\"], thresholdDb?}}, at least one track; at most 32 "
                 + "property and expression tracks, each with a unique key (name, else node and property), at most 16 signal "
                 + "tracks, at most 16 monitors and at most 16 buses; audio needs players or buses or both."
@@ -405,7 +409,7 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>Adds the monitors, each named once and none of Godot's once-a-second time/* monitors, and budgetMs, which
-    /// needs frame_ms; frame_ms measures process frames, so it is refused with unit physics.</summary>
+    /// needs frame_ms; frame_ms and frame_work_ms measure process frames, so either is refused with unit physics.</summary>
     private static void AddWatchMonitors(JsonObject parameters, string[] monitors, WatchOptions? options)
     {
         if (monitors.Length > MaxWatchMonitors)
@@ -424,13 +428,27 @@ internal sealed partial class RuntimeTools
             parameters["monitors"] = new JsonArray([.. monitors.Select(monitor => (JsonNode)monitor)]);
         }
 
-        bool frameMs = names.Contains(FrameMsMonitor);
-        if (frameMs && options?.Unit == "physics")
+        RefusePhysicsFrames(names, options?.Unit);
+        AddBudget(parameters, options?.BudgetMs, names.Contains(FrameMsMonitor));
+    }
+
+    /// <summary>Refuses unit physics with a monitor that measures process frames: frame_ms and frame_work_ms both do.</summary>
+    private static void RefusePhysicsFrames(HashSet<string> names, string? unit)
+    {
+        if (unit != "physics")
+        {
+            return;
+        }
+
+        if (names.Contains(FrameMsMonitor))
         {
             throw new McpException("frame_ms measures process frames; drop options.unit \"physics\" or the frame_ms monitor.");
         }
 
-        AddBudget(parameters, options?.BudgetMs, frameMs);
+        if (names.Contains(FrameWorkMsMonitor))
+        {
+            throw new McpException("frame_work_ms measures process frames; drop options.unit \"physics\" or the frame_work_ms monitor.");
+        }
     }
 
     private static void CheckMonitor(string monitor, HashSet<string> names)
@@ -438,14 +456,14 @@ internal sealed partial class RuntimeTools
         string name = CheckName(
             monitor,
             "monitor",
-            "Pass frame_ms, a built-in monitor's path as Performance.get_monitor_name gives it (object/nodes, "
+            "Pass frame_ms, frame_work_ms, a built-in monitor's path as Performance.get_monitor_name gives it (object/nodes, "
                 + "raster/total_draw_calls), or a custom monitor's id."
         );
         if (OnceASecondMonitors.Contains(name, StringComparer.Ordinal))
         {
             throw new McpException(
                 $"'{name}' is set once a second, so read per frame it repeats one value and hides which frame was slow; watch "
-                    + "'frame_ms' instead."
+                    + "'frame_ms' (the time between frames) or 'frame_work_ms' (the frame's own work) instead."
             );
         }
 

@@ -96,6 +96,9 @@ var group_members: Callable
 ## The real time now in microseconds: what frame_ms and the sampler's cost are measured with
 ## (Time.get_ticks_usec; a test sets its own).
 var usec_clock: Callable
+## The signal a sampled frame draws on, RenderingServer.frame_pre_draw, which reads frame_work_ms
+## (a test, whose frames draw nothing, sets its own).
+var draw_signal: Signal = RenderingServer.frame_pre_draw
 ## The Movie Maker file the run writes, "" when it records none: whether frame_ms warns that it
 ## measures render speed (Engine.get_write_movie_path; a test sets its own).
 var movie_path: Callable
@@ -221,11 +224,12 @@ func begin(params: Dictionary, source: Signal) -> String:
 		refusal = _connections_refusal(signals)
 	var perf: Variant = refusal
 	if refusal.is_empty():
-		perf = _monitors_script.begin(params, movie_path)
+		perf = _monitors_script.begin(params, movie_path, draw_signal)
 	if perf is String:
 		return perf
 	var audio: Variant = _audio_script.begin(params, bridge, audio_player, _buses_script, bus_peak)
 	if audio is String:
+		_monitors_script.release(perf)
 		return audio
 	_watch = _new_watch(params, tracks, source)
 	_watch["signals"] = signals

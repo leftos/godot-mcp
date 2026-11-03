@@ -26,10 +26,12 @@ internal sealed record WatchTracks(
         WatchSignalTrack[]? Signals = null,
     [property: Description(
         "Monitors read once a sampled frame and returned as a summary {name, samples, p50, p95, p99, max, maxAt, mean, spikes?}: "
-            + "frame_ms (the wall time between two frames, with over: {budget, count, frames} against options.budgetMs), a "
+            + "frame_ms (the wall time between two frames, with over: {budget, count, frames} against options.budgetMs), "
+            + "frame_work_ms (a frame's own work from its process_frame to its draw, without the frame cap's or vsync's wait), a "
             + "built-in monitor by its Performance.get_monitor_name path (object/nodes, raster/total_draw_calls), or a custom "
             + "monitor's id as Performance.add_custom_monitor registered it. At most 16; time/fps, time/process, "
-            + "time/physics_process and time/navigation_process are refused, since Godot sets them once a second."
+            + "time/physics_process and time/navigation_process are refused, since Godot sets them once a second; frame_work_ms "
+            + "reads a frame's own work instead."
     )]
         string[]? Monitors = null,
     [property: Description(

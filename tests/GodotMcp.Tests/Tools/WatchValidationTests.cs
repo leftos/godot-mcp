@@ -248,7 +248,7 @@ public sealed class WatchValidationTests
     public void AOnceASecondTimeMonitorIsRefusedPointingAtFrameMs(string monitor) =>
         Assert.Equal(
             $"'{monitor}' is set once a second, so read per frame it repeats one value and hides which frame was slow; watch "
-                + "'frame_ms' instead.",
+                + "'frame_ms' (the time between frames) or 'frame_work_ms' (the frame's own work) instead.",
             Refusal(() => BuildMonitors(null, "frame_ms", monitor))
         );
 
@@ -267,6 +267,28 @@ public sealed class WatchValidationTests
         Assert.Equal(
             "frame_ms measures process frames; drop options.unit \"physics\" or the frame_ms monitor.",
             Refusal(() => BuildMonitors(new WatchOptions(Unit: "physics"), "frame_ms"))
+        );
+
+    [Fact]
+    public void FrameWorkMsIsSentAsGiven()
+    {
+        JsonObject parameters = BuildMonitors(null, "frame_work_ms");
+
+        Assert.Equal("""["frame_work_ms"]""", parameters["monitors"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void FrameWorkMsWithUnitPhysicsIsRefused() =>
+        Assert.Equal(
+            "frame_work_ms measures process frames; drop options.unit \"physics\" or the frame_work_ms monitor.",
+            Refusal(() => BuildMonitors(new WatchOptions(Unit: "physics"), "frame_work_ms"))
+        );
+
+    [Fact]
+    public void ABudgetWithOnlyFrameWorkMsIsRefused() =>
+        Assert.Equal(
+            "options.budgetMs applies to the frame_ms monitor; add \"frame_ms\" to tracks.monitors or drop budgetMs.",
+            Refusal(() => BuildMonitors(new WatchOptions(BudgetMs: 20), "frame_work_ms"))
         );
 
     [Theory]

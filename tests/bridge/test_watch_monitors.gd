@@ -1,3 +1,4 @@
+# gdlint: disable=max-public-methods
 extends "res://gd_test.gd"
 ## The watch's monitors (bridge/godot_mcp_watch_monitors.gd, driven through godot_mcp_watch.gd):
 ## the built-in name table, frame_ms from an injected microsecond clock, custom monitors, the
@@ -7,6 +8,8 @@ extends "res://gd_test.gd"
 
 ## Stands in for the tree's process_frame.
 signal test_frame
+## Stands in for RenderingServer.frame_pre_draw, emitted by hand after a sampled frame.
+signal test_draw
 
 const BRIDGE_SOURCE := (
 	"extends Node\n\nvar _json: GDScript\nvar _inspect: Node\nvar top: Node\n\n\n"
@@ -228,6 +231,123 @@ func test_frame_ms_spikes_are_the_readings_over_the_budget_highest_first_and_at_
 	_free(rig)
 
 
+func test_frame_work_ms_reads_from_the_frame_stamp_to_its_draw() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var now: Array = [0]
+	watch.usec_clock = func() -> int: return now[0]
+	assert_eq(watch.begin({"monitors": ["frame_work_ms"], "frames": 3}, test_frame), "", "begins")
+	var running: Dictionary = watch._watch
+	watch.advance(running, false, 0, 0.016, 0)
+	now[0] = 5000
+	test_draw.emit()
+	now[0] = 16000
+	watch.advance(running, false, 1, 0.016, 1)
+	now[0] = 19000
+	test_draw.emit()
+	var monitor: Dictionary = watch.stop()["result"]["monitors"][0]
+	assert_eq(monitor["samples"], 2, "the two drawn frames")
+	assert_eq([monitor["max"], monitor["maxAt"]], [5.0, 0], "5 ms of work, not the 16 ms frame")
+	assert_eq(monitor["mean"], 4.0, "5 ms and 3 ms, not the intervals")
+	_free(rig)
+
+
+func test_frame_work_ms_has_no_reading_for_a_paused_or_undrawn_frame() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var now: Array = [0]
+	watch.usec_clock = func() -> int: return now[0]
+	assert_eq(watch.begin({"monitors": ["frame_work_ms"], "frames": 3}, test_frame), "", "begins")
+	var running: Dictionary = watch._watch
+	watch.advance(running, true, 0, 0.016, 0)
+	now[0] = 5000
+	test_draw.emit()
+	now[0] = 16000
+	watch.advance(running, false, 1, 0.016, 1)
+	now[0] = 32000
+	watch.advance(running, false, 2, 0.016, 2)
+	now[0] = 35000
+	test_draw.emit()
+	var monitor: Dictionary = watch.stop()["result"]["monitors"][0]
+	assert_eq([monitor["samples"], monitor["maxAt"]], [1, 2], "the drawn frame only")
+	assert_eq(monitor["max"], 3.0, "from that frame's stamp to its draw")
+	_free(rig)
+
+
+func test_frame_work_ms_has_no_over_and_lists_the_highest_as_spikes() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var now: Array = [0]
+	watch.usec_clock = func() -> int: return now[0]
+	assert_eq(watch.begin({"monitors": ["frame_work_ms"], "frames": 4}, test_frame), "", "begins")
+	var running: Dictionary = watch._watch
+	watch.advance(running, false, 0, 0.016, 0)
+	now[0] = 9000
+	test_draw.emit()
+	now[0] = 16000
+	watch.advance(running, false, 1, 0.016, 1)
+	now[0] = 17000
+	test_draw.emit()
+	now[0] = 32000
+	watch.advance(running, false, 2, 0.016, 2)
+	now[0] = 36000
+	test_draw.emit()
+	var monitor: Dictionary = watch.stop()["result"]["monitors"][0]
+	assert_true(not monitor.has("over"), "a frame's own work has no budget")
+	assert_eq(monitor["spikes"], [[0, 9.0], [2, 4.0], [1, 1.0]], "the highest first")
+	_free(rig)
+
+
+func test_frame_work_ms_disconnects_its_draw_handler_at_the_end() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	assert_eq(watch.begin({"monitors": ["frame_work_ms"], "frames": 2}, test_frame), "", "begins")
+	assert_eq(test_draw.get_connections().size(), 1, "connected at the start")
+	watch.advance(watch._watch, false, 0, 0.016, 0)
+	watch.stop()
+	assert_true(test_draw.get_connections().is_empty(), "let go at the end")
+	_free(rig)
+
+
+func test_a_refused_or_ended_watch_leaves_no_draw_handler_connected() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var refused: String = watch.begin(
+		{"monitors": ["frame_work_ms"], "audio": {"players": {"under": "Missing"}}}, test_frame
+	)
+	assert_true(not refused.is_empty(), "the audio track refuses the missing player")
+	assert_true(test_draw.get_connections().is_empty(), "the refused start keeps no handler")
+	assert_eq(watch.begin({"monitors": ["frame_work_ms"], "frames": 2}, test_frame), "", "begins")
+	watch.advance(watch._watch, false, 0, 0.016, 0)
+	watch.stop()
+	assert_true(test_draw.get_connections().is_empty(), "and the ended watch keeps none")
+	_free(rig)
+
+
+func test_the_frame_ms_summary_is_unchanged_beside_frame_work_ms() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var now: Array = [0]
+	watch.usec_clock = func() -> int: return now[0]
+	var params: Dictionary = {
+		"monitors": ["frame_ms", "frame_work_ms"], "budgetMs": 10.0, "frames": 3
+	}
+	assert_eq(watch.begin(params, test_frame), "", "begins")
+	var running: Dictionary = watch._watch
+	watch.advance(running, false, 0, 0.016, 0)
+	now[0] = 5000
+	test_draw.emit()
+	now[0] = 20000
+	watch.advance(running, false, 1, 0.016, 1)
+	now[0] = 23000
+	test_draw.emit()
+	var monitors: Array = watch.stop()["result"]["monitors"]
+	assert_eq(monitors[0]["over"], {"budget": 10.0, "count": 1, "frames": 1}, "frame_ms keeps over")
+	assert_eq([monitors[0]["max"], monitors[0]["maxAt"]], [20.0, 1], "the wall interval")
+	assert_eq([monitors[1]["samples"], monitors[1]["max"]], [2, 5.0], "the work readings")
+	_free(rig)
+
+
 func test_a_constant_built_in_series_has_no_spikes() -> void:
 	var rig: Dictionary = _rig()
 	var watch: Node = rig["watch"]
@@ -376,6 +496,7 @@ func _rig() -> Dictionary:
 	var watch: Node = _watch_script.new()
 	watch.bridge = bridge
 	watch.movie_path = func() -> String: return ""
+	watch.draw_signal = test_draw
 	return {"top": top, "mover": mover, "bridge": bridge, "watch": watch}
 
 

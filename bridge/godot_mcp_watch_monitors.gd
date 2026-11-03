@@ -6,9 +6,10 @@ extends RefCounted
 ## its maximum and the frame of it, its mean and its spikes) and frees it, so no series leaves the
 ## game. A built-in monitor is named by its path as Performance.get_monitor_name gives it, which is
 ## not bound to scripts, so NAMES copies 4.7.2's table (main/performance.cpp L165-237) in Monitor
-## enum order. frame_ms is the wall time between the stamps of two frames the watch sees; a custom
-## monitor is read by its id through Performance.get_custom_monitor, which calls the game's
-## callable.
+## enum order. frame_ms is the wall time between the stamps of two frames the watch sees;
+## frame_work_ms is the time from a frame's process_frame stamp to RenderingServer.frame_pre_draw,
+## free of the frame cap and vsync; a custom monitor is read by its id through
+## Performance.get_custom_monitor, which calls the game's callable.
 
 ## Every Performance.Monitor constant and its get_monitor_name path in Godot 4.7.2, in enum order.
 const NAMES := {
@@ -73,6 +74,7 @@ const NAMES := {
 	"NAVIGATION_3D_OBSTACLE_COUNT": "navigation_3d/obstacles",
 }
 const FRAME_MS := "frame_ms"
+const FRAME_WORK_MS := "frame_work_ms"
 ## The most spikes a monitor lists.
 const MAX_SPIKES := 20
 ## The percentiles a summary gives, by key.
@@ -110,8 +112,9 @@ const COST_WARNING := (
 ## monitor: the monitors in request order (_new_monitor), the frame_ms budget, the last frame's
 ## stamp, the sampler's time and frames, the frames drawn at the first and last sample, whether
 ## the session records with Movie Maker (movie_path gives a path; asked only when frame_ms is
-## watched), and the summary and warning finish leaves.
-static func begin(params: Dictionary, movie_path: Callable) -> Variant:
+## watched), the summary and warning finish leaves, and a work monitor's frame (work_start,
+## work_frame, work_clock) and its draw handler, which begin connects to draw_signal.
+static func begin(params: Dictionary, movie_path: Callable, draw_signal: Signal) -> Variant:
 	var monitors: Array = []
 	var names: Variant = params.get("monitors")
 	for name: Variant in names if names is Array else []:
@@ -120,7 +123,8 @@ static func begin(params: Dictionary, movie_path: Callable) -> Variant:
 			return monitor
 		monitors.append(monitor)
 	var frame_ms: bool = monitors.any(func(monitor: Dictionary) -> bool: return _is_frame(monitor))
-	return {
+	var work: bool = monitors.any(func(monitor: Dictionary) -> bool: return _is_work(monitor))
+	var state: Dictionary = {
 		"monitors": monitors,
 		"budget": _budget(params),
 		"last_usec": -1,
@@ -131,14 +135,28 @@ static func begin(params: Dictionary, movie_path: Callable) -> Variant:
 		"movie": frame_ms and not str(movie_path.call()).is_empty(),
 		"summary": [],
 		"warning": "",
+		"work": work,
+		"work_start": -1,
+		"work_frame": -1,
+		"work_clock": Callable(),
+		"draw_handler": Callable(),
+		"draw_signal": draw_signal,
 	}
+	if work:
+		var handler: Callable = _on_pre_draw.bind(state)
+		state["draw_handler"] = handler
+		draw_signal.connect(handler)
+	return state
 
 
-## frame_ms; a built-in monitor by its table name, which wins over a custom id of that name; else
-## a custom monitor, whose first read must be a number; else the refusal of the name.
+## frame_ms; frame_work_ms; a built-in monitor by its table name, which wins over a custom id of
+## that name; else a custom monitor, whose first read must be a number; else the refusal of the
+## name.
 static func _resolve(name: String) -> Variant:
 	if name == FRAME_MS:
 		return _new_monitor(name, "frame", 0)
+	if name == FRAME_WORK_MS:
+		return _new_monitor(name, "work", 0)
 	var constant: Variant = NAMES.find_key(name)
 	if constant != null:
 		var id: int = ClassDB.class_get_integer_constant("Performance", constant)
@@ -151,14 +169,18 @@ static func _resolve(name: String) -> Variant:
 	return _new_monitor(name, "custom", 0)
 
 
-## A monitor: its name, its kind (frame, builtin or custom), its Performance.Monitor value for a
-## built-in one, its series (each reading and the frame of it) and its non-numeric reads.
+## A monitor: its name, its kind (frame, work, builtin or custom), its Performance.Monitor value for
+## a built-in one, its series (each reading and the frame of it) and its non-numeric reads.
 static func _new_monitor(name: String, kind: String, id: int) -> Dictionary:
 	return {"name": name, "kind": kind, "id": id, "values": [], "frames": [], "non_numeric": 0}
 
 
 static func _is_frame(monitor: Dictionary) -> bool:
 	return monitor["kind"] == "frame"
+
+
+static func _is_work(monitor: Dictionary) -> bool:
+	return monitor["kind"] == "work"
 
 
 static func _is_number(value: Variant) -> bool:
@@ -175,14 +197,17 @@ static func _budget(params: Dictionary) -> float:
 
 
 ## Stamps a frame the watch saw and did not sample (a paused one), so the next frame_ms reading
-## measures from it rather than across the pause.
+## measures from it rather than across the pause, and drops a work monitor's frame, which is not
+## drawn.
 static func stamp(state: Dictionary, usec: int) -> void:
 	state["last_usec"] = usec
+	state["work_frame"] = -1
 
 
 ## Reads every monitor at frame, a sampled frame stamped now (usec, read as the frame reached the
 ## watch): frame_ms as the interval since the last stamp, none on the first; then adds the time the
-## frame's sampling took, from began to clock's reading now, to the sampler's cost.
+## frame's sampling took, from began to clock's reading now, to the sampler's cost. A work monitor
+## reads nothing here: its frame's work is measured at the frame's draw (_on_pre_draw), from now.
 static func sample(state: Dictionary, frame: int, now: int, began: int, clock: Callable) -> void:
 	var last: int = state["last_usec"]
 	state["last_usec"] = now
@@ -191,6 +216,10 @@ static func sample(state: Dictionary, frame: int, now: int, began: int, clock: C
 		if value != null:
 			(monitor["values"] as Array).append(value)
 			(monitor["frames"] as Array).append(frame)
+	if state["work"]:
+		state["work_start"] = now
+		state["work_frame"] = frame
+		state["work_clock"] = clock
 	var drawn: int = Engine.get_frames_drawn()
 	if int(state["drawn_first"]) < 0:
 		state["drawn_first"] = drawn
@@ -200,11 +229,14 @@ static func sample(state: Dictionary, frame: int, now: int, began: int, clock: C
 
 
 ## A monitor's reading now, or null for none: frame_ms in ms to 3 decimals from the stamps (none
-## without a last one); a built-in one through Performance.get_monitor; a custom one through
-## get_custom_monitor, none (counted in non_numeric) when it is not a number or the id is gone.
+## without a last one); a work monitor none at the sample, read at its frame's draw instead; a
+## built-in one through Performance.get_monitor; a custom one through get_custom_monitor, none
+## (counted in non_numeric) when it is not a number or the id is gone.
 static func _read(monitor: Dictionary, now: int, last: int) -> Variant:
 	if _is_frame(monitor):
 		return null if last < 0 else snappedf(float(now - last) / 1000.0, 0.001)
+	if _is_work(monitor):
+		return null
 	if monitor["kind"] == "builtin":
 		var id: Performance.Monitor = monitor["id"]
 		return Performance.get_monitor(id)
@@ -217,10 +249,27 @@ static func _read(monitor: Dictionary, now: int, last: int) -> Variant:
 	return null
 
 
+## Reads every work monitor at its frame's draw: the time from the frame's stamp (work_start) to
+## now, in ms to 3 decimals, and the frame's number with it. A frame sampled since the last draw is
+## the one read; a frame that was paused, or already read, adds nothing.
+static func _on_pre_draw(state: Dictionary) -> void:
+	var frame: int = state["work_frame"]
+	if frame < 0:
+		return
+	var usec: int = state["work_clock"].call()
+	var value: float = snappedf(float(usec - int(state["work_start"])) / 1000.0, 0.001)
+	for monitor: Dictionary in state["monitors"]:
+		if _is_work(monitor):
+			(monitor["values"] as Array).append(value)
+			(monitor["frames"] as Array).append(frame)
+	state["work_frame"] = -1
+
+
 ## Summarises every monitor of watch's state into its summary, frees the series, and joins the
-## warnings that apply into its warning.
+## warnings that apply into its warning; a work monitor's draw handler is disconnected first.
 static func finish(watch: Dictionary) -> void:
 	var state: Dictionary = watch["perf"]
+	release(state)
 	var summary: Array = []
 	for monitor: Dictionary in state["monitors"]:
 		summary.append(_summarise(monitor, state["budget"]))
@@ -228,6 +277,18 @@ static func finish(watch: Dictionary) -> void:
 		(monitor["frames"] as Array).clear()
 	state["summary"] = summary
 	state["warning"] = "; ".join(_warnings(watch))
+
+
+## Disconnects a work monitor's draw handler from its signal and lets the handler go, ending the
+## Dictionary-Callable cycle it holds; the signal itself stays in the state. finish calls it for a
+## watch that ends, and the watch calls it for one a later refusal keeps from starting.
+static func release(state: Dictionary) -> void:
+	var handler: Callable = state["draw_handler"]
+	if handler.is_valid():
+		var source: Signal = state["draw_signal"]
+		if source.is_connected(handler):
+			source.disconnect(handler)
+	state.erase("draw_handler")
 
 
 ## A monitor's summary: {name, samples, custom?, nonNumeric?, over? (frame_ms), and with samples
