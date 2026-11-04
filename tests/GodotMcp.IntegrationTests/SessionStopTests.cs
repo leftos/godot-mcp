@@ -23,6 +23,10 @@ public sealed class SessionStopTests : IAsyncDisposable
     // The probe's user argument naming the file its main scene writes as it leaves the tree (tests/fixtures/InputProbe/main.gd).
     private const string ExitMarkerArg = "--exit-marker=";
 
+    // What CloseHandlerScript's node prints on the close request, and as it leaves the tree.
+    private const string CloseRequestedLine = "[probe] close requested";
+    private const string LeftTheTreeLine = "[probe] close handler left the tree";
+
     // A hang guard on the wait of one game's stop for the other's at the server's exit: games that share one grace meet at once.
     private static readonly TimeSpan GraceMeetingWait = TimeSpan.FromMinutes(2);
 
@@ -92,6 +96,38 @@ public sealed class SessionStopTests : IAsyncDisposable
         Assert.NotNull(stopped.QuitMs);
         Assert.InRange(stopped.QuitMs.Value, 1200, 2999);
         Assert.True(stopped.OverrideRemoved);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AStopSendsTheGameACloseRequestFirst()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        await tools.RunScriptAsync(CloseHandlerScript(quits: true), 10_000, null, cancellation);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+        IReadOnlyList<string> stdout = _harness.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout;
+
+        Assert.False(stopped.Killed, stopped.KillReason);
+        Assert.Equal(0, stopped.GameExitCode);
+        AssertClosedBeforeTheExit(stdout);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AGameThatIgnoresTheCloseRequestIsQuitAfterItsFrames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        await tools.RunScriptAsync(CloseHandlerScript(quits: false), 10_000, null, cancellation);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+        IReadOnlyList<string> stdout = _harness.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout;
+
+        Assert.False(stopped.Killed, stopped.KillReason);
+        Assert.Equal(0, stopped.GameExitCode);
+        AssertClosedBeforeTheExit(stdout);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -296,6 +332,36 @@ public sealed class SessionStopTests : IAsyncDisposable
         + "\tnode.set_script(script)\n"
         + "\tscene_tree.root.add_child(node)\n"
         + "\treturn true\n";
+
+    /// <summary>
+    /// A run_script script that turns the tree's auto_accept_quit off and adds a node printing <see cref="CloseRequestedLine"/> on
+    /// NOTIFICATION_WM_CLOSE_REQUEST, then quitting the tree itself when <paramref name="quits"/>, and <see cref="LeftTheTreeLine"/>
+    /// as it leaves the tree.
+    /// </summary>
+    private static string CloseHandlerScript(bool quits) =>
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\tscene_tree.auto_accept_quit = false\n"
+        + "\tvar script := GDScript.new()\n"
+        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _notification(what: int) -> void:\\n"
+        + $"\\tif what == NOTIFICATION_WM_CLOSE_REQUEST:\\n\\t\\tprint('{CloseRequestedLine}')\\n"
+        + (quits ? "\\t\\tget_tree().quit()\\n" : "")
+        + $"\\n\\nfunc _exit_tree() -> void:\\n\\tprint('{LeftTheTreeLine}')\\n\"\n"
+        + "\tscript.reload()\n"
+        + "\tvar node := Node.new()\n"
+        + "\tnode.set_script(script)\n"
+        + "\tscene_tree.root.add_child(node)\n"
+        + "\treturn true\n";
+
+    /// <summary>The game printed <see cref="CloseRequestedLine"/> once, before <see cref="LeftTheTreeLine"/>.</summary>
+    private static void AssertClosedBeforeTheExit(IReadOnlyList<string> stdout)
+    {
+        string printed = string.Join('\n', stdout);
+        int closed = stdout.ToList().FindIndex(line => line.Contains(CloseRequestedLine, StringComparison.Ordinal));
+        int left = stdout.ToList().FindIndex(line => line.Contains(LeftTheTreeLine, StringComparison.Ordinal));
+        Assert.True(closed >= 0, $"the game never got the close request:\n{printed}");
+        Assert.Single(stdout, line => line.Contains(CloseRequestedLine, StringComparison.Ordinal));
+        Assert.True(left > closed, $"the node did not leave the tree after the close request:\n{printed}");
+    }
 
     /// <summary>A process by id with its handle held, so its pid cannot be reused before the test ends it; null if unopenable.</summary>
     private static Process? OpenRunning(int processId)

@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - `run_scratches` takes a lone step token, such as `options.steps: "2-5"`, as a one-item list.
+- A stopped game first gets the close request a user's window close sends, so it can run its own exit work; one that ignores it quits within a second.
 
 ### Fixed
 

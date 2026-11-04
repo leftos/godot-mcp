@@ -25,6 +25,11 @@ var _watch_script: GDScript = load_bridge_script("godot_mcp_watch.gd")
 var _frame_script: GDScript = load_bridge_script("godot_mcp_frame.gd")
 var _dormant_script: GDScript = load_bridge_script("godot_mcp_dormant.gd")
 var _window_script: GDScript = load_bridge_script("godot_mcp_window.gd")
+var _close_script: GDScript = load_bridge_script("godot_mcp_close.gd")
+## The quits a close module made by _counting_close asked for.
+var _quits: int = 0
+## The real-time clock a close module made by _counting_close reads, in ms.
+var _clock_ms: int = 0
 
 
 func test_cancel_of_an_answered_request_replies_false() -> void:
@@ -326,6 +331,133 @@ func test_an_attached_or_joined_game_never_quits_on_a_lost_connection() -> void:
 		_free_bridge(bridge)
 
 
+func test_a_close_sends_the_close_request_and_quits_only_once_its_frames_ran_out() -> void:
+	var close: RefCounted = _counting_close()
+	var probe: Node = _close_probe(Node.PROCESS_MODE_INHERIT)
+	var emitted: Array = []
+	var on_emit := func() -> void: emitted.append(true)
+	_tree().root.close_requested.connect(on_emit)
+	close.request_close_then_quit(_tree())
+	_tree().root.close_requested.disconnect(on_emit)
+	assert_eq(probe.closes, 1, "the probe node got NOTIFICATION_WM_CLOSE_REQUEST")
+	assert_eq(emitted.size(), 1, "the root's close_requested was emitted, once")
+	assert_eq(_quits, 0, "no quit in the frame of the request")
+	_frames(close.FRAMES - 1)
+	assert_eq(_quits, 0, "none before the frames ran out")
+	_frames(1)
+	assert_eq(_quits, 1, "the fallback quit once they did")
+	probe.free()
+
+
+func test_a_game_that_ignores_the_close_is_quit_once_after_ten_frames() -> void:
+	var close: RefCounted = _counting_close()
+	var probe: Node = _close_probe(Node.PROCESS_MODE_INHERIT)
+	_tree().auto_accept_quit = false
+	close.request_close_then_quit(_tree())
+	_tree().auto_accept_quit = true
+	assert_eq(probe.closes, 1, "the game was asked")
+	_frames(9)
+	assert_eq(_quits, 0, "9 frames are not enough")
+	_frames(1)
+	assert_eq(_quits, 1, "the 10th frame quits it")
+	_frames(5)
+	assert_eq(_quits, 1, "once")
+	probe.free()
+
+
+func test_a_close_quits_after_a_second_of_real_time_with_fewer_frames() -> void:
+	var close: RefCounted = _counting_close()
+	_clock_ms = 5000
+	close.request_close_then_quit(_tree())
+	_frames(3)
+	_clock_ms += 999
+	_frames(1)
+	assert_eq(_quits, 0, "999 ms are not enough")
+	_clock_ms += 1
+	_frames(1)
+	assert_eq(_quits, 1, "1000 ms quit it after 5 frames")
+	_frames(close.FRAMES)
+	assert_eq(_quits, 1, "once")
+
+
+func test_a_paused_game_gets_the_close_request_and_its_fallback_quit() -> void:
+	var close: RefCounted = _counting_close()
+	var pausable: Node = _close_probe(Node.PROCESS_MODE_PAUSABLE)
+	var always: Node = _close_probe(Node.PROCESS_MODE_ALWAYS)
+	_tree().paused = true
+	close.request_close_then_quit(_tree())
+	assert_eq(pausable.closes, 1, "a pausable node is not withheld the notification")
+	assert_eq(always.closes, 1, "nor an always node")
+	_frames(close.FRAMES - 1)
+	assert_eq(_quits, 0, "none before the frames ran out")
+	_frames(1)
+	_tree().paused = false
+	assert_eq(_quits, 1, "frames count on a paused tree")
+	pausable.free()
+	always.free()
+
+
+func test_a_second_quit_during_the_close_adds_nothing() -> void:
+	var close: RefCounted = _counting_close()
+	var probe: Node = _close_probe(Node.PROCESS_MODE_INHERIT)
+	close.request_close_then_quit(_tree())
+	_frames(2)
+	close.request_close_then_quit(_tree())
+	assert_eq(probe.closes, 1, "no second close request")
+	_frames(close.FRAMES)
+	assert_eq(_quits, 1, "one quit")
+	close.request_close_then_quit(_tree())
+	_frames(close.FRAMES)
+	assert_eq(_quits, 1, "still one")
+	probe.free()
+
+
+func test_an_editor_quit_only_requests_the_editors_close() -> void:
+	var bridge: Node = _bridge_script.new()
+	var editor_mode: GDScript = _compile_script(
+		(
+			"extends RefCounted\n\nstatic var closes: int = 0\n\n\n"
+			+ "static func request_close() -> void:\n\tcloses += 1\n"
+		)
+	)
+	var close: RefCounted = _counting_close()
+	var probe: Node = _close_probe(Node.PROCESS_MODE_INHERIT)
+	bridge._frame = _frame_script.new()
+	bridge._mode = _dormant_script.MODE_EDITOR
+	bridge._editor_mode = editor_mode
+	bridge._close = close
+	bridge._quit(_tree())
+	_frames(close.FRAMES)
+	assert_eq(editor_mode.closes, 1, "the editor's close is requested")
+	assert_eq(probe.closes, 0, "no game close request")
+	assert_eq(_quits, 0, "no fallback quit")
+	probe.free()
+	bridge._frame.free()
+	bridge.free()
+
+
+func test_a_lost_connection_sends_the_close_request_a_frame_later() -> void:
+	var bridge: Node = _bridge_script.new()
+	bridge._time = _time_script.new()
+	bridge._watch = _watch_script.new()
+	bridge._frame = _frame_script.new()
+	bridge._endpoint_source = _dormant_script.SOURCE_ENV
+	bridge._welcomed = true
+	var close: RefCounted = _counting_close()
+	bridge._close = close
+	var probe: Node = _close_probe(Node.PROCESS_MODE_INHERIT)
+	bridge._end_connection()
+	assert_eq(probe.closes, 0, "not in the frame the connection dropped")
+	_frames(1)
+	assert_eq(probe.closes, 1, "the close request the frame after")
+	assert_eq(_quits, 0, "and no quit yet")
+	_frames(close.FRAMES)
+	assert_eq(_quits, 1, "the fallback quit after its frames")
+	probe.free()
+	bridge._frame.free()
+	_free_bridge(bridge)
+
+
 func test_the_root_exiting_sends_the_watch_timeline_as_one_watch_final_frame() -> void:
 	var bridge: Node = _recording_bridge()
 	bridge._stream = StreamPeerTCP.new()
@@ -488,10 +620,47 @@ func _free_bridge(bridge: Node) -> void:
 
 ## An instance of a script compiled from source.
 func _compile(source: String) -> Object:
+	return _compile_script(source).new()
+
+
+## A script compiled from source.
+func _compile_script(source: String) -> GDScript:
 	var script := GDScript.new()
 	script.source_code = source
 	script.reload()
-	return script.new()
+	return script
+
+
+## A close module whose quits _count_quit counts in _quits and whose real-time clock is _clock_ms.
+func _counting_close() -> RefCounted:
+	_quits = 0
+	_clock_ms = 0
+	var close: RefCounted = _close_script.new()
+	close.do_quit = _count_quit
+	close.now_ms = _clock
+	return close
+
+
+func _count_quit(_tree_quit: SceneTree) -> void:
+	_quits += 1
+
+
+func _clock() -> int:
+	return _clock_ms
+
+
+## A node under the root, with the process mode given, counting the close requests it gets in
+## closes. The caller frees it.
+func _close_probe(mode: Node.ProcessMode) -> Node:
+	var probe: Node = _compile(
+		(
+			"extends Node\n\nvar closes: int = 0\n\n\nfunc _notification(what: int) -> void:\n"
+			+ "\tif what == NOTIFICATION_WM_CLOSE_REQUEST:\n\t\tcloses += 1\n"
+		)
+	)
+	probe.process_mode = mode
+	_tree().root.add_child(probe)
+	return probe
 
 
 ## A run_script source whose execute runs setup, then counts each frame it sees in the root's

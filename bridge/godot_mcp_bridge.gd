@@ -35,6 +35,7 @@ const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
 const STATE_SCRIPT := "godot_mcp_state.gd"
 const DORMANT_SCRIPT := "godot_mcp_dormant.gd"
 const WINDOW_SCRIPT := "godot_mcp_window.gd"
+const CLOSE_SCRIPT := "godot_mcp_close.gd"
 const AUDIO_SCRIPT := "godot_mcp_audio.gd"
 const WATCH_SCRIPT := "godot_mcp_watch.gd"
 const EDITOR_MODE_SCRIPT := "godot_mcp_editor_mode.gd"
@@ -157,6 +158,8 @@ var _logger: Logger
 var _dormant_script: GDScript
 ## The main window's script (godot_mcp_window.gd beside this script), static functions.
 var _window: GDScript
+## The game's close request and fallback quit (godot_mcp_close.gd beside this script), from _init.
+var _close: RefCounted
 ## The globalised folder of the attach, armed, dormant and join files.
 var _state_dir: String = ""
 ## The folder of this script and the modules beside it.
@@ -185,6 +188,7 @@ func _init() -> void:
 	_script_dir = script.resource_path.get_base_dir()
 	_dormant_script = load(_script_dir.path_join(DORMANT_SCRIPT)) as GDScript
 	_window = load(_script_dir.path_join(WINDOW_SCRIPT)) as GDScript
+	_close = (load(_script_dir.path_join(CLOSE_SCRIPT)) as GDScript).new()
 	_editor_mode = load(_script_dir.path_join(EDITOR_MODE_SCRIPT)) as GDScript
 	_audio = (load(_script_dir.path_join(AUDIO_SCRIPT)) as GDScript).new()
 	add_child(_audio)
@@ -442,13 +446,10 @@ func _poll_connection() -> void:
 	_read_frames()
 
 
-## Marks the connection gone and cancels each running request before forgetting it: no cancel can
-## reach them from the server now, and a wait_for or dotnet call would otherwise poll on
-## until its backstopMs for a reply nobody reads. A suspended run_script is dropped as a cancel
-## stops it, and a call_method is left to end unanswered, neither restoring the time scale or the
-## pause: no server is left to be told. A game the server launched quits a frame later, since the
-## bridge never dials again and a server killed outright never asks it to; an attached or joined
-## game is the user's and runs on.
+## Marks the connection gone and cancels and forgets each running request, which no cancel can
+## reach now (a wait_for or dotnet call would poll to its backstopMs): a run_script is dropped, a
+## call_method ends unanswered, neither restoring time scale or pause. A launched game quits a
+## frame later (the bridge never redials); an attached or joined game is the user's and runs on.
 func _end_connection() -> void:
 	# A refused hello is never welcomed: a child game that inherited the run's token runs on.
 	var launched: bool = _endpoint_source == _dormant_script.SOURCE_ENV and _welcomed
@@ -484,15 +485,14 @@ func _on_root_exiting() -> void:
 	_send({"type": "watchFinal", "timeline": timeline})
 
 
-## Ends the game as its own quit does, running its exit work, once every frame save still
-## encoding on a worker has ended; an editor gets its close request instead. The unit tests
-## replace it.
+## Once every frame save still encoding on a worker has ended, an editor gets its close request
+## and a game a user's close request, then its own quit (_close). The unit tests replace it.
 func _quit(tree: SceneTree) -> void:
 	_frame.wait_saves()
 	if _mode == _dormant_script.MODE_EDITOR:
 		_editor_mode.request_close()
 	else:
-		tree.quit()
+		_close.request_close_then_quit(tree)
 
 
 ## Sends the errors logged since the last flush as one {type: "errors", entries, dropped}
