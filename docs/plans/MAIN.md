@@ -154,6 +154,7 @@
 - [ ] GMCP-465 Process sessions: join the own-work job or say in ARCHITECTURE.md that their CPU counts as load
 - [ ] GMCP-467 A prep's Godot import failed once under load; root-cause it from the next failure's full text
 - [ ] GMCP-471 Prune the scratch userdata-* folders a killed server leaves, or say decision 47 does not · release vNext
+- [ ] GMCP-474 --run-scratches CLI: take --session like run_scratches' options.session · release vNext
 
 ## Docs
 
