@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Changed
+
+- `run_scratches` takes a lone step token, such as `options.steps: "2-5"`, as a one-item list.
+
 ### Fixed
 
 - Prep builds a C# assembly another tool copied over, whatever its write time, instead of calling it up to date and launching old code.

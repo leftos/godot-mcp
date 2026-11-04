@@ -621,9 +621,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `steps` (an array of tokens, or an object mapping a scene name to such an array; left out, `null` or `{}`: every step) plays only some steps, once each, in ascending order. An array applies to every scene of the call; an object gives each scene it names its own list, and a scene it leaves out plays every step.
 
-  A number is a step index. A string is read as a plain index first (as `scratch.pace` `steps` keys are, below the scene's step count), then as an exact step name, then as an inclusive range `"2-5"` of ASCII digits; `03` and `+3` are names, `"02-05"` is a range, and a name wins over a range reading.
+  A lone token (`"2-5"`, `3`, `"name"`) is a one-item list, in `options.steps`, a scene map's value and `options.capture.steps` alike. A number is a step index. A string is read as a plain index first (as `scratch.pace` `steps` keys are, below the scene's step count), then as an exact step name, then as an inclusive range `"2-5"` of ASCII digits; `03` and `+3` are names, `"02-05"` is a range, and a name wins over a range reading.
 
-  A `steps` that is neither is refused with `steps is a {kind}; it must be an array of step indices, names or ranges, or an object mapping a scene name to such an array.`
+  A `steps` that is none of these is refused with `steps is a {kind}; it must be a step index, name or range, an array of them, or an object mapping a scene name to one or an array.`
 
   An object key naming no scene of the plan is refused with `options.steps scene '<key>' is not in the plan; its scenes are <names>. Pass one of those; a scene the map leaves out plays every step.` A map value that is not an array reads `steps for <Scene>: it is a <kind>; it must be an array of step indices, names or ranges.`, and each list refusal below starts with `steps for <Scene>: ` for a map.
 

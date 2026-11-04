@@ -554,19 +554,55 @@ public sealed class ScratchValidationTests : IDisposable
         """{ "Other": ["5-2"] }""",
         "steps for Other: options.steps token \"5-2\" is a range whose start is after its end; write it \"2-5\"."
     )]
-    [InlineData("""{ "Other": 3 }""", "steps for Other: it is a number; it must be an array of step indices, names or ranges.")]
+    [InlineData("""{ "Other": true }""", "steps for Other: it is a true; it must be a step index, name or range, or an array of them.")]
     public void ABadListInAStepsMapIsRefusedNamingItsScene(string steps, string refusal) =>
         Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps)))));
 
     [Theory]
-    [InlineData("\"3\"", "string")]
-    [InlineData("3", "number")]
-    [InlineData("true", "true")]
-    public void StepsNeitherAnArrayNorAnObjectIsRefused(string steps, string kind) =>
+    [InlineData("true")]
+    public void StepsNeitherAnArrayNorAnObjectIsRefused(string steps) =>
         Assert.Equal(
-            $"steps is a {kind}; it must be an array of step indices, names or ranges, or an object mapping a scene name to such an array.",
+            "steps is a true; it must be a step index, name or range, an array of them, or an object mapping a scene name to one or " + "an array.",
             Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps))))
         );
+
+    [Theory]
+    [InlineData("\"2-5\"", "[\"2-5\"]")]
+    [InlineData("3", "[3]")]
+    [InlineData("\"name\"", "[\"name\"]")]
+    public void ALoneStepTokenPlaysAsAOneItemList(string lone, string list)
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan one = Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(lone)));
+        ScratchPlan many = Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(list)));
+
+        Assert.Equal(many.Steps, one.Steps);
+        Assert.Single(one.Steps!);
+        Assert.Empty(one.StepsByScene);
+    }
+
+    [Fact]
+    public void ALoneTokenInAStepsMapIsThatScenesList()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan one = Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("""{ "Other": "1-2" }""")));
+        ScratchPlan many = Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("""{ "Other": ["1-2"] }""")));
+
+        Assert.Equal(many.StepsFor("Other"), one.StepsFor("Other"));
+        Assert.Null(one.Steps);
+    }
+
+    [Fact]
+    public void ABadLoneTokenIsRefusedAsInAList()
+    {
+        string list = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("""["5-2"]"""))));
+        string lone = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("\"5-2\""))));
+
+        Assert.Equal(list, lone);
+        Assert.Equal("options.steps token \"5-2\" is a range whose start is after its end; write it \"2-5\".", lone);
+    }
 
     [Fact]
     public void ABareNumberPaceCarriesNoReason()
@@ -944,7 +980,7 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Theory]
-    [InlineData("\"x\"", "options.capture.steps is a string; it must be an array of step indices or names.")]
+    [InlineData("true", "options.capture.steps is a true; it must be a step index or name, or an array of them.")]
     [InlineData("[]", "options.capture.steps is empty; list the steps to shoot by index or name, or leave it out to shoot every played step.")]
     [InlineData("[-1]", "options.capture.steps token -1 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
     [InlineData("[1.5]", "options.capture.steps token 1.5 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
@@ -954,6 +990,18 @@ public sealed class ScratchValidationTests : IDisposable
     )]
     public void CaptureStepsThatAreNoListOfStepsAreRefused(string steps, string refusal) =>
         Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], CaptureOf(steps))));
+
+    [Theory]
+    [InlineData("\"x\"", "[\"x\"]")]
+    [InlineData("0", "[0]")]
+    public void ALoneCaptureStepIsShotAsAOneItemList(string lone, string list)
+    {
+        ScratchPlan one = Plan(["res://Other.tscn"], CaptureOf(lone));
+        ScratchPlan many = Plan(["res://Other.tscn"], CaptureOf(list));
+
+        Assert.Equal(many.Capture!.Steps, one.Capture!.Steps);
+        Assert.Single(one.Capture!.Steps!);
+    }
 
     [Fact]
     public void ACaptureStepGivenAsANumberAndAsItsTextIsShotOnce()
