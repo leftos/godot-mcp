@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using GodotMcp.Server.Session;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.TestSupport;
 
@@ -36,6 +37,7 @@ public sealed class CsProbeProject : IDisposable
         if (build)
         {
             Build(Path.Combine(Directory, ProjectName + ".csproj"));
+            RecordPrebuiltAssembly();
         }
     }
 
@@ -49,6 +51,7 @@ public sealed class CsProbeProject : IDisposable
 
         string assemblyFolder = Path.GetDirectoryName(PrepScan.AssemblyPath(template, ProjectName))!;
         CopyTree(assemblyFolder, Path.Combine(Directory, Path.GetRelativePath(template, assemblyFolder)));
+        RecordPrebuiltAssembly();
     }
 
     public string Directory { get; }
@@ -84,6 +87,18 @@ public sealed class CsProbeProject : IDisposable
     public void WriteSource(string fileName, string content) => File.WriteAllText(SourcePath(fileName), content);
 
     public void Dispose() => _temp.Dispose();
+
+    /// <summary>
+    /// Records the copy's assembly and sources as a green prep build records them (<see cref="PrepScan.WriteStamp"/>), so the
+    /// prep finds an assembly built here outside it up to date, as it would one it built itself.
+    /// </summary>
+    private void RecordPrebuiltAssembly() =>
+        PrepScan.WriteStamp(
+            PrepScan.AssemblyPath(Directory, ProjectName),
+            PrepScan.StampPath(Directory),
+            Directory,
+            PrepScan.Scan(Directory, NullLogger.Instance).BuildInputs
+        );
 
     /// <summary>The CsProbe fixture this class copies.</summary>
     private static string FixtureDirectory => Path.Combine(RepoPaths.Root, "tests", "fixtures", ProjectName);

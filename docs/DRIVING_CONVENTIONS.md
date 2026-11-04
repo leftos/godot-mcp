@@ -157,7 +157,7 @@ Source: src/GodotMcp.Server/Session/OverrideFile.cs:129-138, src/GodotMcp.Server
 ### Build before launch, and build before stopping on a restart
 <!-- rule: build-before-launch -->
 
-Every launch, restart and headless call runs a prep first: it builds the app when its assembly is missing or older than its sources (newest tracked source time against the assembly, plus a stamp touched after each green build so a non-compile change does not rebuild every run) and runs the asset import when imported files are missing, a source asset changed since its import, or its import settings changed, writing logs named in the result's `prep`.
+Every launch, restart and headless call runs a prep first: it builds the app when its assembly is missing or differs from what its last green build recorded (a stamp holding the assembly's size and write time and a hash of the tracked sources' paths, sizes and times, so an assembly another tool copied over, at any write time, still builds, and a non-compile change does not rebuild every run) and runs the asset import when imported files are missing, a source asset changed since its import, or its import settings changed, writing logs named in the result's `prep`.
 
 A red build refuses the launch with the parsed compiler errors and the configuration built.
 

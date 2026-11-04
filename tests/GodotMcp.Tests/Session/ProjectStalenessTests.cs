@@ -81,7 +81,61 @@ public sealed class ProjectStalenessTests : IDisposable
         ProjectPrepFixtures.WriteFile(Path.Combine(game, "Directory.Build.props"), "<Project />", ProjectPrepFixtures.Later);
         Assert.True(PrepAssertions.IsStale(game));
 
+        ProjectPrepFixtures.RecordBuild(game);
+
+        Assert.False(PrepAssertions.IsStale(game));
+    }
+
+    [Fact]
+    public void AnAssemblyThePrepNeverRecordedIsStaleThoughNewerThanEveryInput()
+    {
+        // A routed run's outputs install put old bytes over the assembly after an input's edit, stamped with a time after it.
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        string stamp = PrepScan.StampPath(game);
+        if (File.Exists(stamp))
+        {
+            File.Delete(stamp);
+        }
+
+        File.SetLastWriteTimeUtc(Path.Combine(game, "Player.cs"), ProjectPrepFixtures.Later);
+        File.SetLastWriteTimeUtc(PrepScan.AssemblyPath(game, "Game"), ProjectPrepFixtures.Latest);
+
+        Assert.True(PrepAssertions.IsStale(game));
+    }
+
+    [Fact]
+    public void AnAssemblyRewrittenAfterThePrepRecordedItIsStale()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        File.SetLastWriteTimeUtc(Path.Combine(game, "Player.cs"), ProjectPrepFixtures.Later);
+        ProjectPrepFixtures.WriteFile(PrepScan.AssemblyPath(game, "Game"), "dll", ProjectPrepFixtures.Latest);
+
+        Assert.True(PrepAssertions.IsStale(game));
+    }
+
+    [Fact]
+    public void ALegacyEmptyStampIsStale()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
         ProjectPrepFixtures.WriteFile(PrepScan.StampPath(game), string.Empty, ProjectPrepFixtures.Latest);
+
+        Assert.True(PrepAssertions.IsStale(game));
+    }
+
+    [Fact]
+    public void AnInputEditedAfterTheRecordIsStale()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        File.SetLastWriteTimeUtc(Path.Combine(game, "Player.cs"), ProjectPrepFixtures.Later);
+
+        Assert.True(PrepAssertions.IsStale(game));
+    }
+
+    [Fact]
+    public void ARecordMatchingTheAssemblyAndInputsIsUpToDate()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        ProjectPrepFixtures.RecordBuild(game);
 
         Assert.False(PrepAssertions.IsStale(game));
     }
@@ -94,6 +148,7 @@ public sealed class ProjectStalenessTests : IDisposable
         ProjectPrepFixtures.WriteFile(Path.Combine(game, "Player.cs"), "class Player;", ProjectPrepFixtures.Old);
         File.SetLastWriteTimeUtc(Path.Combine(game, "Game.csproj"), ProjectPrepFixtures.Old);
         ProjectPrepFixtures.WriteFile(PrepScan.AssemblyPath(game, "Game"), "dll", ProjectPrepFixtures.Built);
+        ProjectPrepFixtures.RecordBuild(game);
         ProjectPrepFixtures.WriteFile(Path.Combine(game, "obj", "Generated.cs"), "class Generated;", ProjectPrepFixtures.Later);
         ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "Cached.cs"), "class Cached;", ProjectPrepFixtures.Later);
         Assert.False(PrepAssertions.IsStale(game));
@@ -144,7 +199,7 @@ public sealed class ProjectStalenessTests : IDisposable
     /// A repository whose <c>.gitignore</c> holds <paramref name="rootGitignore"/>, with a game at
     /// <paramref name="folder"/>/game (Game.csproj, project.godot, Player.cs and a .gitignore holding
     /// <paramref name="gameGitignore"/>), committed where git lists it, every file set to <see cref="ProjectPrepFixtures.Old"/>,
-    /// and an assembly built after them.
+    /// and an assembly built after them and recorded.
     /// </summary>
     private string CreateRepositoryGame(string folder, string rootGitignore, string gameGitignore)
     {
@@ -164,6 +219,7 @@ public sealed class ProjectStalenessTests : IDisposable
         }
 
         ProjectPrepFixtures.WriteFile(PrepScan.AssemblyPath(game, "Game"), "dll", ProjectPrepFixtures.Built);
+        ProjectPrepFixtures.RecordBuild(game);
         return game;
     }
 }

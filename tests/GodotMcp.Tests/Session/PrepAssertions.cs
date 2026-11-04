@@ -8,7 +8,7 @@ namespace GodotMcp.Tests.Session;
 internal static class PrepAssertions
 {
     public static bool IsStale(string game) =>
-        PrepScan.IsStale(PrepScan.AssemblyPath(game, "Game"), PrepScan.StampPath(game), PrepScan.Scan(game, NullLogger.Instance).BuildInputs);
+        PrepScan.IsStale(PrepScan.AssemblyPath(game, "Game"), PrepScan.StampPath(game), game, PrepScan.Scan(game, NullLogger.Instance).BuildInputs);
 
     public static bool IsImportNeeded(string game) =>
         PrepScan.ImportNeeded(

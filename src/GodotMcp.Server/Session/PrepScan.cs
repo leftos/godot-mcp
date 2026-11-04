@@ -1,6 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
@@ -102,7 +105,7 @@ internal static partial class PrepScan
     public static string AssemblyPath(string projectDir, string assemblyName) =>
         Path.Combine(projectDir, ".godot", "mono", "temp", "bin", ProjectPrep.Configuration, assemblyName + ".dll");
 
-    /// <summary>The file the prep touches after each green build.</summary>
+    /// <summary>The file the prep records each green build in (<see cref="WriteStamp"/>).</summary>
     public static string StampPath(string projectDir) => Path.Combine(ProjectPrep.LogFolder(projectDir), "build.stamp");
 
     /// <summary>
@@ -199,21 +202,102 @@ internal static partial class PrepScan
         && !File.Exists(Path.Combine(folder, "project.godot"));
 
     /// <summary>
-    /// Whether the assembly is missing, or an input is newer than both the assembly and the stamp (an input that leaves the
-    /// assembly alone, such as a .props edit, would otherwise rebuild on every run).
+    /// Whether the assembly is missing, or differs from what the last green prep build recorded (<see cref="WriteStamp"/>): no
+    /// record, one that is not the record (an empty stamp from an older version included), an assembly whose size or
+    /// last-write time is not the recorded one, or build inputs whose hash is not. The assembly's time alone proves nothing,
+    /// since any writer can set it; and an input edit that leaves the assembly alone, such as a .props edit, is recorded by
+    /// the build after it, so it does not rebuild on every run.
     /// </summary>
-    public static bool IsStale(string assemblyPath, string stampPath, IEnumerable<string> inputs)
+    public static bool IsStale(string assemblyPath, string stampPath, string projectDir, IEnumerable<string> inputs)
     {
-        if (!File.Exists(assemblyPath))
+        FileInfo assembly = new(assemblyPath);
+        if (!assembly.Exists || !File.Exists(stampPath))
         {
             return true;
         }
 
-        // A missing stamp reads as 1601, older than anything.
-        DateTime assembly = File.GetLastWriteTimeUtc(assemblyPath);
-        DateTime stamp = File.GetLastWriteTimeUtc(stampPath);
-        DateTime built = assembly > stamp ? assembly : stamp;
-        return inputs.Any(input => File.GetLastWriteTimeUtc(input) > built);
+        try
+        {
+            using var record = JsonDocument.Parse(File.ReadAllBytes(stampPath));
+            return !RecordsAssembly(record.RootElement, assembly) || StringProperty(record.RootElement, "inputs") != InputsHash(projectDir, inputs);
+        }
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException or FormatException)
+        {
+            // A stamp that cannot be read or parsed says nothing about which build left the assembly, so only a build can.
+            return true;
+        }
+    }
+
+    /// <summary>Whether a record's <c>assembly</c> object holds the assembly's own size and last-write time.</summary>
+    private static bool RecordsAssembly(JsonElement record, FileInfo assembly)
+    {
+        if (
+            record.ValueKind != JsonValueKind.Object
+            || !record.TryGetProperty("assembly", out JsonElement built)
+            || built.ValueKind != JsonValueKind.Object
+        )
+        {
+            return false;
+        }
+
+        long length = -1;
+        bool sized = built.TryGetProperty("size", out JsonElement size) && size.ValueKind == JsonValueKind.Number && size.TryGetInt64(out length);
+        return sized && length == assembly.Length && StringProperty(built, "writtenUtc") == WrittenUtc(assembly);
+    }
+
+    /// <summary>A JSON object's string property, or null when it is missing or not a string.</summary>
+    private static string? StringProperty(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    /// <summary>
+    /// Records what a green prep build left: the assembly's size and last-write time and the hash of the build inputs
+    /// (<see cref="InputsHash"/>), as <c>{"assembly": {"size": …, "writtenUtc": "…"}, "inputs": "…"}</c>. With no assembly to
+    /// record, any earlier record is deleted, since it no longer describes the assembly.
+    /// </summary>
+    public static void WriteStamp(string assemblyPath, string stampPath, string projectDir, IEnumerable<string> inputs)
+    {
+        FileInfo assembly = new(assemblyPath);
+        if (!assembly.Exists)
+        {
+            File.Delete(stampPath);
+            return;
+        }
+
+        JsonObject record = new()
+        {
+            ["assembly"] = new JsonObject { ["size"] = assembly.Length, ["writtenUtc"] = WrittenUtc(assembly) },
+            ["inputs"] = InputsHash(projectDir, inputs),
+        };
+        Directory.CreateDirectory(Path.GetDirectoryName(stampPath)!);
+        File.WriteAllText(stampPath, record.ToJsonString());
+    }
+
+    private static string WrittenUtc(FileInfo file) => file.LastWriteTimeUtc.ToString("O", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The lowercase hex SHA-256 of the build inputs, sorted by ordinal path, each as <c>path\tsize\tticks\n</c>: its path
+    /// relative to the project folder with '/' separators, its size and its last-write ticks (UTC); a listed input that is
+    /// gone contributes a size of -1 and 0 ticks.
+    /// </summary>
+    private static string InputsHash(string projectDir, IEnumerable<string> inputs)
+    {
+        string root = Path.GetFullPath(projectDir);
+        IEnumerable<(string Relative, string Full)> sorted = inputs
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.Ordinal)
+            .Select(full => (Path.GetRelativePath(root, full).Replace('\\', '/'), full))
+            .OrderBy(input => input.Item1, StringComparer.Ordinal);
+        StringBuilder lines = new();
+        foreach ((string relative, string full) in sorted)
+        {
+            FileInfo info = new(full);
+            (long size, long ticks) = info.Exists ? (info.Length, info.LastWriteTimeUtc.Ticks) : (-1L, 0L);
+            lines.Append(CultureInfo.InvariantCulture, $"{relative}\t{size}\t{ticks}\n");
+        }
+
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(lines.ToString())));
     }
 
     /// <summary>

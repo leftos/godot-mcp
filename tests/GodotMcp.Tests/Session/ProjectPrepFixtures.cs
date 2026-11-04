@@ -1,5 +1,6 @@
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Tests.Session;
 
@@ -28,7 +29,7 @@ internal static class ProjectPrepFixtures
 
     /// <summary>
     /// A repository whose game (repo/game, Game.csproj) and sibling library (repo/lib) are committed with old times, and
-    /// whose assembly was built after them; .godot, bin and obj are ignored.
+    /// whose assembly was built after them and recorded (<see cref="RecordBuild"/>); .godot, bin and obj are ignored.
     /// </summary>
     public static string CreateBuiltRepository(TempDirectory temp)
     {
@@ -45,8 +46,18 @@ internal static class ProjectPrepFixtures
         }
 
         WriteFile(PrepScan.AssemblyPath(game, "Game"), "dll", Built);
+        RecordBuild(game);
         return game;
     }
+
+    /// <summary>Records the game's Game assembly and build inputs as they are now, as a green prep build does.</summary>
+    public static void RecordBuild(string game) =>
+        PrepScan.WriteStamp(
+            PrepScan.AssemblyPath(game, "Game"),
+            PrepScan.StampPath(game),
+            game,
+            PrepScan.Scan(game, NullLogger.Instance).BuildInputs
+        );
 
     /// <summary>A built repository with an icon and its import sidecar, both committed.</summary>
     public static string CreateRepositoryWithImportedIcon(TempDirectory temp)

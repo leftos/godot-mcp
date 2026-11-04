@@ -188,7 +188,7 @@ internal static class ProjectPrep
 
         CheckFinished(built, csproj, log, context.KilledBuildOutcome);
         CheckBuild(built, csproj, log, diagnostics, wrap);
-        File.WriteAllText(PrepScan.StampPath(projectDir), string.Empty);
+        PrepScan.WriteStamp(PrepScan.AssemblyPath(projectDir, lookup.AssemblyName!), PrepScan.StampPath(projectDir), projectDir, files.BuildInputs);
         return new PrepStep("built", milliseconds, null) { Log = log, Gate = gate };
     }
 
@@ -204,7 +204,7 @@ internal static class ProjectPrep
             return BuildNeed.Rebuild;
         }
 
-        return PrepScan.IsStale(PrepScan.AssemblyPath(projectDir, assemblyName), PrepScan.StampPath(projectDir), files.BuildInputs)
+        return PrepScan.IsStale(PrepScan.AssemblyPath(projectDir, assemblyName), PrepScan.StampPath(projectDir), projectDir, files.BuildInputs)
             ? BuildNeed.Build
             : BuildNeed.None;
     }
