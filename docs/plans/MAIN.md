@@ -9,7 +9,6 @@
 - [ ] GMCP-456 run_scratches: a .NET finalizer crash at quit after the exit marker is a warning, not a red scene · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-459 run_scratches: turn a shader compile error red, and let a project judge engine warnings · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-460 Quiet runs: the engine's pointer position follows injected input · release vNext — High · Ideas from the survey and the projects
-- [ ] GMCP-462 run_scratches: honour the profile's userData: scratch, one folder per scene · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-311 stop_project / list_sessions: no read-only view of who holds a folder's override.cfg · release vNext — High · Singles
 - [ ] GMCP-191 run_project: import an asset that has no .import file · release vNext — High · Singles
 - [ ] GMCP-277 Prep: detect import errors through a prepWrapper that prefixes output lines · release vNext — High · Singles
@@ -155,6 +154,7 @@
 - [ ] GMCP-458 simulate_action: reach a game that reads its keys in _unhandled_key_input
 - [ ] GMCP-465 Process sessions: join the own-work job or say in ARCHITECTURE.md that their CPU counts as load
 - [ ] GMCP-467 A prep's Godot import failed once under load; root-cause it from the next failure's full text
+- [ ] GMCP-471 Prune the scratch userdata-* folders a killed server leaves, or say decision 47 does not · release vNext
 
 ## Docs
 
