@@ -4,6 +4,7 @@
 
 ## Do first
 
+- [ ] GMCP-239 A real-time clip loses the frames written while its encoder stalls, coming out shorter than its span · release vNext — Urgent · Singles
 - [ ] GMCP-468 Flaky: the editor itest group timed out once at its 300 s ceiling with no failed test · release vNext — Urgent · Singles
 - [ ] GMCP-470 Flaky: TimeTests.WaitForNodeExists meets the node before the wait starts under load · release vNext — Urgent · Singles
 - [ ] GMCP-456 run_scratches: a .NET finalizer crash at quit after the exit marker is a warning, not a red scene · release vNext — High · Ideas from the survey and the projects
@@ -37,7 +38,6 @@
 - [ ] GMCP-348 frame_control: a step's screenshot takes no crop
 - [ ] GMCP-450 projectSettings: refuse out-of-range numbers and raw values carrying extra assignments
 - [ ] GMCP-461 click: when nothing fired, say why and name the nearest Control that listens
-- [ ] GMCP-464 Scratch user data: resolve the game's folder name as Godot does (feature tags, projectSettings, escapes)
 - [ ] GMCP-466 Scratch user data: stop and retire wait for a game the console wrapper outlived; resolve the seed's links
 
 ## Singles
@@ -76,7 +76,6 @@
 - [ ] GMCP-227 Split bridge/godot_mcp_input.gd below gdlint's 1000-line limit
 - [ ] GMCP-229 Measure whether capture_frames falls back to main-thread saves on a 4-core pool
 - [ ] GMCP-238 Replace the deadline file's move retry with a POSIX-semantics rename
-- [ ] GMCP-239 A real-time clip loses the frames written while its encoder stalls, coming out shorter than its span
 - [ ] GMCP-240 frame_control step: a call made after the until's signal connects, so a step can arm what it waits for
 - [ ] GMCP-241 ScratchCSharpStateTests: warm the C# helper before the first C# until, as CSharpStateTests now does
 - [ ] GMCP-243 Count the server-exit ShutdownCap on the load-adjusted clock
