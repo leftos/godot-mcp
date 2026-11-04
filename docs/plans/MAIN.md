@@ -39,6 +39,8 @@
 - [ ] GMCP-450 projectSettings: refuse out-of-range numbers and raw values carrying extra assignments
 - [ ] GMCP-461 click: when nothing fired, say why and name the nearest Control that listens
 - [ ] GMCP-466 Scratch user data: stop and retire wait for a game the console wrapper outlived; resolve the seed's links
+- [ ] GMCP-476 Prep: do not record a routed build whose gate brought no outputs back · release vNext
+- [ ] GMCP-477 Prep: hash the build inputs before the build, so an edit during it is not recorded as built · release vNext
 
 ## Singles
 
