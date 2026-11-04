@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `run_scratches` takes `options.audible` on a windowed run, so a scene's game keeps the project's audio driver and records audio unaliased.
+
 ### Changed
 
 - A `run_scratches` result read with `only: "red"` drops a green scene's `stepList`, `selected` and `setup`.

@@ -10,7 +10,13 @@ public sealed class ScratchLaunchRequestTests
     [Fact]
     public void AScenesEngineArgsGoBeforeTheSeparatorAndTheUserArgsAfter()
     {
-        LaunchRequest request = ScratchRun.LaunchRequestFor(Plan(windowed: false), Scene, quiet: false, shutOutRealGamepads: false, mute: false);
+        LaunchRequest request = ScratchRun.LaunchRequestFor(
+            Plan(windowed: false, audible: false),
+            Scene,
+            quiet: false,
+            shutOutRealGamepads: false,
+            mute: false
+        );
 
         Assert.Equal(
             ["--headless", "--time-scale", "4", "--a", "--b", "--", "u"],
@@ -21,7 +27,13 @@ public sealed class ScratchLaunchRequestTests
     [Fact]
     public void AWindowedScenesGameLaunchesQuietWithoutHeadless()
     {
-        LaunchRequest request = ScratchRun.LaunchRequestFor(Plan(windowed: true), Scene, quiet: true, shutOutRealGamepads: false, mute: false);
+        LaunchRequest request = ScratchRun.LaunchRequestFor(
+            Plan(windowed: true, audible: false),
+            Scene,
+            quiet: true,
+            shutOutRealGamepads: false,
+            mute: false
+        );
         string[] arguments = [.. GodotCommandLine.BuildArguments(request, moviePath: null)];
 
         Assert.Equal(["--time-scale", "4", "--a", "--b", "--", "u"], arguments[^6..]);
@@ -35,7 +47,7 @@ public sealed class ScratchLaunchRequestTests
         var userData = new ScratchUserDataRequest(null);
 
         LaunchRequest carried = ScratchRun.LaunchRequestFor(
-            Plan(windowed: false) with
+            Plan(windowed: false, audible: false) with
             {
                 UserData = userData,
             },
@@ -44,13 +56,52 @@ public sealed class ScratchLaunchRequestTests
             shutOutRealGamepads: false,
             mute: false
         );
-        LaunchRequest plain = ScratchRun.LaunchRequestFor(Plan(windowed: false), Scene, quiet: false, shutOutRealGamepads: false, mute: false);
+        LaunchRequest plain = ScratchRun.LaunchRequestFor(
+            Plan(windowed: false, audible: false),
+            Scene,
+            quiet: false,
+            shutOutRealGamepads: false,
+            mute: false
+        );
 
         Assert.Same(userData, carried.ScratchUserData);
         Assert.Null(plain.ScratchUserData);
     }
 
-    private static ScratchPlan Plan(bool windowed) =>
+    [Fact]
+    public void AnAudibleWindowedScenesGameKeepsTheProjectsAudioDriver()
+    {
+        LaunchRequest request = ScratchRun.LaunchRequestFor(
+            Plan(windowed: true, audible: true),
+            Scene,
+            quiet: true,
+            shutOutRealGamepads: false,
+            mute: false
+        );
+
+        Assert.True(request.Audible);
+        Assert.DoesNotContain("--audio-driver", GodotCommandLine.BuildArguments(request, moviePath: null));
+    }
+
+    [Fact]
+    public void AQuietWindowedScenesGameRunsTheDummyDriverWithoutAudible()
+    {
+        LaunchRequest request = ScratchRun.LaunchRequestFor(
+            Plan(windowed: true, audible: false),
+            Scene,
+            quiet: true,
+            shutOutRealGamepads: false,
+            mute: false
+        );
+        string[] arguments = [.. GodotCommandLine.BuildArguments(request, moviePath: null)];
+        int driver = Array.IndexOf(arguments, "--audio-driver");
+
+        Assert.False(request.Audible);
+        Assert.True(driver >= 0, "--audio-driver is missing from the arguments");
+        Assert.Equal([.. GodotCommandLine.QuietAudioDriverArgs], arguments[driver..(driver + GodotCommandLine.QuietAudioDriverArgs.Count)]);
+    }
+
+    private static ScratchPlan Plan(bool windowed, bool audible) =>
         new("/game", [Scene], [], false, ScratchDetails.Default)
         {
             DetailChars = ScratchVerdict.DefaultDetailChars,
@@ -61,5 +112,6 @@ public sealed class ScratchLaunchRequestTests
             Steps = null,
             TimeScale = 4,
             Windowed = windowed,
+            Audible = audible,
         };
 }

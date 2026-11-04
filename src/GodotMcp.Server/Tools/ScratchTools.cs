@@ -63,11 +63,16 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     private const string DisplayDriverArg = "--display-driver";
     private const string AudioDriverArg = "--audio-driver";
 
+    /// <summary>Why options.audible is refused without options.windowed: a headless scene's game always runs the Dummy driver.</summary>
+    internal const string AudibleNeedsWindowedRefusal =
+        "options.audible needs options.windowed: true, since a headless scene's game always runs Godot's Dummy audio driver";
+
     [McpServerTool(Name = ToolName, ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false)]
     [Description(
         "Plays scratch scenes and reports a verdict for each: every scene runs in a fresh game session, headless or, with "
             + "options.windowed, in a hidden, off-screen window "
-            + "(<folder>.scratch-<scene>, or '<options.session>.scratch-<scene>'), its root is called through the scratch protocol "
+            + "(<folder>.scratch-<scene>, or '<options.session>.scratch-<scene>'), where options.audible keeps the project's audio "
+            + "driver; its root is called through the scratch protocol "
             + "(GetStepCount, GetStepName(i), then per step "
             + "PlayStep(i), a wait of the pace in game time, GetStatus). A root that also has a public GetStepUntil(i) gives each step a "
             + "wait_for condition (an empty dictionary, or null, for a paced step): such a step is played inside one wait_for on it, "
@@ -148,7 +153,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             string[]? scenes = null,
         [Description(
             "{pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, parallel, session, keepGoing, steps, background, "
-                + "only, watch, windowed, userData}: pace in seconds for every "
+                + "only, watch, windowed, audible, userData}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
@@ -480,10 +485,16 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             TimeScale = options.TimeScale ?? 1,
             Watch = options.Watch,
             Windowed = options.Windowed ?? false,
+            Audible = PlanAudible(options),
             UserData = userData,
             Capture = capture,
         };
     }
+
+    /// <summary>options.audible as the plan holds it; false when left out.</summary>
+    /// <exception cref="McpException">options.audible is true without options.windowed true.</exception>
+    private static bool PlanAudible(ScratchOptions options) =>
+        options.Audible is true && options.Windowed is not true ? throw new McpException(AudibleNeedsWindowedRefusal) : options.Audible ?? false;
 
     /// <summary>options.capture as the plan holds it: the steps to shoot, null for every played step; null when left out.</summary>
     /// <exception cref="McpException">
@@ -1274,6 +1285,12 @@ internal sealed record ScratchOptions(
             + "on its session (name it in a background run); paces, untils and verdicts are the same."
     )]
         bool? Windowed = null,
+    [property: Description(
+        "true keeps each scene's game on the project's own audio driver instead of Godot's Dummy one, so it is heard and an "
+            + "AudioEffectRecord capture mixes on the real driver's small blocks; for a windowed run only (refused without "
+            + "options.windowed: true, since --headless forces the Dummy driver). Default false."
+    )]
+        bool? Audible = null,
     [property: Description(
         "{steps?, screenshot: true}: a screenshot at each named step's moment, for a windowed run only (refused without "
             + "options.windowed: true, since a headless scene draws no frames). steps lists step indices or exact names (a lone "

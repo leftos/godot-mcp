@@ -152,6 +152,9 @@ internal sealed record ScratchPlan(
     /// <summary>options.windowed: the scenes' games launch in a hidden, off-screen window instead of headless.</summary>
     public bool Windowed { get; init; }
 
+    /// <summary>options.audible: a windowed scene's game keeps the project's audio driver instead of the Dummy one.</summary>
+    public bool Audible { get; init; }
+
     /// <summary>The scratch user:// every scene's game gets a folder of its own of, seeded alike; null keeps the real one.</summary>
     public ScratchUserDataRequest? UserData { get; init; }
 
@@ -1150,6 +1153,7 @@ internal sealed class ScratchRun
         )
         {
             Mute = mute,
+            Audible = plan.Audible,
             ScratchUserData = plan.UserData,
         };
 

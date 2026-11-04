@@ -923,6 +923,29 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
+    public void AudibleIsPlannedOnAWindowedRunAndOffByDefault()
+    {
+        Assert.True(Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true, Audible: true)).Audible);
+        Assert.False(Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true)).Audible);
+        Assert.False(Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true, Audible: false)).Audible);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void AnAudibleRunWithoutWindowedIsRefused(bool? windowed)
+    {
+        Assert.Equal(
+            ScratchTools.AudibleNeedsWindowedRefusal,
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Windowed: windowed, Audible: true)))
+        );
+        Assert.Equal(
+            "options.audible needs options.windowed: true, since a headless scene's game always runs Godot's Dummy audio driver",
+            ScratchTools.AudibleNeedsWindowedRefusal
+        );
+    }
+
+    [Fact]
     public void ACaptureWithoutWindowedIsRefused() =>
         Assert.Equal(
             "options.capture needs options.windowed: true, since a headless scene draws no frames",
