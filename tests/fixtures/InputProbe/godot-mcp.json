@@ -37,6 +37,7 @@
         }
       },
       "ScratchUntilNever": 1,
+      "ScratchUntilRaises": 2,
       "ScratchUntilReleased": {
         "seconds": 0.5,
         "reason": "its last step only leaves a note",

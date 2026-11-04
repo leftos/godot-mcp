@@ -302,6 +302,19 @@ func test_call_once_fails_on_an_error_the_feed_logs_across_the_call() -> void:
 	_free_call_rig(rig)
 
 
+func test_call_once_in_a_scratch_until_keeps_the_call_and_its_raised_error() -> void:
+	var rig: Dictionary = _call_rig()
+	var called: Dictionary = {}
+	var failed: String = rig["time"]._call_once(
+		{"call": {"node": "CallTarget", "method": "fail"}, "limitGameMs": 500}, called
+	)
+	assert_eq(failed, "", "an error the step logs does not end its until's wait")
+	assert_eq(
+		called, {"value": 3, "raised": "the method failed"}, "the value, and the first error raised"
+	)
+	_free_call_rig(rig)
+
+
 ## A clock whose bridge is a stand-in holding the inspector, the JSON module and an unregistered
 ## logger, and CallTarget, a node outside any tree (the runner's root is not in one yet) with
 ## add(a, b), warn() and fail(), the last two logging a warning or an error to that logger as the

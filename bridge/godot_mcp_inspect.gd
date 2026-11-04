@@ -363,12 +363,14 @@ func call_method(params: Dictionary) -> Variant:
 
 ## {value}: the method params names ({node, method, args}, as call_method takes them) called now
 ## with callv and never awaited, so a coroutine runs to its first await and its value is null.
-## Returns a String instead when the call is refused as call_method refuses it, or when the error
-## feed logged an error (not a warning) across the callv: a GDScript runtime error or a C#
-## exception cannot be caught, and Godot refusing the callv itself logs one too; the String is the
-## first such error's message. params {tool, extension, request} calls a game tool instead
-## (call_tool_now).
-func call_now(params: Dictionary) -> Variant:
+## Returns a String instead when the call is refused as call_method refuses it, or, with
+## keep_raised false, when the error feed logged an error (not a warning) across the callv: a
+## GDScript runtime error or a C# exception cannot be caught, and Godot refusing the callv itself
+## logs one too; the String is the first such error's message. With keep_raised true an error the
+## call logged does not replace its value: the answer gains raised, that first error's message, and
+## the value is the method's as it would be without it. params {tool, extension, request} calls a
+## game tool instead (call_tool_now).
+func call_now(params: Dictionary, keep_raised: bool = false) -> Variant:
 	if params.has("tool"):
 		return call_tool_now(params)
 	var prepared: Variant = _prepare_call(params)
@@ -378,9 +380,15 @@ func call_now(params: Dictionary) -> Variant:
 	var mark: int = _bridge._logger.sequence()
 	var value: Variant = node.callv(prepared[1], prepared[2])
 	var raised: String = _bridge._logger.first_error_since(mark)
-	if not raised.is_empty():
+	var answer: Dictionary = {
+		"value": null if is_coroutine(value) else _bridge._json.to_json(value)
+	}
+	if raised.is_empty():
+		return answer
+	if not keep_raised:
 		return raised
-	return {"value": null if is_coroutine(value) else _bridge._json.to_json(value)}
+	answer["raised"] = raised
+	return answer
 
 
 ## {tool, reply}: the game tool params names ({tool, extension, request}: request the server's

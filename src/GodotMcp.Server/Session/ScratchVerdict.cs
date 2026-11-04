@@ -18,6 +18,9 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
     /// <summary>The figures of the wait_for the step played inside, for a step whose GetStepUntil gave a condition; else null.</summary>
     public ScratchUntil? Until { get; init; }
 
+    /// <summary>Whether the step was played inside the wait_for on its until; false for a paced step or one whose until the server refused.</summary>
+    public bool UntilWaited { get; init; }
+
     public string? CallError { get; init; }
 
     /// <summary>
@@ -199,6 +202,13 @@ internal sealed record ScratchStepResult(
     string Status
 )
 {
+    /// <summary>
+    /// Whether the step was played inside its until's wait: false when that wait gave no figures (it was refused before its call,
+    /// or it failed), so gameMs alone is always a paced step's pace; null for a paced step or a step whose until ran to figures.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? UntilRan { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<ScratchError>? Errors { get; init; }
 
@@ -828,11 +838,12 @@ internal static partial class ScratchVerdict
             step.Index,
             step.Name,
             error is null,
-            step.Until is null ? step.GameMs : null,
+            ListedGameMs(step),
             step.Until,
             OutputBuffer.Cut(step.Status, rules.DetailChars)
         )
         {
+            UntilRan = UntilRan(step),
             Screenshot = step.Screenshot,
         };
         if (error is null && rules.Details != ScratchDetails.Full)
@@ -860,6 +871,12 @@ internal static partial class ScratchVerdict
             session
         );
     }
+
+    /// <summary>A listed step's gameMs: its pace, for a step not played inside its until; null for a step whose until's wait ran.</summary>
+    private static int? ListedGameMs(ScratchStep step) => step.Until is null && !step.UntilWaited ? step.GameMs : null;
+
+    /// <summary>False for a step played inside an until whose wait gave no figures (refused before its call, or failed); null otherwise.</summary>
+    private static bool? UntilRan(ScratchStep step) => step.UntilWaited && step.Until is null ? false : null;
 
     /// <summary>
     /// A green step as options.details compact lists it: "&lt;index&gt; ok &lt;name&gt;", its pace in game milliseconds or its until's

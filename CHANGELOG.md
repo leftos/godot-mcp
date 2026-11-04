@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A scratch step that logs an error inside `PlayStep` still runs its until, and `keepGoing` plays on; a step whose until never ran says `untilRan: false`.
+
 ## 0.33.1 - 2026-11-04
 
 ### Fixed

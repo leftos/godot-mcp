@@ -928,6 +928,16 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
+    /// A step's failure and the feed entry it was read from, for a play the bridge did not refuse: when its until's wait ran and
+    /// was not met and the step's feed logged an error that kept it from meeting the until (a PlayStep that threw), that feed entry
+    /// as a paced step's thrown PlayStep reads; else the play's own error and no entry.
+    /// </summary>
+    internal static (string? Error, ErrorEntry? Raised) UnmetFailure(ScratchUntil? until, string? error, IReadOnlyList<ErrorEntry> errors) =>
+        until is { Met: false } && errors.FirstOrDefault(entry => entry.IsError) is { } raised
+            ? (ScratchVerdict.FeedError([raised]), raised)
+            : (error, null);
+
+    /// <summary>
     /// An exception from the until's wait as the step's play takes it: a connection or session failure (a disposed connection
     /// included) as why the step failed (<see cref="UntilWaitFailed"/>); any other refusal as the bridge's text, which the caller
     /// judges once the step's feed entries are in (<see cref="UntilFailure"/>).
@@ -1540,10 +1550,11 @@ internal sealed class ScratchRun
         IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
         (string? error, ErrorEntry? raised) = played.BridgeError is { } bridgeError
             ? UntilFailure(index, _names[index], bridgeError, errors)
-            : (played.Error, null);
+            : UnmetFailure(played.Until, played.Error, errors);
         return new ScratchStep(index, _names[index], gameMs)
         {
             Until = played.Until,
+            UntilWaited = wait is not null,
             CallError = error ?? statusError ?? markerError,
             CallErrorEntry = raised,
             Status = StatusLine(status),

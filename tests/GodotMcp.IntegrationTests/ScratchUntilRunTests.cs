@@ -106,6 +106,25 @@ public sealed class ScratchUntilRunTests : IAsyncDisposable
         Assert.All([refused, worded], scene => Assert.Empty(ScratchRunnerTests.Status(scene["failedAt"]!)));
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnErrorAStepRaisesInsidePlayStepIsRedButItsUntilStillRunsAndKeepGoingPlaysOn()
+    {
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(_probe.Directory, ["ScratchUntilRaises"], new ScratchOptions(KeepGoing: true), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.Equal((0, "raises"), (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()));
+        Assert.Equal(2, scene["steps"]!["played"]!.GetValue<int>());
+        JsonArray details = scene["details"]!.AsArray();
+        ScratchRunnerTests.AssertUntilMetInGameTime(details[0]!, 2000);
+        Assert.False(details[0]!["ok"]!.GetValue<bool>(), details[0]!.ToJsonString());
+        Assert.Contains("scratch step raised", details[0]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.True(details[1]!["ok"]!.GetValue<bool>(), details[1]!.ToJsonString());
+        Assert.Equal("after done", ScratchRunnerTests.Status(details[1]!));
+    }
+
     private async Task<JsonObject> RunAsync(string projectDir, string[]? scenes, ScratchOptions? options, CancellationToken cancellation) =>
         JsonNode.Parse(await _scratch.RunScratchesAsync(projectDir, scenes, options, cancellation))!.AsObject();
 }

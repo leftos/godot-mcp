@@ -387,6 +387,10 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 ## asked in a request, putting its {value} into called; nothing when params has no call or called
 ## already holds its value. Returns why the call failed, or "".
 ##
+## A wait with params.limitGameMs is a scratch step's until, and an error the called method logs is
+## not its failure: call_now keeps that error, called then holds {value, raised}, and the wait goes
+## on, the step's feed entries reporting the error as a paced step's are.
+##
 ## It runs inside a process_frame emission, which SceneTree::process sends before it processes
 ## the nodes (scene/main/scene_tree.cpp L713, L719 in 4.7.2), so a method called here has its
 ## nodes' _process run in the same frame with that frame's delta: the clock counts that delta
@@ -394,7 +398,7 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 func _call_once(params: Dictionary, called: Dictionary) -> String:
 	if not called.is_empty() or not params.get("call") is Dictionary:
 		return ""
-	var outcome: Variant = bridge._inspect.call_now(params["call"])
+	var outcome: Variant = bridge._inspect.call_now(params["call"], params.has("limitGameMs"))
 	if outcome is String:
 		return outcome
 	called.merge(outcome)

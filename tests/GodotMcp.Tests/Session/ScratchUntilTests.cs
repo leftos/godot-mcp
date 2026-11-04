@@ -234,5 +234,55 @@ public sealed class ScratchUntilTests
         Assert.Equal(["index", "name", "ok", "until", "status"], details[1]!.AsObject().Select(field => field.Key).Take(5));
     }
 
+    [Fact]
+    public void AStepWhoseUntilWaitGaveNoFiguresListsUntilRanFalseWhileAPacedOrMetStepListsNeither()
+    {
+        ScratchRules rules = new(
+            ScratchProfile.DefaultPatterns,
+            Known: null,
+            PaceReason: null,
+            Details: ScratchDetails.Full,
+            DetailChars: ScratchVerdict.DefaultDetailChars
+        );
+        ScratchObservation seen = new("Scene", "probe.scratch-Scene", 5, 3)
+        {
+            Steps =
+            [
+                new(0, "paced", 5000),
+                new(1, "until", 5000) { UntilWaited = true, Until = new ScratchUntil(true, 300, 312, 19) },
+                new(2, "refused", 5000) { UntilWaited = true, CallError = ScratchRun.UntilRefused(2, "refused", "no") },
+            ],
+            ExitCode = 0,
+        };
+
+        JsonArray details = JsonSerializer.SerializeToNode(ScratchVerdict.Judge(seen, rules), ToolJson.Options)!["details"]!.AsArray();
+
+        Assert.Equal(5000, details[0]!["gameMs"]!.GetValue<int>());
+        Assert.Null(details[0]!["untilRan"]);
+        Assert.Null(details[1]!["gameMs"]);
+        Assert.NotNull(details[1]!["until"]);
+        Assert.Null(details[1]!["untilRan"]);
+        Assert.Null(details[2]!["gameMs"]);
+        Assert.False(details[2]!["untilRan"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void AnUnmetUntilWhoseStepLoggedAnErrorFailsWithThatFeedEntryAndOneWithNoErrorWithTheUntilsText()
+    {
+        ErrorEntry raised = Entry(ErrorFeed.ErrorType, "scratch until step threw");
+        ScratchUntil unmet = new(false, 2000, 2004, 60);
+        string notMet = ScratchRun.UntilMissed(0, "throws", unmet, 2, 2);
+
+        (string? error, ErrorEntry? entry) = ScratchRun.UnmetFailure(unmet, notMet, [raised]);
+
+        Assert.Equal("scratch until step threw (res://scene.gd:3)", error);
+        Assert.Same(raised, entry);
+
+        (error, entry) = ScratchRun.UnmetFailure(unmet, notMet, []);
+
+        Assert.Equal(notMet, error);
+        Assert.Null(entry);
+    }
+
     private static ErrorEntry Entry(string type, string message) => new(1, type, message, "res://scene.gd", 3, "f", [], "");
 }
