@@ -93,6 +93,15 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private volatile TaskCompletionSource _exitHandled = NewExitHandled();
     private readonly ILogger _logger = registry.Logger;
     private volatile bool _pending = true;
+
+    /// <summary>
+    /// The scratch user data folder this session made for its runs (<see cref="ScratchUserData.RootFor"/>), kept across a restart
+    /// and deleted when the session's run ends; null when it has none.
+    /// </summary>
+    private string? _userDataRoot;
+
+    /// <summary>The game's user data folder inside <see cref="_userDataRoot"/>, as the launch result reports it; null with none.</summary>
+    private string? _userDataDir;
     private volatile SessionClock _clock = new();
     private GodotRun? _run;
 
@@ -274,7 +283,17 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByStop);
             RecordingResult? recording = await FinishRecordingAsync(run) ?? await TakeRealtimeResultAsync();
-            bool removed = registry.ReleaseFolder(this);
+            bool removed;
+            try
+            {
+                removed = registry.ReleaseFolder(this);
+            }
+            finally
+            {
+                // The scratch folder does not depend on override.cfg, so a failed release of that file leaves it no less ended.
+                DeleteScratchUserData();
+            }
+
             return new StopResult(Name, run.ProjectDir, run.ExitCode, ended.Killed, removed)
             {
                 AlreadyExited = alreadyExited,
@@ -485,13 +504,26 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// everything it started, and waits up to <see cref="KillWait"/> for them to exit: the run's process and the game's own,
     /// each that still runs (on Windows the game can outlive the console wrapper that is the run's process).
     /// </summary>
+    /// <remarks>
+    /// The session's scratch user data folder is deleted after the kills, so no game still holds a file in it; this is the server
+    /// exit's delete, since the registry's shutdown reaches every session that launched through here.
+    /// </remarks>
     public async Task KillAtShutdownAsync()
     {
-        if (Kind is not (SessionKind.Run or SessionKind.Editor) || _run is not { } run)
+        if (Kind is SessionKind.Run or SessionKind.Editor && _run is { } run)
         {
-            return;
+            await KillRunAtShutdownAsync(run);
         }
 
+        if (TakeScratchUserDataRoot() is { } root)
+        {
+            AtShutdown(() => ScratchUserData.Delete(root));
+        }
+    }
+
+    /// <summary>The kills of <see cref="KillAtShutdownAsync"/>: each process of the run still running, then the wait for them.</summary>
+    private async Task KillRunAtShutdownAsync(GodotRun run)
+    {
         Process[] running = [.. new[] { run.Process, run.Game }.OfType<Process>().Where(IsRunningAtShutdown)];
         foreach (Process process in running)
         {
@@ -566,6 +598,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             DisposeProcess();
             DisposeAttachedGame();
+            // Under the gate and before the run is let go of, so a late exit handler of this session finds no folder to delete,
+            // whatever session takes the name next.
+            DeleteScratchUserData();
             if (_run is not null)
             {
                 await _run.DisposeAsync();
@@ -661,6 +696,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             registry.Forget(this);
         }
 
+        DeleteScratchUserData();
         try
         {
             return registry.ReleaseFolder(this);
@@ -807,6 +843,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
             }
 
+            MakeScratchUserData(request, previous);
             Func<int, string>? marker = previous is not null && ProcessId is int replaced ? started => RestartMarker(replaced, started) : null;
             (GodotRun run, string token) = StartGodot(request, godotPath, previous, marker);
             return new PreparedRun
@@ -840,7 +877,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         string token = CreateToken();
         string? moviePath = PrepareMoviePath(request);
         BridgeEndpoint bridge = new(registry.Listener.Port, token);
-        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, bridge, moviePath);
+        LaunchRequest launched = request.ScratchUserData is null ? request : request with { UserDataRoot = _userDataRoot };
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, launched, bridge, moviePath);
         GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), carried);
         if (request.OutputLogPath is { } logPath)
         {
@@ -861,6 +899,76 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// (<see cref="SessionRegistry.RetryBootCrashOnce"/>) and the run exited with <see cref="BootCrashExitCode"/>.
     /// </summary>
     private bool IsBootCrashToRetry(GodotRun run) => registry.RetryBootCrashOnce && !run.IsRunning && run.ExitCode == BootCrashExitCode;
+
+    /// <summary>
+    /// Makes and seeds the session's scratch user data folder for a request that asks for one. A restart reuses the folder its
+    /// replaced run had, so what the game saved survives it; a launch, or a restart after the folder went with the game's exit,
+    /// makes it afresh. Set before it is made, so a failed start deletes what was made (<see cref="AbandonStart"/>).
+    /// </summary>
+    /// <exception cref="SessionException">The folder could not be made or the seed not copied.</exception>
+    private void MakeScratchUserData(LaunchRequest request, GodotRun? previous)
+    {
+        if (request.ScratchUserData is not { } scratch || (previous is not null && _userDataRoot is not null))
+        {
+            return;
+        }
+
+        string root = ScratchUserData.RootFor(ProjectDir, Name);
+        _userDataRoot = root;
+        try
+        {
+            _userDataDir = ScratchUserData.Create(ProjectDir, root, scratch.SeedFolder);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new SessionException($"Could not make the scratch user data folder {root}: {e.Message}", e);
+        }
+    }
+
+    /// <summary>Takes the session's scratch user data folder off it, so exactly one caller deletes it; null when it has none.</summary>
+    private string? TakeScratchUserDataRoot()
+    {
+        _userDataDir = null;
+        return Interlocked.Exchange(ref _userDataRoot, null);
+    }
+
+    /// <summary>
+    /// Deletes the session's scratch user data folder, once its game has exited: at stop_project, at the exit of the session's
+    /// current run, and after a failed start. Never on a restart, whose replaced run's exit finds a newer run in its place.
+    /// A failed delete is logged and the folder left.
+    /// </summary>
+    private void DeleteScratchUserData()
+    {
+        if (TakeScratchUserDataRoot() is not { } root)
+        {
+            return;
+        }
+
+        try
+        {
+            ScratchUserData.Delete(root);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            LogScratchUserDataDeleteFailed(_logger, e, root);
+        }
+    }
+
+    /// <summary>
+    /// The exit handler's delete of the scratch folder: only for the session's <paramref name="current"/> run, and only once the
+    /// game itself is gone. On Windows the run's process is a console wrapper the game can outlive; a game still running keeps
+    /// its folder for stop_project, the session's retirement or the server's exit, which end the game first.
+    /// </summary>
+    private void DeleteScratchUserDataAfterExit(bool current, GodotRun run)
+    {
+        if (current && !(run.Game is { } game && IsRunningAtShutdown(game)))
+        {
+            DeleteScratchUserData();
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not delete the scratch user data folder {Root}")]
+    private static partial void LogScratchUserDataDeleteFailed(ILogger logger, Exception exception, string root);
 
     /// <summary>The line a restart writes into the output it carries over, once the new game has its pid.</summary>
     private static string RestartMarker(int replaced, int started) =>
@@ -966,6 +1074,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             Window = connection.Window,
             Warning = GodotCommandLine.DescribeWindowMismatch(GodotCommandLine.RequestedWindowSize(request.EngineArgs), connection.Window),
             Log = run.OutputLog?.Path,
+            UserDataDir = request.ScratchUserData is null ? null : _userDataDir,
         };
         return (started, prepared.Previous, prepared.PreviousRecording);
     }
@@ -1653,6 +1762,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
         finally
         {
+            // Set only for the session's current run, so a replaced run's exit never reaches the folder.
+            DeleteScratchUserDataAfterExit(current: handled is not null, run);
             _gate.Release();
             handled?.TrySetResult();
         }

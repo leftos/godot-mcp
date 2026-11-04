@@ -41,6 +41,41 @@ internal sealed record ProfileValues(
         new Dictionary<string, string>(),
         new Dictionary<string, JsonElement>()
     );
+
+    /// <summary>The <c>userData</c> it sets; null where it sets none.</summary>
+    public UserDataChoice? UserData { get; init; }
+}
+
+/// <summary>
+/// A <c>userData</c> value: the real <c>user://</c> (<see cref="Scratch"/> false), a scratch one, or a scratch one seeded from
+/// <see cref="Seed"/>, a folder as written, relative to the project.
+/// </summary>
+internal sealed record UserDataChoice(bool Scratch, string? Seed)
+{
+    /// <summary>The real <c>user://</c>, the default.</summary>
+    public static readonly UserDataChoice Real = new(false, null);
+
+    /// <summary>
+    /// Reads <c>"real"</c>, <c>"scratch"</c> or <c>{"seed": "&lt;folder&gt;"}</c>, a non-empty string; anything else is refused by
+    /// <paramref name="refuse"/> with the problem, which ends without a period.
+    /// </summary>
+    public static UserDataChoice Parse(JsonElement value, Func<string, McpException> refuse) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.String when value.GetString() == "real" => Real,
+            JsonValueKind.String when value.GetString() == "scratch" => new(true, null),
+            JsonValueKind.Object when SeedOf(value) is { } seed => new(true, seed),
+            _ => throw refuse($"userData must be \"real\", \"scratch\" or {{\"seed\": \"<folder in the project>\"}}, not {value.GetRawText()}"),
+        };
+
+    /// <summary>The seed of an object holding only a non-empty string <c>seed</c>; null for any other object.</summary>
+    private static string? SeedOf(JsonElement value)
+    {
+        JsonProperty[] properties = [.. value.EnumerateObject()];
+        return properties is [{ Name: "seed", Value.ValueKind: JsonValueKind.String } only] && only.Value.GetString() is { Length: > 0 } seed
+            ? seed
+            : null;
+    }
 }
 
 /// <summary>
@@ -59,6 +94,7 @@ internal sealed partial class ProjectProfile
     private const string PrepKey = "prep";
     private const string ScratchKey = "scratch";
     private const string ProcessesKey = "processes";
+    private const string UserDataKey = "userData";
     private static readonly string[] TopLevelKeys =
     [
         "scene",
@@ -69,6 +105,7 @@ internal sealed partial class ProjectProfile
         "audible",
         "env",
         "projectSettings",
+        UserDataKey,
         "presets",
         PrepWrapperKey,
         ScratchKey,
@@ -84,6 +121,7 @@ internal sealed partial class ProjectProfile
         "audible",
         "env",
         "projectSettings",
+        UserDataKey,
         "session",
         "description",
     ];
@@ -212,6 +250,7 @@ internal sealed partial class ProjectProfile
             CheckEnvironment(options.Env, "options.env", problem => new McpException(problem + "."));
         }
 
+        Dictionary<string, string> env = EnvironmentFor(preset, options.Env);
         LaunchRequest request = new(
             ProjectDir,
             SceneFor(preset, scene),
@@ -227,10 +266,66 @@ internal sealed partial class ProjectProfile
             Mute = options.MuteFor(quiet, audible),
             Audible = audible,
             RepickHover = options.RepickHover ?? true,
-            Env = EnvironmentFor(preset, options.Env),
+            Env = env,
             ProjectSettings = ProjectSettingsFor(preset, options.ProjectSettings),
+            ScratchUserData = ScratchUserDataFor(preset, options.UserData, env),
         };
         return new ProfileLaunch(request, options.Session ?? preset.Session);
+    }
+
+    /// <summary>
+    /// The run's scratch <c>user://</c>: options' userData, else the preset's, else the top level's, real when all three leave it
+    /// out; null for the real one. A scratch one is refused on macOS and when the run's env sets the variable it would set
+    /// (<see cref="GodotCommandLine.UserDataRefusal"/>), and its seed when it is not a folder inside the project.
+    /// </summary>
+    /// <exception cref="McpException">options' userData is not a userData value, or the scratch one is refused.</exception>
+    private ScratchUserDataRequest? ScratchUserDataFor(ProfileValues preset, JsonElement? given, IReadOnlyDictionary<string, string> env)
+    {
+        UserDataChoice? call = given is { ValueKind: not JsonValueKind.Null } value
+            ? UserDataChoice.Parse(value, problem => new McpException(problem + "."))
+            : null;
+        UserDataChoice choice = call ?? preset.UserData ?? _defaults.UserData ?? UserDataChoice.Real;
+        if (!choice.Scratch)
+        {
+            return null;
+        }
+
+        if (GodotCommandLine.UserDataRefusal(env) is { } refusal)
+        {
+            throw new McpException(refusal);
+        }
+
+        return new ScratchUserDataRequest(choice.Seed is { } seed ? SeedFolder(seed) : null);
+    }
+
+    /// <summary>
+    /// A seed resolved against the project folder; refused when it is not a folder inside it (the folder itself included), when
+    /// it is <c>.godot</c> or under it, which holds the scratch folder the seed is copied into, and when it is itself a link.
+    /// </summary>
+    /// <exception cref="McpException">The seed leaves the project, is the project folder or under .godot, is a link, or is not a folder.</exception>
+    private string SeedFolder(string seed)
+    {
+        string resolved = Path.GetFullPath(Path.Combine(ProjectDir, seed));
+        string folder = ProjectPaths.Normalise(ProjectDir);
+        string relative = Path.GetRelativePath(folder, resolved);
+        if (Path.IsPathRooted(seed) || !IsInsideFolder(folder, resolved) || relative == "." || IsUnderGodotFolder(relative))
+        {
+            throw new McpException($"userData.seed must be a folder inside the project and outside .godot, not {seed}.");
+        }
+
+        if (new DirectoryInfo(resolved).LinkTarget is not null)
+        {
+            throw new McpException($"userData.seed names {seed}, which is a link; name a real folder.");
+        }
+
+        return Directory.Exists(resolved) ? resolved : throw new McpException($"userData.seed names {seed}, which is not a folder.");
+    }
+
+    /// <summary>Whether a path relative to the project is its <c>.godot</c> folder or under it; case-insensitive on Windows.</summary>
+    private static bool IsUnderGodotFolder(string relative)
+    {
+        string first = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 2)[0];
+        return string.Equals(first, ".godot", OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -408,7 +503,12 @@ internal sealed partial class ProjectProfile
             description,
             env,
             settings
-        );
+        )
+        {
+            UserData = keys.TryGetValue(UserDataKey, out JsonElement userData)
+                ? UserDataChoice.Parse(userData, problem => Refused(place, problem))
+                : null,
+        };
     }
 
     /// <summary>

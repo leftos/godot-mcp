@@ -29,6 +29,13 @@ internal sealed record LaunchResult(string Session, string ProjectPath, int Proc
     /// <summary>The file holding the game's whole output, both streams interleaved; left out when it could not be opened.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Log { get; init; }
+
+    /// <summary>
+    /// A scratch run's user data folder, what the game's <c>OS.get_user_data_dir()</c> returns, inside the session's
+    /// <c>.godot/godot-mcp/userdata-&lt;session&gt;</c> folder; left out for a run on the real one.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? UserDataDir { get; init; }
 }
 
 /// <summary>A game window's size in pixels: the client area, without the title bar and borders.</summary>

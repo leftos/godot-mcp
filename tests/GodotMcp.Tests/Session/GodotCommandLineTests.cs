@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Text.Json;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
+using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Session;
 
@@ -563,6 +565,73 @@ public sealed class GodotCommandLineTests : IDisposable
         ProcessStartInfo restarted = GodotCommandLine.CreateStartInfo("godot.exe", request with { Prepare = false }, bridge, moviePath: null);
 
         Assert.Equal("kept", restarted.Environment["GMCP_TEST_VAR"]);
+    }
+
+    [Fact]
+    public void AScratchUserDataRootIsTheGamesAppDataAfterItsEnv()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "APPDATA is the user data variable on Windows only.");
+        string root = _temp.Combine("userdata-Probe");
+        LaunchRequest request = new(Project, null, [], [], false, false, Prepare: false)
+        {
+            Env = new Dictionary<string, string> { ["APPDATA"] = "from-env" },
+            UserDataRoot = root,
+        };
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal("APPDATA", GodotCommandLine.UserDataVariable);
+        Assert.Equal(root, startInfo.Environment["APPDATA"]);
+    }
+
+    [Fact]
+    public void AScratchUserDataRootIsTheGamesXdgDataHomeOnLinux()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "XDG_DATA_HOME is the user data variable on Linux only.");
+        string root = _temp.Combine("userdata-Probe");
+        LaunchRequest request = new(Project, null, [], [], false, false, Prepare: false)
+        {
+            Env = new Dictionary<string, string> { ["XDG_DATA_HOME"] = "/from-env" },
+            UserDataRoot = root,
+        };
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal("XDG_DATA_HOME", GodotCommandLine.UserDataVariable);
+        Assert.Equal(root, startInfo.Environment["XDG_DATA_HOME"]);
+    }
+
+    [Fact]
+    public void WithoutAScratchUserDataRootTheGameKeepsTheServersVariable()
+    {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS has no scratch user data variable.");
+        string variable = GodotCommandLine.UserDataVariable!;
+        LaunchRequest request = new(Project, null, [], [], false, false, Prepare: false);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal(Environment.GetEnvironmentVariable(variable), startInfo.Environment.TryGetValue(variable, out string? value) ? value : null);
+    }
+
+    [Fact]
+    public void RefusesScratchUserDataWithAnEnvThatSetsItsVariable()
+    {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS refuses scratch user data outright.");
+        string variable = GodotCommandLine.UserDataVariable!;
+        string expected = $"userData: \"scratch\" sets {variable} for the game, and env sets it too; drop one.";
+        JsonElement scratch = JsonSerializer.SerializeToElement("scratch");
+
+        string merged = Assert
+            .Throws<McpException>(() =>
+                ProjectProfile
+                    .Empty(Project)
+                    .Merge(null, [], [], new RunOptions(Env: new() { [variable.ToLowerInvariant()] = "x" }, UserData: scratch))
+            )
+            .Message;
+
+        Assert.Equal(expected, merged);
+        Assert.Equal(expected, GodotCommandLine.UserDataRefusal(new Dictionary<string, string> { [variable] = "x" }));
+        Assert.Null(GodotCommandLine.UserDataRefusal(new Dictionary<string, string> { ["OTHER"] = "x" }));
     }
 
     /// <summary>A project folder whose project.godot holds <paramref name="windowSettings"/> under its <c>[display]</c> section.</summary>

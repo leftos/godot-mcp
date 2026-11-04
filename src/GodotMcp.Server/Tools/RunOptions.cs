@@ -67,7 +67,16 @@ internal sealed record RunOptions(
             + "and removed with it; sessions on one folder must give the same ones. godot-mcp.json's projectSettings are laid under "
             + "these, per key."
     )]
-        Dictionary<string, JsonElement>? ProjectSettings = null
+        Dictionary<string, JsonElement>? ProjectSettings = null,
+    [property: Description(
+        "Where the game's user:// lives. \"real\" (the default): Godot's own folder. \"scratch\": a folder of the session's own, "
+            + "<project>/.godot/godot-mcp/userdata-<session>/, made by pointing the game's APPDATA (Linux: XDG_DATA_HOME) at it, kept "
+            + "across restart_project and deleted when the session ends (stop_project, the game's exit, the server's exit); the "
+            + "result's userDataDir is the game's user:// folder in it. {\"seed\": \"<folder in the project>\"}: scratch, with that "
+            + "folder copied into user:// first. godot-mcp.json's userData and a preset's are used when this is left out. Refused "
+            + "with an env that sets the same variable, and on macOS. Only run_project's game is redirected."
+    )]
+        JsonElement? UserData = null
 )
 {
     /// <summary>The prepare option, for run_project's options and restart_project's.</summary>

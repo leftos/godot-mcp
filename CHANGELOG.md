@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `scratch_status` takes `waitSeconds`, holding the call until a background scratch run finishes or that many seconds pass.
+- `run_project` and `godot-mcp.json` take `userData: "scratch"` (or a seed folder), giving a driven game a throwaway `user://` instead of real saves.
 
 ### Changed
 

@@ -77,6 +77,18 @@ internal sealed record LaunchRequest(
     /// none (<see cref="ProjectSettingsText.Block"/>).
     /// </summary>
     public string ProjectSettings { get; init; } = "";
+
+    /// <summary>
+    /// The run's scratch <c>user://</c>, as run_project's userData asks for it; null for the real one. The session makes the folder
+    /// and sets <see cref="UserDataRoot"/> on the request it starts.
+    /// </summary>
+    public ScratchUserDataRequest? ScratchUserData { get; init; }
+
+    /// <summary>
+    /// The folder the game's <see cref="GodotCommandLine.UserDataVariable"/> points at, so its <c>user://</c> lies inside it; null
+    /// leaves the server's own value.
+    /// </summary>
+    public string? UserDataRoot { get; init; }
 }
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>
@@ -387,6 +399,7 @@ internal static partial class GodotCommandLine
         SetFlag(startInfo, PreviewVariable, request.Preview);
         SetFlag(startInfo, NoRepickHoverVariable, !request.RepickHover);
         SetFlag(startInfo, HiddenDesktopVariable, UsesHiddenDesktop(request.Quiet));
+        SetUserDataRoot(startInfo, request.UserDataRoot);
         if (request.Record)
         {
             startInfo.Environment[MovieFpsVariable] = MovieFramesPerSecond.ToString(CultureInfo.InvariantCulture);
@@ -410,6 +423,45 @@ internal static partial class GodotCommandLine
         }
 
         return startInfo;
+    }
+
+    /// <summary>
+    /// The variable Godot reads its data path from, under which <c>user://</c> lies: <c>APPDATA</c> on Windows (4.7.2
+    /// <c>platform/windows/os_windows.cpp</c> L2417-2426), <c>XDG_DATA_HOME</c> on Linux and the BSDs
+    /// (<c>platform/linuxbsd/os_linuxbsd.cpp</c> L911-924, an absolute path); null on macOS, where a scratch user data folder is
+    /// not supported.
+    /// </summary>
+    public static string? UserDataVariable =>
+        OperatingSystem.IsWindows() ? "APPDATA"
+        : OperatingSystem.IsMacOS() ? null
+        : "XDG_DATA_HOME";
+
+    /// <summary>
+    /// Why a scratch user data run cannot start with <paramref name="env"/>: on macOS always, elsewhere when <paramref name="env"/>
+    /// sets <see cref="UserDataVariable"/> itself, in any case; null when it can.
+    /// </summary>
+    public static string? UserDataRefusal(IReadOnlyDictionary<string, string> env)
+    {
+        if (UserDataVariable is not { } variable)
+        {
+            return "userData: \"scratch\" is not supported on macOS.";
+        }
+
+        return env.Keys.Any(name => string.Equals(name, variable, StringComparison.OrdinalIgnoreCase))
+            ? $"userData: \"scratch\" sets {variable} for the game, and env sets it too; drop one."
+            : null;
+    }
+
+    /// <summary>
+    /// Points <see cref="UserDataVariable"/> at a scratch run's folder, after the run's env so it wins; without one the variable
+    /// keeps the value the run's env or the server's own environment gave it.
+    /// </summary>
+    private static void SetUserDataRoot(ProcessStartInfo startInfo, string? root)
+    {
+        if (root is not null && UserDataVariable is { } variable)
+        {
+            startInfo.Environment[variable] = root;
+        }
     }
 
     /// <summary>Sets the variable to 1 when the flag is on, and removes one the server's own environment passed down when off.</summary>

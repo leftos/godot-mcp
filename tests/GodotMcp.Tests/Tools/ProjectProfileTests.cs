@@ -10,10 +10,11 @@ namespace GodotMcp.Tests.Tools;
 public sealed class ProjectProfileTests : IDisposable
 {
     private const string TopLevelKeys =
-        "scene, userArgs, engineArgs, resolution, quiet, audible, env, projectSettings, presets, prepWrapper, scratch, processes";
+        "scene, userArgs, engineArgs, resolution, quiet, audible, env, projectSettings, userData, presets, prepWrapper, scratch, processes";
     private const string PrepWrapperShape =
         "(top level): \"prepWrapper\" must be a non-empty array of non-empty strings, the program and then its arguments";
-    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, audible, env, projectSettings, session";
+    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, audible, env, projectSettings, userData, session";
+    private const string UserDataShape = "userData must be \"real\", \"scratch\" or {\"seed\": \"<folder in the project>\"}, not ";
 
     private const string Layered = """
         {
@@ -1477,6 +1478,125 @@ public sealed class ProjectProfileTests : IDisposable
                 + "display/window/size/initial_position_type, display/window/size/initial_position, display/window/size/mode).",
             Refused(() => Merge(new RunOptions()))
         );
+    }
+
+    [Fact]
+    public void UserDataLayersTopLevelPresetAndOption()
+    {
+        Directory.CreateDirectory(_temp.Combine("seeds", "a"));
+        Write(
+            """
+            {
+              "userData": "scratch",
+              "presets": { "real": { "userData": "real" }, "seeded": { "userData": {"seed": "seeds/a"} }, "bare": {} }
+            }
+            """
+        );
+
+        ScratchUserDataRequest? top = Merge(new RunOptions()).Request.ScratchUserData;
+        ScratchUserDataRequest? bare = Merge(new RunOptions(Preset: "bare")).Request.ScratchUserData;
+        ScratchUserDataRequest? real = Merge(new RunOptions(Preset: "real")).Request.ScratchUserData;
+        ScratchUserDataRequest? seeded = Merge(new RunOptions(Preset: "seeded")).Request.ScratchUserData;
+        ScratchUserDataRequest? callScratch = Merge(new RunOptions(Preset: "real", UserData: Json("\"scratch\""))).Request.ScratchUserData;
+        ScratchUserDataRequest? callReal = Merge(new RunOptions(Preset: "seeded", UserData: Json("\"real\""))).Request.ScratchUserData;
+        ScratchUserDataRequest? callSeed = Merge(new RunOptions(Preset: "real", UserData: Json("""{"seed": "seeds/a"}"""))).Request.ScratchUserData;
+
+        Assert.NotNull(top);
+        Assert.Null(top.SeedFolder);
+        Assert.NotNull(bare);
+        Assert.Null(real);
+        Assert.Equal(_temp.Combine("seeds", "a"), seeded?.SeedFolder);
+        Assert.NotNull(callScratch);
+        Assert.Null(callScratch.SeedFolder);
+        Assert.Null(callReal);
+        Assert.Equal(_temp.Combine("seeds", "a"), callSeed?.SeedFolder);
+    }
+
+    [Fact]
+    public void UserDataIsRealWhenNothingSetsIt() => Assert.Null(Merge(new RunOptions()).Request.ScratchUserData);
+
+    [Fact]
+    public void RefusesAnUnknownUserDataValue()
+    {
+        Write("""{ "userData": 3 }""");
+        string top = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ "presets": { "p": { "userData": {"mode":"scratch"} } } }""");
+        string preset = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ }""");
+        string call = Refused(() => Merge(new RunOptions(UserData: Json("\"temp\""))));
+        string emptySeed = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed":""}"""))));
+
+        Assert.Equal($"{FilePath} (top level): {UserDataShape}3.", top);
+        Assert.Equal($"{FilePath} (preset \"p\"): {UserDataShape}{{\"mode\":\"scratch\"}}.", preset);
+        Assert.Equal($"{UserDataShape}\"temp\".", call);
+        Assert.Equal($"{UserDataShape}{{\"seed\":\"\"}}.", emptySeed);
+    }
+
+    [Fact]
+    public void RefusesAUserDataSeedOutsideTheProject()
+    {
+        string rooted = _temp.Combine("seeds");
+        Directory.CreateDirectory(rooted);
+        Write("""{ "userData": {"seed": "../elsewhere"} }""");
+
+        string fromFile = Refused(() => Merge(new RunOptions()));
+        string theProject = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": "."}"""))));
+        string absolute = Refused(() => Merge(new RunOptions(UserData: Json(JsonSerializer.Serialize(new { seed = rooted })))));
+
+        Assert.Equal("userData.seed must be a folder inside the project and outside .godot, not ../elsewhere.", fromFile);
+        Assert.Equal("userData.seed must be a folder inside the project and outside .godot, not ..", theProject);
+        Assert.Equal($"userData.seed must be a folder inside the project and outside .godot, not {rooted}.", absolute);
+    }
+
+    [Fact]
+    public void RefusesAUserDataSeedUnderTheGodotFolder()
+    {
+        Directory.CreateDirectory(_temp.Combine(".godot", "godot-mcp"));
+        string godot = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": ".godot"}"""))));
+        string deeper = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": ".godot/godot-mcp"}"""))));
+        string wayIn = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": "saves/../.godot"}"""))));
+
+        Assert.Equal("userData.seed must be a folder inside the project and outside .godot, not .godot.", godot);
+        Assert.Equal("userData.seed must be a folder inside the project and outside .godot, not .godot/godot-mcp.", deeper);
+        Assert.Equal("userData.seed must be a folder inside the project and outside .godot, not saves/../.godot.", wayIn);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(
+                "userData.seed must be a folder inside the project and outside .godot, not .GODOT/godot-mcp.",
+                Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": ".GODOT/godot-mcp"}"""))))
+            );
+        }
+    }
+
+    [Fact]
+    public void RefusesAUserDataSeedThatIsALink()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The link is a junction, made with mklink /J.");
+        string target = _temp.Combine("real-saves");
+        Directory.CreateDirectory(target);
+        GodotMcp.Tests.Session.ScratchUserDataTests.MakeJunction(_temp.Combine("saves"), target);
+
+        string refusal = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": "saves"}"""))));
+
+        Assert.Equal("userData.seed names saves, which is a link; name a real folder.", refusal);
+    }
+
+    [Fact]
+    public void RefusesAUserDataSeedThatIsNotAFolder()
+    {
+        File.WriteAllText(_temp.Combine("seed.txt"), "x");
+
+        string missing = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": "missing"}"""))));
+        string file = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": "seed.txt"}"""))));
+
+        Assert.Equal("userData.seed names missing, which is not a folder.", missing);
+        Assert.Equal("userData.seed names seed.txt, which is not a folder.", file);
+    }
+
+    private static JsonElement Json(string text)
+    {
+        using var document = JsonDocument.Parse(text);
+        return document.RootElement.Clone();
     }
 
     /// <summary>The block these settings render to, as a run's request carries it.</summary>
