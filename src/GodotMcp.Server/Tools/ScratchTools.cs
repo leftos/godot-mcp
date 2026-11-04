@@ -39,7 +39,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     internal const string OnlyDescription =
         "\"all\" (default) returns the whole result; \"red\" keeps every field of every scene and prunes only its details to its "
         + "red steps (ok false), each with its full readback (status, error, errors, errorsOmitted, lines, cut): a green scene, "
-        + "or a red one with no red step (a boot error, a failed exit, a kill), lists no steps. Applied as the result is read: "
+        + "or a red one with no red step (a boot error, a failed exit, a kill), lists no steps, and a green scene also loses its "
+        + "stepList, selected and setup, which every other verdict keeps. Applied as the result is read: "
         + "a background run's status file stays whole, so a later read with \"all\" still sees every step, and a running run's "
         + "scenes are returned as they are.";
 
@@ -110,8 +111,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "known?, warnings?, alone?, "
             + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
             + "setup steps the run added to them, both fixed when the steps resolve, so a scene stopped at a step, at the boot or by "
-            + "a kill still lists them; stepList lists the selected steps on a partial run, every step on a whole run that has a "
-            + "hidden step; "
+            + "a kill still lists them; log is the scene's own whole-output file, each step's status when not its name written into "
+            + "it as \"[godot-mcp] step <i> <name>: <status>\"; stepList lists the selected steps on a partial run, every step on a "
+            + "whole run that has a hidden step; "
             + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game ran at another speed "
             + "than the call's, its scratch.pace entry having \"timeScale\": 1; "
             + "failedAt is the first failed step and failures [{index, name, error}] "

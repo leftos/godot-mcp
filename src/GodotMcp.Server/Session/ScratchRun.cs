@@ -1551,19 +1551,33 @@ internal sealed class ScratchRun
         (string? error, ErrorEntry? raised) = played.BridgeError is { } bridgeError
             ? UntilFailure(index, _names[index], bridgeError, errors)
             : UnmetFailure(played.Until, played.Error, errors);
+        string statusLine = StatusLine(status);
+        RecordStatus(session, index, statusLine);
         return new ScratchStep(index, _names[index], gameMs)
         {
             Until = played.Until,
             UntilWaited = wait is not null,
             CallError = error ?? statusError ?? markerError,
             CallErrorEntry = raised,
-            Status = StatusLine(status),
+            Status = statusLine,
             Errors = errors,
             Lines = lines,
             Dropped = dropped,
             Screenshot = screenshot,
             Warning = shotWarning,
         };
+    }
+
+    /// <summary>
+    /// Writes a step's status into the scene's whole-output log beside the game's own lines, so an agent reading the log sees what
+    /// the game answered at each step; a status that only repeats the step's name says nothing and is left out.
+    /// </summary>
+    private void RecordStatus(GodotSession session, int index, string statusLine)
+    {
+        if (statusLine.Length > 0 && !string.Equals(statusLine, _names[index], StringComparison.Ordinal))
+        {
+            session.WriteToOutputLog($"[godot-mcp] step {index} {_names[index]}: {statusLine}");
+        }
     }
 
     /// <summary>

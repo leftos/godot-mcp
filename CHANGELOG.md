@@ -2,6 +2,13 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- A `run_scratches` result read with `only: "red"` drops a green scene's `stepList`, `selected` and `setup`.
+- A scratch scene's log holds each step's status as a `[godot-mcp] step` line, so a green step's reading needs no rerun.
+
 ## 0.34.1 - 2026-11-04
 
 ### Changed

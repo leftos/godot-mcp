@@ -299,6 +299,24 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
         Assert.Equal(["1 first view"], scene["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task EachStepsStatusIsWrittenIntoTheSceneLogButNotItsLines()
+    {
+        ScratchOptions options = new(Details: FullDetails);
+
+        JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchHidden"], options, TestContext.Current.CancellationToken));
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        using FileStream stream = new(scene["log"]!.GetValue<string>(), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using StreamReader reader = new(stream);
+        string log = await reader.ReadToEndAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("[godot-mcp] step 0 fight setup: set up", log, StringComparison.Ordinal);
+        Assert.Contains("[godot-mcp] step 1 first view: first viewed", log, StringComparison.Ordinal);
+        Assert.Contains("[godot-mcp] step 2 second view: second viewed", log, StringComparison.Ordinal);
+        List<string> lines = [.. scene["details"]!.AsArray().SelectMany(step => step!["lines"]!.AsArray().Select(line => line!.GetValue<string>()))];
+        Assert.DoesNotContain(lines, line => line.Contains("[godot-mcp] step ", StringComparison.Ordinal));
+    }
+
     private static JsonElement Tokens(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 
     private static IEnumerable<int> Indices(JsonNode indices) => indices.AsArray().Select(index => index!.GetValue<int>());

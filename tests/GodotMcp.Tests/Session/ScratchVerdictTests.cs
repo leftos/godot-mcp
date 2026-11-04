@@ -1976,6 +1976,50 @@ public sealed class ScratchVerdictTests
         }
     }
 
+    [Fact]
+    public void RedOnlyDropsAGreenScenesStepListSelectedAndSetupAndARedSceneKeepsThem()
+    {
+        ScratchObservation green = new("Green", "probe.scratch-Green", 0.5, 3)
+        {
+            Steps = [Step(1)],
+            ExitCode = 0,
+            Selected = [1],
+            Setup = [0],
+            StepNames = ["open", "fight", "close"],
+        };
+        ScratchObservation red = new("Red", "probe.scratch-Red", 0.5, 3)
+        {
+            Steps = [Step(1) with { CallError = "gone" }],
+            ExitCode = 0,
+            Selected = [1],
+            Setup = [0],
+            StepNames = ["open", "fight", "close"],
+        };
+
+        JsonObject run = RunJson(ScratchVerdict.Judge(green, Plain), ScratchVerdict.Judge(red, Plain));
+        JsonArray scenes = ScratchView.Result(run, redOnly: true)["scenes"]!.AsArray();
+        JsonObject shownGreen = scenes[0]!.AsObject();
+        JsonObject shownRed = scenes[1]!.AsObject();
+        string[] keys = ["stepList", "selected", "setup"];
+
+        Assert.Equal(ScratchVerdict.Green, shownGreen["verdict"]!.GetValue<string>());
+        Assert.Equal(ScratchVerdict.Red, shownRed["verdict"]!.GetValue<string>());
+        foreach (string key in keys)
+        {
+            Assert.False(shownGreen.ContainsKey(key), shownGreen.ToJsonString());
+            Assert.NotNull(run["scenes"]![0]![key]);
+            Assert.True(JsonNode.DeepEquals(run["scenes"]![1]![key], shownRed[key]), shownRed.ToJsonString());
+        }
+
+        JsonObject status = new() { ["state"] = "done", ["result"] = RunJson(ScratchVerdict.Judge(green, Plain), ScratchVerdict.Judge(red, Plain)) };
+        JsonObject statusGreen = ScratchView.Status(status, redOnly: true)["result"]!["scenes"]![0]!.AsObject();
+
+        foreach (string key in keys)
+        {
+            Assert.False(statusGreen.ContainsKey(key), statusGreen.ToJsonString());
+        }
+    }
+
     [Theory]
     [InlineData("""{"runId":"20261019T222144-3f2a","state":"running","scenes":[{"scene":"A","state":"playing","step":1,"total":3}]}""")]
     [InlineData("""{"runId":"20261019T222144-3f2a","state":"done","result":{"passed":false}}""")]

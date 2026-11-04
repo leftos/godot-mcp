@@ -387,6 +387,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         return _run is { } run ? run.Stderr.Tail(count) : [];
     }
 
+    /// <summary>
+    /// Writes one line the server adds, such as a scratch step's status, into the run's whole-output file only, never into its
+    /// stdout or stderr rings, so nothing that reads the game's output (debug output, scratch patterns, a step's lines) sees it;
+    /// does nothing for a session with no run or no open file.
+    /// </summary>
+    public void WriteToOutputLog(string line)
+    {
+        if (_run is { } run)
+        {
+            run.OutputLog?.Write(line);
+        }
+    }
+
     /// <exception cref="SessionException">The session is attached, so there is no captured output.</exception>
     public DebugOutput GetDebugOutput(int limit, long? before)
     {

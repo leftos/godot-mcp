@@ -10,9 +10,9 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// What a built scratch result shows when read with only: "red": every scene keeps its line, its details keep only its red steps
-/// (ok false) with their readback, and a scene with no red step lists none. Applied as the result is read, never to the run's own
-/// result or its status file, so a later read with only: "all" still sees every step; a field the result lacks, as in an older
-/// or partial status file, stays missing.
+/// (ok false) with their readback, and a scene with no red step lists none, while a green scene also loses its stepList, selected
+/// and setup. Applied as the result is read, never to the run's own result or its status file, so a later read with only: "all"
+/// still sees every step; a field the result lacks, as in an older or partial status file, stays missing.
 /// </summary>
 internal static class ScratchView
 {
@@ -70,7 +70,24 @@ internal static class ScratchView
         foreach (JsonObject scene in scenes.OfType<JsonObject>())
         {
             PruneSteps(scene);
+            PruneGreenScene(scene);
         }
+    }
+
+    /// <summary>
+    /// Drops a green scene's stepList, selected and setup: a scene that played its steps clean has no failed step to read them
+    /// with, so every other verdict keeps them.
+    /// </summary>
+    private static void PruneGreenScene(JsonObject scene)
+    {
+        if (!IsGreenScene(scene))
+        {
+            return;
+        }
+
+        scene.Remove("stepList");
+        scene.Remove("selected");
+        scene.Remove("setup");
     }
 
     /// <summary>Drops the scene's green steps (ok true) from its details, and details itself when no step is left.</summary>
