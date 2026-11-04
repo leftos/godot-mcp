@@ -152,6 +152,9 @@ internal sealed record ScratchPlan(
     /// <summary>options.windowed: the scenes' games launch in a hidden, off-screen window instead of headless.</summary>
     public bool Windowed { get; init; }
 
+    /// <summary>The scratch user:// every scene's game gets a folder of its own of, seeded alike; null keeps the real one.</summary>
+    public ScratchUserDataRequest? UserData { get; init; }
+
     /// <summary>options.capture, checked: the steps each scene takes a screenshot at; null takes none.</summary>
     public ScratchCapture? Capture { get; init; }
 }
@@ -1137,6 +1140,7 @@ internal sealed class ScratchRun
         )
         {
             Mute = mute,
+            ScratchUserData = plan.UserData,
         };
 
     /// <summary>The walk, or the scene killed with the step in flight when its ceiling passes or the game stops answering.</summary>

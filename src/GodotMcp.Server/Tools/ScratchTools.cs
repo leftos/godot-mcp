@@ -85,7 +85,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "scene red. An error logged, or a line matching scratch.patterns printed, between the launch and the first step turns "
             + "the scene red at the boot (failedAt index -1, name \"boot\", with pattern for a line) and plays no step. "
             + "Settings live in godot-mcp.json's scratch section "
-            + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, expect, expectFor, parallel}, where setup "
+            + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, expect, expectFor, parallel, userData}, where setup "
             + "{<scene>: [step, ...]} "
             + "names a scene's declared setup steps, which a run given options.steps adds to the selection; an entry may instead be "
             + "{always?: [step, ...], steps?: {\"<step>\": [step, ...]}}: every partial run adds the always list, and a step's own list "
@@ -94,7 +94,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "expectFor {<scene>: [pattern, ...]}, each item a regex string or {pattern, reason} as in patterns, name lines a "
             + "scene's output (launch, steps and exit) must print: a scene with steps that lacks one is red, its exit.missing "
             + "naming each pattern never matched and its reason, a red step keeping its failedAt; a killed, refused or no-steps "
-            + "scene and a run given options.steps that plays only part of a scene are not checked. Scenes "
+            + "scene and a run given options.steps that plays only part of a scene are not checked. userData, as "
+            + "run_project's, gives each scene's game a scratch user:// of its own. Scenes "
             + "start parallel at a time: those listed in scenes in that order, a folder run's largest pace (a scene's or "
             + "one of its steps') divided by the scene's time scale first; with parallel above 1 and more than one scene, a red or "
             + "killed scene (not known, "
@@ -142,7 +143,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             string[]? scenes = null,
         [Description(
             "{pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, parallel, session, keepGoing, steps, background, "
-                + "only, watch, windowed}: pace in seconds for every "
+                + "only, watch, windowed, userData}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
@@ -168,7 +169,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "refused with background, whose result scratch_status's only filters; watch {tracks, window?, options?} as the "
                 + "watch tool's, armed on each scene's session before its first step, its timeline the scene's watch; windowed "
                 + "true plays each scene in a hidden, off-screen window instead of headless, so screenshots, capture_frames and "
-                + "watch work on its session (name it in a background run); paces, untils and verdicts are the same."
+                + "watch work on its session (name it in a background run); paces, untils and verdicts are the same. "
+                + "userData \"real\", \"scratch\" or {\"seed\": \"<folder>\"} gives each scene's game a user:// of its own "
+                + "(else scratch.userData, else the top-level userData, else the real one)."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -427,8 +430,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// patterns.
     /// </summary>
     /// <exception cref="McpException">
-    /// The project, the profile, a scene, the pace, the user arguments, the engine arguments, the ceilings, prepare or
-    /// options.steps is refused; nothing has launched.
+    /// The project, the profile, a scene, the pace, the user arguments, the engine arguments, the ceilings, the userData,
+    /// prepare or options.steps is refused; nothing has launched.
     /// </exception>
     internal static ScratchPlan Plan(string projectPath, IReadOnlyList<string>? scenes, ScratchOptions options)
     {
@@ -441,6 +444,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         CheckParallel(options.Parallel);
         CheckOnly(options);
         CheckWatch(options.Watch);
+        ScratchUserDataRequest? userData = profile.ScratchRunUserData(options.UserData);
         ScratchCapture? capture = PlanCapture(options);
         ScratchDetails details = ParseDetails(options.Details);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
@@ -471,6 +475,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             TimeScale = options.TimeScale ?? 1,
             Watch = options.Watch,
             Windowed = options.Windowed ?? false,
+            UserData = userData,
             Capture = capture,
         };
     }
@@ -1265,7 +1270,16 @@ internal sealed record ScratchOptions(
             + "name made file-safe), listed as screenshot, its absolute path, in the step's details entry, which a scene with a "
             + "shot always lists; no preview image. A shot that fails is a warning, never a red step."
     )]
-        ScratchCaptureOptions? Capture = null
+        ScratchCaptureOptions? Capture = null,
+    [property: Description(
+        "Where each scene's game's user:// lives. \"real\" (the default): Godot's own folder, which every game of the project "
+            + "shares. \"scratch\": a folder of each scene's own, "
+            + "<project>/.godot/godot-mcp/userdata-<server pid>-<session>-<hash>/, made by pointing the game's APPDATA (Linux: "
+            + "XDG_DATA_HOME) at it and deleted when the scene's game ends. {\"seed\": \"<folder in the project>\"}: scratch, "
+            + "with that folder copied into each scene's user:// first. godot-mcp.json's scratch.userData is used when this is "
+            + "left out, else its top-level userData. Refused on macOS."
+    )]
+        JsonElement? UserData = null
 );
 
 /// <summary>run_scratches' options.capture: the steps a windowed run takes a screenshot at.</summary>

@@ -1001,6 +1001,96 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Equal("waitSeconds and stop: true cannot be combined: stop ends the run at once, so there is nothing to wait for.", refused.Message);
     }
 
+    [Fact]
+    public void LeftOutUserDataKeepsTheRealOne()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        Assert.Null(Plan(null).UserData);
+    }
+
+    [Fact]
+    public void TheSectionsScratchUserDataGivesEveryScene()
+    {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS refuses a scratch user://.");
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "userData": "scratch" } }""");
+
+        ScratchUserDataRequest? userData = Plan(null).UserData;
+
+        Assert.NotNull(userData);
+        Assert.Null(userData.SeedFolder);
+    }
+
+    [Fact]
+    public void TheTopLevelUserDataIsUsedWhenTheSectionLeavesItOut()
+    {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS refuses a scratch user://.");
+        WriteProfile("""{ "userData": "scratch", "scratch": { "folder": "Scratch" } }""");
+
+        Assert.NotNull(Plan(null).UserData);
+    }
+
+    [Fact]
+    public void TheSectionsRealBeatsTheTopLevelScratch()
+    {
+        WriteProfile("""{ "userData": "scratch", "scratch": { "folder": "Scratch", "userData": "real" } }""");
+
+        Assert.Null(Plan(null).UserData);
+    }
+
+    [Fact]
+    public void OptionsUserDataBeatsTheSections()
+    {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS refuses a scratch user://.");
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "userData": "scratch" } }""");
+        var real = new ScratchOptions(UserData: JsonSerializer.SerializeToElement("real"));
+
+        Assert.Null(Plan(null, real).UserData);
+
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        var scratch = new ScratchOptions(UserData: JsonSerializer.SerializeToElement("scratch"));
+
+        Assert.NotNull(Plan(null, scratch).UserData);
+    }
+
+    [Fact]
+    public void ASeedIsResolvedInTheProject()
+    {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS refuses a scratch user://.");
+        string seed = Path.Combine(_project, "seed");
+        Directory.CreateDirectory(seed);
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        var options = new ScratchOptions(UserData: JsonSerializer.SerializeToElement(new { seed = "seed" }));
+
+        ScratchUserDataRequest? userData = Plan(null, options).UserData;
+
+        Assert.NotNull(userData);
+        Assert.Equal(Path.GetFullPath(seed), Path.GetFullPath(userData.SeedFolder!));
+    }
+
+    [Fact]
+    public void AMissingSeedIsRefusedBeforeAnySceneLaunches()
+    {
+        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS refuses a scratch user://.");
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        var options = new ScratchOptions(UserData: JsonSerializer.SerializeToElement(new { seed = "nowhere" }));
+
+        string refused = Refused(() => Plan(null, options));
+
+        Assert.Equal("userData.seed names nowhere, which is not a folder.", refused);
+    }
+
+    [Fact]
+    public void ABadOptionsUserDataIsRefused()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        var options = new ScratchOptions(UserData: JsonSerializer.SerializeToElement(5));
+
+        string refused = Refused(() => Plan(null, options));
+
+        Assert.Equal("""options.userData must be "real", "scratch" or {"seed": "<folder in the project>"}, not 5.""", refused);
+    }
+
     private static ScratchOptions CaptureOf(string steps) =>
         new(Windowed: true, Capture: new ScratchCaptureOptions(Steps: Tokens(steps), Screenshot: true));
 

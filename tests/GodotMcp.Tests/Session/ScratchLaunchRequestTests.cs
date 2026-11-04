@@ -29,6 +29,27 @@ public sealed class ScratchLaunchRequestTests
         Assert.True(request.Quiet);
     }
 
+    [Fact]
+    public void AScenesRequestCarriesThePlansUserData()
+    {
+        var userData = new ScratchUserDataRequest(null);
+
+        LaunchRequest carried = ScratchRun.LaunchRequestFor(
+            Plan(windowed: false) with
+            {
+                UserData = userData,
+            },
+            Scene,
+            quiet: false,
+            shutOutRealGamepads: false,
+            mute: false
+        );
+        LaunchRequest plain = ScratchRun.LaunchRequestFor(Plan(windowed: false), Scene, quiet: false, shutOutRealGamepads: false, mute: false);
+
+        Assert.Same(userData, carried.ScratchUserData);
+        Assert.Null(plain.ScratchUserData);
+    }
+
     private static ScratchPlan Plan(bool windowed) =>
         new("/game", [Scene], [], false, ScratchDetails.Default)
         {

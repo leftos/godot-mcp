@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `run_scratches` takes `userData`, and `godot-mcp.json`'s `scratch.userData`, giving each scene's game a throwaway `user://`; the top-level `userData` applies too.
+
 ## 0.32.1 - 2026-11-03
 
 ### Added

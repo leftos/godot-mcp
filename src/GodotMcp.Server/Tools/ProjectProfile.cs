@@ -138,6 +138,7 @@ internal sealed partial class ProjectProfile
         ExpectKey,
         ExpectForKey,
         "parallel",
+        UserDataKey,
     ];
     private const string ExpectKey = "expect";
     private const string ExpectForKey = "expectFor";
@@ -285,6 +286,30 @@ internal sealed partial class ProjectProfile
             ? UserDataChoice.Parse(value, problem => new McpException(problem + "."))
             : null;
         UserDataChoice choice = call ?? preset.UserData ?? _defaults.UserData ?? UserDataChoice.Real;
+        return Resolve(choice, env);
+    }
+
+    /// <summary>
+    /// The scratch <c>user://</c> of a run_scratches run: options.userData, else the scratch section's, else the top level's, real
+    /// when all three leave it out; null for the real one. Refused on macOS, and a seed that is not a folder inside the project.
+    /// </summary>
+    /// <exception cref="McpException">options' userData is not a userData value, or the scratch one is refused.</exception>
+    internal ScratchUserDataRequest? ScratchRunUserData(JsonElement? given)
+    {
+        UserDataChoice? call = given is { ValueKind: not JsonValueKind.Null } value
+            ? UserDataChoice.Parse(value, problem => new McpException("options." + problem + "."))
+            : null;
+        UserDataChoice choice = call ?? Scratch?.UserData ?? _defaults.UserData ?? UserDataChoice.Real;
+        return Resolve(choice, ReadOnlyDictionary<string, string>.Empty);
+    }
+
+    /// <summary>
+    /// A choice resolved into the request a launch carries: null for the real <c>user://</c>, a scratch one refused on macOS and
+    /// with an <paramref name="env"/> that sets the variable it would set, and its seed checked against the project.
+    /// </summary>
+    /// <exception cref="McpException">A scratch one is refused on macOS or by the env, or its seed is not a folder in the project.</exception>
+    private ScratchUserDataRequest? Resolve(UserDataChoice choice, IReadOnlyDictionary<string, string> env)
+    {
         if (!choice.Scratch)
         {
             return null;
@@ -684,6 +709,9 @@ internal sealed partial class ProjectProfile
         )
         {
             Parallel = ReadParallel(scratch, place),
+            UserData = scratch.TryGetValue(UserDataKey, out JsonElement userData)
+                ? UserDataChoice.Parse(userData, problem => Refused(place, problem))
+                : null,
             Setup = ReadMap<ScratchSetup>(scratch, "setup", place, (scene, steps) => ReadSetup(scene, steps, place)),
             Expect = scratch.TryGetValue(ExpectKey, out JsonElement expect) ? ReadPatterns(expect, PatternList.Expect, place) : [],
             ExpectFor = ReadMap<IReadOnlyList<ScratchPattern>>(
@@ -1377,6 +1405,11 @@ internal sealed record ScratchProfile(
 
     /// <summary>How many scenes play at once, from 1 to <see cref="MaxParallel"/>.</summary>
     public int Parallel { get; init; } = DefaultParallel;
+
+    /// <summary>
+    /// The section's userData, the scratch <c>user://</c> each scene's game gets; null when the section sets none.
+    /// </summary>
+    public UserDataChoice? UserData { get; init; }
 
     /// <summary>
     /// Each scene's declared setup steps, by scene name: the scene-wide list a partial run adds to the ones options.steps

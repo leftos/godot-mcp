@@ -774,7 +774,7 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "threads": 2 } }""",
         "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, setup, known, "
-            + "patterns, expect, expectFor, parallel. Remove or rename it."
+            + "patterns, expect, expectFor, parallel, userData. Remove or rename it."
     )]
     [InlineData("""{ "scratch": { "parallel": 0 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 0.")]
     [InlineData("""{ "scratch": { "parallel": 5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 5.")]
@@ -1530,6 +1530,16 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.Equal($"{FilePath} (preset \"p\"): {UserDataShape}{{\"mode\":\"scratch\"}}.", preset);
         Assert.Equal($"{UserDataShape}\"temp\".", call);
         Assert.Equal($"{UserDataShape}{{\"seed\":\"\"}}.", emptySeed);
+    }
+
+    [Fact]
+    public void AScratchSectionsBadUserDataRefusesTheFile()
+    {
+        Write("""{ "scratch": { "userData": "maybe" } }""");
+
+        string refused = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Equal($"{FilePath} (scratch): {UserDataShape}\"maybe\".", refused);
     }
 
     [Fact]

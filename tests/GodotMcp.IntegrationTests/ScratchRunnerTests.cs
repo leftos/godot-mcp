@@ -65,6 +65,42 @@ public sealed class ScratchRunnerTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AScratchUserDataGivesEachSceneItsOwnSeededFolderGoneAfterTheRun()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The scratch user:// route checked is APPDATA's.");
+        CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch_userdata"), Path.Combine(_probe.Directory, "scratch"));
+        string seed = Path.Combine(_probe.Directory, "seed-data");
+        Directory.CreateDirectory(seed);
+        File.WriteAllText(Path.Combine(seed, "seed.txt"), "seeded");
+        string profile = """
+            { "scratch": { "folder": "scratch", "userData": { "seed": "seed-data" } } }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), profile, TestContext.Current.CancellationToken);
+
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            ["ScratchUserData", "ScratchGreen"],
+            new ScratchOptions(Parallel: 2, Details: FullDetails),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonArray scenes = result["scenes"]!.AsArray();
+        Assert.True(result["passed"]!.GetValue<bool>(), result.ToJsonString());
+        JsonArray details = scenes[0]!["details"]!.AsArray();
+        Assert.Contains(
+            $"/.godot/godot-mcp/userdata-{Environment.ProcessId}-InputProbe.scratch-ScratchUserData-",
+            Status(details[0]!),
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.Equal("seeded", Status(details[1]!));
+        string folder = Path.Combine(_probe.Directory, ".godot", "godot-mcp");
+        if (Directory.Exists(folder))
+        {
+            Assert.Empty(Directory.GetDirectories(folder, "userdata-*"));
+        }
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnErrorAtTheBootIsRedAtTheBootAndNoStepPlays()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchBootError"], options: null, TestContext.Current.CancellationToken));

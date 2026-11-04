@@ -21,7 +21,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 
    To try a `project.godot` setting for one run without editing `project.godot`, pass `options.projectSettings` (`{"rendering/renderer/rendering_method": "gl_compatibility", "display/window/size/viewport_width": 640}`; `{"raw": "Vector2i(1280, 720)"}` for a value written as Godot text), or put it in `godot-mcp.json` (top level or a preset, layered per setting like `env`). Sessions on one folder must give the same settings, like `quiet`; `attach_project` and `arm_project` take none, so they are refused beside a run that has them.
 
-   A drive reads and writes the developer's own `user://` saves by default. `options.userData: "scratch"` (or `{"seed": "<folder in the project>"}` to start from copied files; also a `godot-mcp.json` key) gives the game a user data folder of its own, kept across `restart_project` and deleted when the session ends; the result's `userDataDir` names it. Only `user://` follows it (not .NET's `Environment.GetFolderPath(ApplicationData)` on Windows), and `run_project` alone takes it.
+   A drive reads and writes the developer's own `user://` saves by default. `options.userData: "scratch"` (or `{"seed": "<folder in the project>"}` to start from copied files; also a `godot-mcp.json` key) gives the game a user data folder of its own, kept across `restart_project` and deleted when the session ends; the result's `userDataDir` names it. Only `user://` follows it (not .NET's `Environment.GetFolderPath(ApplicationData)` on Windows). `run_scratches` takes it too (`options.userData`, `scratch.userData`, then the top-level key), with a folder per scene and no `userDataDir`.
 
    To drive the Godot editor itself (its docks, dialogs and output), `run_editor {projectPath}` starts it the same way, quiet, and the runtime tools then act on the editor's windows; see "The editor" below.
 
@@ -104,7 +104,7 @@ A terminal, hook or CI step runs the same runner on the same `godot-mcp.json` wi
 
 A repeated `--user-arg <arg>` or `--engine-arg <arg>` adds one element to `userArgs` or `engineArgs`, its value taken as it stands even when it begins with `--` (`--user-arg --shadow-quality=Low`).
 
-A run of many minutes goes in the background: `run_scratches` with `options.background: true` returns `{runId, statusFile, logFile, scenes}` at once and plays on in the server (one background run per project; `run_scratches` on it is refused until it ends).
+A run of many minutes goes in the background: `run_scratches` with `options.background: true` returns `{runId, statusFile, logFile, scenes}` at once and plays on in the server (one background run per project; `run_scratches` on it is refused until it ends). `options.background: true` is also how one agent overlaps two trees' scratch runs, since the client runs parallel tool calls one at a time.
 
 Wait with `scratch_status {projectPath, runId, waitSeconds}` (1 to 600): it holds up to that many seconds and returns the status; while the status carries `waited`, the run is still going, so call it again. A status without `waited` is the run's end (or `waited` saying `live: false`: the server that played it is gone and the run must be started again). `waitSeconds` cannot be combined with `stop`.
 
