@@ -275,4 +275,57 @@ public sealed class HeadlessValidationTests : IDisposable
         Assert.Equal("bad setting", shaped["engineErrors"]![0]!["message"]!.GetValue<string>());
         Assert.Null(shaped["csharp"]);
     }
+
+    [Fact]
+    public void ASymptomOfAFailedBuildIsLeftOutAndCounted()
+    {
+        JsonObject reply = new()
+        {
+            ["checked"] = 1.0,
+            ["results"] = new JsonArray(
+                new JsonObject { ["path"] = "res://Ghost.cs", ["errors"] = new JsonArray(Error(MissingClassLine)) },
+                new JsonObject { ["path"] = "res://main.gd", ["errors"] = new JsonArray(Error("Parse Error: Expected an indented block.")) }
+            ),
+            ["engineErrors"] = new JsonArray(Error(MissingClassLine), Error("bad setting")),
+        };
+        PrepResult failed = new() { Build = "failed", Import = "not-needed" };
+
+        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], failed, null), []);
+
+        Assert.False(shaped["valid"]!.GetValue<bool>());
+        Assert.Equal(["bad setting"], shaped["engineErrors"]!.AsArray().Select(entry => entry!["message"]!.GetValue<string>()));
+        JsonNode kept = Assert.Single(shaped["results"]!.AsArray())!;
+        Assert.Equal("res://main.gd", kept["path"]!.GetValue<string>());
+        Assert.Equal(2, shaped["csharp"]!["symptomsDropped"]!.GetValue<int>());
+        Assert.Equal("failed", shaped["csharp"]!["build"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AGreenBuildKeepsTheLinesThatLookLikeAMissingAssembly()
+    {
+        JsonObject reply = new()
+        {
+            ["checked"] = 1.0,
+            ["results"] = new JsonArray(new JsonObject { ["path"] = "res://Ghost.cs", ["errors"] = new JsonArray(Error(MissingClassLine)) }),
+            ["engineErrors"] = new JsonArray(Error(MissingClassLine)),
+        };
+        PrepResult upToDate = new() { Build = "up-to-date", Import = "not-needed" };
+
+        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], upToDate, null), []);
+
+        Assert.False(shaped["valid"]!.GetValue<bool>());
+        Assert.Single(shaped["engineErrors"]!.AsArray());
+        Assert.Single(shaped["results"]!.AsArray());
+        Assert.Null(shaped["csharp"]!["symptomsDropped"]);
+    }
+
+    private const string MissingClassLine = "Cannot instantiate C# script because the associated class could not be found. Script: res://Ghost.cs";
+
+    private static JsonObject Error(string message) =>
+        new()
+        {
+            ["message"] = message,
+            ["file"] = "scene/main/node.cpp",
+            ["line"] = 7,
+        };
 }

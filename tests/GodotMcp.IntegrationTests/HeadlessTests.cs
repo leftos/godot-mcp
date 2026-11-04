@@ -127,6 +127,25 @@ public sealed class HeadlessTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ValidateLeavesOutWhatTheMissingAssemblyCauses()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string source = File.ReadAllText(csProbe.SourcePath("CsProbeNode.cs"));
+        csProbe.WriteSource("CsProbeNode.cs", source.Replace("\"hidden\";", "\"hidden\"", StringComparison.Ordinal));
+
+        JsonNode result = await ValidateAsync(csProbe.Directory, ["main.tscn"], cancellation);
+
+        // The failed build is the cause of the lines Godot logs about its missing assembly, so validation counts them instead
+        // of listing them; the compiler errors themselves stay.
+        Assert.False(result["valid"]!.GetValue<bool>(), result.ToJsonString());
+        Assert.Equal("failed", result["csharp"]!["build"]!.GetValue<string>());
+        Assert.True(result["csharp"]!["symptomsDropped"]?.GetValue<int>() > 0, result.ToJsonString());
+        Assert.Contains("CsProbeNode.cs:10: CS1002", result["csharp"]!["errors"]!.ToJsonString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("associated class could not be found", result.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateGroupsAMissingCSharpClassUnderItsScript()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

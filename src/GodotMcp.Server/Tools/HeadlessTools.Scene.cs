@@ -516,18 +516,16 @@ internal sealed partial class HeadlessTools
     /// <summary>
     /// result with <c>csharp</c> (<see cref="ShapeCsharp"/>: the state and the compiler errors) added when the prep's C# build
     /// failed, and <c>errors</c> when Godot logged any. While the build failed, the errors a missing project assembly causes
-    /// (<see cref="MissingAssembly.IsSymptom"/>) are left out: <c>csharp</c> reports their cause.
+    /// (<see cref="MissingAssembly.IsSymptom"/>) are left out and counted: <c>csharp</c> reports their cause.
     /// </summary>
     private static JsonObject AddBuildAndErrors(JsonObject result, HeadlessResult run)
     {
         JsonArray engineErrors = run.EngineErrors;
+        int symptomsDropped = 0;
         if (run.Prep.Build == "failed")
         {
-            result["csharp"] = ShapeCsharp(run.Prep.Build, run.BuildErrors, null);
-            engineErrors =
-            [
-                .. engineErrors.OfType<JsonObject>().Where(entry => !MissingAssembly.IsSymptom(entry)).Select(entry => entry.DeepClone()),
-            ];
+            (engineErrors, symptomsDropped) = WithoutAssemblySymptoms(engineErrors);
+            result["csharp"] = ShapeCsharp(run.Prep.Build, run.BuildErrors, null, symptomsDropped);
         }
 
         JsonArray errors = OnlyErrors(engineErrors);

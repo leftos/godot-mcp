@@ -51,7 +51,9 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             + "and csharp.otherErrors the errors in the assembly's other files; from says whether they came from this call's build "
             + "or the last saved one. Errors make valid false, warnings never do. Errors Godot logs before the first file is "
             + "checked (an autoload's _init, the project's settings) are listed under the res:// file they name, else in "
-            + "engineErrors [{message, file, line}]; either makes valid false."
+            + "engineErrors [{message, file, line}]; either makes valid false. While the C# build fails, the lines a missing "
+            + "project assembly causes (a C# autoload that \"does not inherit from 'Node'\", a C# script whose class could not "
+            + "be found) are left out of results and engineErrors, and csharp.symptomsDropped counts them: csharp is their cause."
     )]
     public async Task<string> ValidateAsync(
         [Description(ProjectPathDescription)] string projectPath,
@@ -173,14 +175,19 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     /// <summary>
     /// validate's result: <c>{valid, checked, results, engineErrors?, csharp?, prep}</c>; <c>checked</c> counts the files Godot
-    /// checked and the .cs targets.
+    /// checked and the .cs targets. While the prep's C# build failed, the errors a missing project assembly causes
+    /// (<see cref="MissingAssembly.IsSymptom"/>) are left out of <c>results</c> and <c>engineErrors</c> and counted under
+    /// <c>csharp</c>: the build's failure still makes <c>valid</c> false.
     /// </summary>
     internal static JsonObject ShapeValidation(HeadlessResult run, IReadOnlyList<CsTarget> csTargets)
     {
         JsonObject reply = run.Result as JsonObject ?? [];
         JsonArray results = ArrayOf(reply, "results");
         // The errors Godot logged before the first file was checked whose file is not a res:// file.
-        JsonArray unattributed = ArrayOf(reply, "engineErrors");
+        JsonArray logged = ArrayOf(reply, "engineErrors");
+        (JsonArray kept, JsonArray unattributed, int symptomsDropped) = WithoutSymptomsOfAFailedBuild(run.Prep.Build, results, logged);
+        results = kept;
+
         CsReport? report = csTargets.Count == 0 ? null : ReportCSharp(run, csTargets);
         JsonObject shaped = new()
         {
@@ -195,7 +202,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
         if (report is not null || BuildStatesChecked.Contains(run.Prep.Build))
         {
-            shaped["csharp"] = ShapeCsharp(run.Prep.Build, run.BuildErrors, report);
+            shaped["csharp"] = ShapeCsharp(run.Prep.Build, run.BuildErrors, report, symptomsDropped);
         }
 
         shaped["prep"] = JsonSerializer.SerializeToNode(run.Prep, Json);
@@ -211,10 +218,10 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     private static int CountOf(JsonNode? count) => count?.GetValueKind() == JsonValueKind.Number ? (int)count.GetValue<double>() : 0;
 
     /// <summary>
-    /// validate's <c>csharp</c>: the build's state, a failed build's compiler errors with how many were left out, and the .cs
-    /// targets' report.
+    /// validate's <c>csharp</c>: the build's state, a failed build's compiler errors with how many were left out, the lines a
+    /// missing assembly made Godot log and were left out of the result, and the .cs targets' report.
     /// </summary>
-    private static JsonObject ShapeCsharp(string build, CompilerErrorList? errors, CsReport? report)
+    private static JsonObject ShapeCsharp(string build, CompilerErrorList? errors, CsReport? report, int symptomsDropped)
     {
         JsonObject csharp = new() { ["build"] = build };
         if (errors is not null)
@@ -226,12 +233,94 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             }
         }
 
+        if (symptomsDropped > 0)
+        {
+            csharp["symptomsDropped"] = symptomsDropped;
+        }
+
         foreach ((string key, JsonNode? value) in report?.Shaped ?? [])
         {
             csharp[key] = value?.DeepClone();
         }
 
         return csharp;
+    }
+
+    /// <summary>
+    /// <paramref name="results"/> and <paramref name="engineErrors"/> without the errors a missing project assembly causes
+    /// (<see cref="MissingAssembly.IsSymptom"/>), which a failed build explains, and how many were left out; a build that did
+    /// not fail keeps every line.
+    /// </summary>
+    private static (JsonArray Kept, JsonArray EngineErrors, int Dropped) WithoutSymptomsOfAFailedBuild(
+        string build,
+        JsonArray results,
+        JsonArray engineErrors
+    )
+    {
+        if (build != "failed")
+        {
+            return (results, engineErrors, 0);
+        }
+
+        (JsonArray keptResults, int resultsDropped) = WithoutAssemblySymptomsInResults(results);
+        (JsonArray keptErrors, int engineDropped) = WithoutAssemblySymptoms(engineErrors);
+        return (keptResults, keptErrors, resultsDropped + engineDropped);
+    }
+
+    /// <summary>
+    /// <paramref name="entries"/> without the errors a missing project assembly causes (<see cref="MissingAssembly.IsSymptom"/>),
+    /// which a failed build explains, and how many were left out.
+    /// </summary>
+    private static (JsonArray Kept, int Dropped) WithoutAssemblySymptoms(JsonArray entries)
+    {
+        JsonArray kept = [];
+        int dropped = 0;
+        foreach (JsonObject entry in entries.OfType<JsonObject>())
+        {
+            if (MissingAssembly.IsSymptom(entry))
+            {
+                dropped++;
+            }
+            else
+            {
+                kept.Add(entry.DeepClone());
+            }
+        }
+
+        return (kept, dropped);
+    }
+
+    /// <summary>
+    /// <paramref name="results"/> without the errors a missing project assembly causes: a file left with errors keeps its
+    /// entry and its other fields, and one left with none is left out, as a file with no error is.
+    /// </summary>
+    private static (JsonArray Kept, int Dropped) WithoutAssemblySymptomsInResults(JsonArray results)
+    {
+        JsonArray kept = [];
+        int dropped = 0;
+        foreach (JsonNode? entry in results)
+        {
+            if (entry is not JsonObject result || result["errors"] is not JsonArray errors)
+            {
+                kept.Add(entry?.DeepClone());
+                continue;
+            }
+
+            (JsonArray left, int count) = WithoutAssemblySymptoms(errors);
+            dropped += count;
+            if (count == 0)
+            {
+                kept.Add(result.DeepClone());
+            }
+            else if (left.Count > 0)
+            {
+                var shaped = (JsonObject)result.DeepClone();
+                shaped["errors"] = left;
+                kept.Add(shaped);
+            }
+        }
+
+        return (kept, dropped);
     }
 
     /// <summary>

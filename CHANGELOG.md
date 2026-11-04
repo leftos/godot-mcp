@@ -15,6 +15,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A quiet run stays unfocused and off-screen, and the pad shut-out holds, even when the project sets per-platform variants of those settings.
+- `validate` leaves out the errors a failed C# build causes in Godot, as the other headless tools do, and counts them.
 
 ## 0.31.0 - 2026-11-03
 
