@@ -5,6 +5,7 @@
 ## Do first
 
 - [ ] GMCP-468 Flaky: the editor itest group timed out once at its 300 s ceiling with no failed test · release vNext — Urgent · Singles
+- [ ] GMCP-470 Flaky: TimeTests.WaitForNodeExists meets the node before the wait starts under load · release vNext — Urgent · Singles
 - [ ] GMCP-456 run_scratches: a .NET finalizer crash at quit after the exit marker is a warning, not a red scene · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-459 run_scratches: turn a shader compile error red, and let a project judge engine warnings · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-460 Quiet runs: the engine's pointer position follows injected input · release vNext — High · Ideas from the survey and the projects
