@@ -570,7 +570,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `passed` is true when nothing is red or killed. `details` comes for a red or killed scene, or for every scene with `options.details`, and lists every played step as `{index, name, ok, gameMs?, until?, status}` (`gameMs` the pace, or for a step played on an until `until` in its place); only a failing step carries `error`, `errors` and `lines`, and `options.details: true` or `"full"` adds those for the green steps too, and keeps their `[scratch]` notes (a failing step keeps its own always).
 
-  `options.details` is `true`, `"full"` (the same), `"compact"` or `false` (left out is the same); anything else is refused with `details is <raw JSON>; it must be true, "full" or "compact".` `"compact"` lists every played step of every scene too, but a green step as one string, `{index} ok {name}[ {gameMs}ms][ until met|unmet {ms}ms][ | {notes}]`, the `[scratch]` notes joined by ` / `, cut at `options.detailChars` and ending `… (+N chars)` when cut; a failing or killed step keeps its object. With `only: "red"` the compact green lines are dropped.
+  `options.details` is `true`, `"full"` (the same), `"compact"` or `false` (left out is the same); anything else is refused with `details is <raw JSON>; it must be true, "full" or "compact".` `"compact"` lists every played step of every scene too, but a green step as one string, `{index} ok {name}[ {gameMs}ms][ until met|unmet {ms}ms][ | {status / notes}]`, the step's `status` (left out when empty or the same as its name) then its `[scratch]` notes, joined by ` / `, cut at `options.detailChars` and ending `… (+N chars)` when cut; a failing or killed step keeps its object. With `only: "red"` the compact green lines are dropped.
 
   A step's `errors` are folded by message, file and line into `{message, file, line, count?}` entries as `get_errors` reports them (`count` only above 1); distinct entries past the cap are counted in `errorsOmitted`, which also counts errors the size budget dropped.
 
@@ -635,7 +635,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   Steps not named never run, except the scene's setup steps (`scratch.setup`, below), which a partial run plays beside the selected ones; a later step that depends on a skipped step not declared as setup is the caller's choice.
 
-  A scene's `stepList` is one string per step, `"<index> <name>"` with ` (hidden)` after a hidden step's index (`"0 (hidden) fight setup"`), present only when the scene has a hidden step or the run played part of it (`selected` present).
+  A scene's `stepList` is one string per step, `"<index> <name>"` with ` (hidden)` after a hidden step's index (`"0 (hidden) fight setup"`). On a run that played part of the scene (`selected` present) it lists only the selected steps, its setup steps left out, so a one-step call on a long scene stays short; a whole run lists every step, and only when the scene has a hidden step. A step token naming no step is refused with the scene's full list.
 
   A scene's `selected` lists the indices the call's `steps` named, only when `steps` is given and resolved in that scene; `setup` lists the declared setup steps the run added to that selection, ascending, and is absent when there are none; like `selected`, it says what the run set out to play, so a scene stopped earlier still lists them.
 

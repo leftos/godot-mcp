@@ -1422,7 +1422,7 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
-    public void ASceneRunInPartListsEveryStepByIndexAndName()
+    public void ASceneRunInPartListsOnlyItsSelectedSteps()
     {
         ScratchObservation partial = new("Scene", "probe.scratch-Scene", 0.5, 3)
         {
@@ -1434,7 +1434,23 @@ public sealed class ScratchVerdictTests
 
         JsonObject json = Json(ScratchVerdict.Judge(partial, Plain));
 
-        Assert.Equal(["0 open", "1 fight", "2 close"], json["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
+        Assert.Equal(["1 fight"], json["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void ASceneRunInPartKeepsTheHiddenMarkOnASelectedStep()
+    {
+        ScratchObservation partial = new("Scene", "probe.scratch-Scene", 0.5, 3)
+        {
+            Steps = [Step(0), Step(2)],
+            ExitCode = 0,
+            Selected = [0, 2],
+            StepNames = new(["open", "fight", "close"], new HashSet<int> { 0 }),
+        };
+
+        JsonObject json = Json(ScratchVerdict.Judge(partial, Plain));
+
+        Assert.Equal(["0 (hidden) open", "2 close"], json["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
     }
 
     [Fact]
@@ -2029,6 +2045,38 @@ public sealed class ScratchVerdictTests
             details.Select(step => step!.GetValue<string>())
         );
         Assert.Equal("0 ok step0 500ms | [… (+109 chars)", cut.GetValue<string>());
+    }
+
+    [Fact]
+    public void CompactLineCarriesAGreenStepsStatusBeforeItsNotes()
+    {
+        ScratchRules compact = Plain with { Details = ScratchDetails.Compact };
+        ScratchObservation seen = Seen(
+            Step(0) with
+            {
+                Status = "check_night_cut-in_ground: urban over desert 0.529",
+                Lines = ["[scratch] playing"],
+            },
+            Step(1) with
+            {
+                Status = "step1",
+            },
+            Step(2) with
+            {
+                Status = "only a status",
+            }
+        );
+
+        JsonArray details = Json(ScratchVerdict.Judge(seen, compact))["details"]!.AsArray();
+
+        Assert.Equal(
+            [
+                "0 ok step0 500ms | check_night_cut-in_ground: urban over desert 0.529 / [scratch] playing",
+                "1 ok step1 500ms",
+                "2 ok step2 500ms | only a status",
+            ],
+            details.Select(step => step!.GetValue<string>())
+        );
     }
 
     [Fact]

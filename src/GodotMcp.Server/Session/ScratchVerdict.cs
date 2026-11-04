@@ -331,8 +331,8 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
 
     /// <summary>
     /// The scene's steps, one "&lt;index&gt; &lt;name&gt;" each, with " (hidden)" after the index of a step its root's
-    /// GetStepHidden marks hidden; null unless the scene has a hidden step or the run played only part of it
-    /// (<see cref="Selected"/> is present).
+    /// GetStepHidden marks hidden: on a run that played only part of it (<see cref="Selected"/> is present), only the steps it
+    /// selected; on a whole run, every step, present only when one is hidden; null otherwise.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? StepList { get; init; }
@@ -736,9 +736,20 @@ internal static partial class ScratchVerdict
         : verdict == Green ? (partial ? KnownRed : KnownNowGreen)
         : verdict;
 
-    /// <summary>The scene's step list, when it has a hidden step or the call selected its steps; else null.</summary>
-    private static IReadOnlyList<string>? StepList(ScratchObservation seen) =>
-        seen.Selected is not null || seen.StepNames.Hidden.Count > 0 ? seen.StepNames.Lines() : null;
+    /// <summary>
+    /// The scene's step list: the lines of the steps the call selected, in their order, on a run that played part of it; every
+    /// step's line on a whole run, present only when one is hidden; else null.
+    /// </summary>
+    private static IReadOnlyList<string>? StepList(ScratchObservation seen)
+    {
+        if (seen.Selected is { } selected)
+        {
+            IReadOnlyList<string> lines = seen.StepNames.Lines();
+            return [.. selected.Where(index => index >= 0 && index < lines.Count).Select(index => lines[index])];
+        }
+
+        return seen.StepNames.Hidden.Count > 0 ? seen.StepNames.Lines() : null;
+    }
 
     /// <summary>Whether options.steps selected fewer than all of the scene's steps.</summary>
     private static bool PlayedInPart(ScratchObservation seen) => seen.Selected is { } selected && selected.Count < seen.Total;
@@ -880,7 +891,8 @@ internal static partial class ScratchVerdict
 
     /// <summary>
     /// A green step as options.details compact lists it: "&lt;index&gt; ok &lt;name&gt;", its pace in game milliseconds or its until's
-    /// figure, then " | " and its [scratch] notes joined with " / ", the whole cut to <paramref name="detailChars"/>.
+    /// figure, then " | " and its status (when it has one other than its name) followed by its [scratch] notes, joined with " / ",
+    /// the whole cut to <paramref name="detailChars"/>.
     /// </summary>
     private static string CompactLine(ScratchStep step, ScratchStepResult listed, int detailChars)
     {
@@ -895,10 +907,16 @@ internal static partial class ScratchVerdict
             line.Append(CultureInfo.InvariantCulture, $" until {(until.Met ? "met" : "unmet")} {until.GameMs}ms");
         }
 
-        List<string> notes = [.. step.Lines.Where(note => note.StartsWith(ScratchNotePrefix, StringComparison.Ordinal))];
-        if (notes.Count > 0)
+        List<string> parts = [];
+        if (step.Status.Length > 0 && !string.Equals(step.Status, step.Name, StringComparison.Ordinal))
         {
-            line.Append(" | ").AppendJoin(" / ", notes);
+            parts.Add(step.Status);
+        }
+
+        parts.AddRange(step.Lines.Where(note => note.StartsWith(ScratchNotePrefix, StringComparison.Ordinal)));
+        if (parts.Count > 0)
+        {
+            line.Append(" | ").AppendJoin(" / ", parts);
         }
 
         return OutputBuffer.Cut(line.ToString(), detailChars);

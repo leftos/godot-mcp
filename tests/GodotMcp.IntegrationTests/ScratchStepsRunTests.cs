@@ -288,7 +288,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task APartialRunOfASceneWithAHiddenStepListsItsStepsWithTheMark()
+    public async Task APartialRunOfASceneWithAHiddenStepListsOnlyTheSelectedStep()
     {
         ScratchOptions options = new(Steps: Tokens("[1]"));
 
@@ -296,10 +296,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
 
         Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
         Assert.Equal([1], Indices(scene["selected"]!));
-        Assert.Equal(
-            ["0 (hidden) fight setup", "1 first view", "2 second view"],
-            scene["stepList"]!.AsArray().Select(line => line!.GetValue<string>())
-        );
+        Assert.Equal(["1 first view"], scene["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
     }
 
     private static JsonElement Tokens(string json) => JsonSerializer.Deserialize<JsonElement>(json);
