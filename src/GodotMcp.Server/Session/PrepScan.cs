@@ -138,6 +138,67 @@ internal static partial class PrepScan
     }
 
     /// <summary>
+    /// Every <c>.uid</c> and <c>.import</c> file of the project as it is now, by full path with its size and last-write time
+    /// (UTC): a folder walk, so a git-ignored sidecar counts too, through the folders Godot's scan visits (the rules of
+    /// <see cref="UnscannedFolder"/>, applied as it walks, and <see cref="SkippedFolders"/>).
+    /// </summary>
+    internal static IReadOnlyDictionary<string, (long Length, DateTime LastWriteUtc)> Sidecars(string projectDir)
+    {
+        Dictionary<string, (long Length, DateTime LastWriteUtc)> sidecars = new(StringComparer.OrdinalIgnoreCase);
+        Stack<string> pending = new([projectDir]);
+        while (pending.TryPop(out string? folder))
+        {
+            foreach (string file in Directory.EnumerateFiles(folder).Where(IsSidecar))
+            {
+                FileInfo info = new(file);
+                sidecars[info.FullName] = (info.Length, info.LastWriteTimeUtc);
+            }
+
+            foreach (string child in Directory.EnumerateDirectories(folder).Where(IsVisitedFolder))
+            {
+                pending.Push(child);
+            }
+        }
+
+        return sidecars;
+    }
+
+    /// <summary>
+    /// What an import changed between two <see cref="Sidecars"/> snapshots of the project: the <c>.uid</c> and <c>.import</c>
+    /// files it created or changed and the ones it deleted, each as sorted <c>res://</c> paths, null when it did neither.
+    /// </summary>
+    internal static (IReadOnlyList<string>? Written, IReadOnlyList<string>? Removed) SidecarChanges(
+        string projectDir,
+        IReadOnlyDictionary<string, (long Length, DateTime LastWriteUtc)> before,
+        IReadOnlyDictionary<string, (long Length, DateTime LastWriteUtc)> after
+    )
+    {
+        List<string> written = [];
+        foreach ((string file, (long Length, DateTime LastWriteUtc) state) in after)
+        {
+            if (!before.TryGetValue(file, out (long Length, DateTime LastWriteUtc) old) || old != state)
+            {
+                written.Add(ResourcePathOf(projectDir, file));
+            }
+        }
+
+        List<string> removed = [.. before.Keys.Where(file => !after.ContainsKey(file)).Select(file => ResourcePathOf(projectDir, file))];
+        written.Sort(StringComparer.Ordinal);
+        removed.Sort(StringComparer.Ordinal);
+        return (written.Count == 0 ? null : written, removed.Count == 0 ? null : removed);
+    }
+
+    private static string ResourcePathOf(string projectDir, string file) => "res://" + Path.GetRelativePath(projectDir, file).Replace('\\', '/');
+
+    private static bool IsSidecar(string file) => HasExtension(file, ".uid") || HasExtension(file, ImportSuffix);
+
+    private static bool IsVisitedFolder(string folder) =>
+        !SkippedFolders.Contains(Path.GetFileName(folder))
+        && !Path.GetFileName(folder).StartsWith('.')
+        && !File.Exists(Path.Combine(folder, ".gdignore"))
+        && !File.Exists(Path.Combine(folder, "project.godot"));
+
+    /// <summary>
     /// Whether the assembly is missing, or an input is newer than both the assembly and the stamp (an input that leaves the
     /// assembly alone, such as a .props edit, would otherwise rebuild on every run).
     /// </summary>

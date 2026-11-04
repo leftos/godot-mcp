@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- A prep's `prep` result lists the `.uid` and `.import` files its Godot import wrote or deleted, as `filesWritten` and `filesRemoved`, on `validate` too.
+
 ## 0.32.0 - 2026-11-03
 
 ### Added

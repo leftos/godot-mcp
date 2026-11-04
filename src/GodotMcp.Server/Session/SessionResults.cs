@@ -124,6 +124,20 @@ internal sealed record PrepResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ImportGate { get; init; }
 
+    /// <summary>
+    /// The .uid and .import files the import created or changed in the project, as res:// paths, sorted; left out when it
+    /// changed none or no import ran.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? FilesWritten { get; init; }
+
+    /// <summary>
+    /// The .uid and .import files the import deleted from the project, as res:// paths, sorted; left out when it deleted none
+    /// or no import ran.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? FilesRemoved { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Note { get; init; }
 }

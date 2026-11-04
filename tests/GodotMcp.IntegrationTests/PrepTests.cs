@@ -50,6 +50,10 @@ public sealed partial class PrepTests : IAsyncDisposable
 
     // A prep wrapper that runs nothing and says it stopped the command.
     private const string StoppingWrapper = "exit 124\n";
+
+    // A prep wrapper that writes a .uid file the way an import would, runs nothing and says it stopped the command.
+    private const string UidWritingStoppingWrapper =
+        "Set-Content -LiteralPath (Join-Path $PSScriptRoot 'stopped.gd.uid') -Value 'uid://bstopped'\nexit 124\n";
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -184,6 +188,32 @@ public sealed partial class PrepTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AScriptTheImportGaveAUidIsListed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await ImportIconThenDeleteGodotFolderAsync(probe.Directory, cancellation);
+        File.WriteAllText(Path.Combine(probe.Directory, "fresh.gd"), "extends Node\n");
+
+        LaunchResult launched = await LaunchAsync(probe.Directory, prepare: true, cancellation);
+
+        Assert.Equal("done", launched.Prep.Import);
+        IReadOnlyList<string> written = launched.Prep.FilesWritten ?? [];
+        Assert.True(
+            written.Contains("res://fresh.gd.uid", StringComparer.Ordinal),
+            $"fresh.gd.uid is not in prep.filesWritten: {string.Join(", ", written)}"
+        );
+        Assert.True(File.Exists(Path.Combine(probe.Directory, "fresh.gd.uid")), "the import wrote no fresh.gd.uid");
+
+        await _harness.Sessions.StopAsync(null, cancellation);
+        LaunchResult again = await LaunchAsync(probe.Directory, prepare: true, cancellation);
+
+        Assert.Equal("not-needed", again.Prep.Import);
+        Assert.Null(again.Prep.FilesWritten);
+        Assert.Null(again.Prep.FilesRemoved);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ChangedImportSettingsAreImportedAgain()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -283,6 +313,21 @@ public sealed partial class PrepTests : IAsyncDisposable
         );
         Assert.Equal("stopped", SavedBuild.Load(csProbe.Directory)?.State);
         Assert.False(File.Exists(marker), "the stopping wrapper ran its command");
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AStoppedImportNamesTheFilesItWrote()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await ImportIconThenDeleteGodotFolderAsync(probe.Directory, cancellation);
+        WritePrepWrapper(probe.Directory, UidWritingStoppingWrapper);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() => LaunchAsync(probe.Directory, prepare: true, cancellation));
+
+        Assert.StartsWith("the prep wrapper stopped the import", refused.Message, StringComparison.Ordinal);
+        Assert.EndsWith(" Before it stopped, the import wrote res://stopped.gd.uid.", refused.Message, StringComparison.Ordinal);
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
     }
 

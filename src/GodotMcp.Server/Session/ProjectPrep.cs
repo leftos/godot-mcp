@@ -118,6 +118,8 @@ internal static class ProjectPrep
                 ImportMs = import.Milliseconds,
                 ImportLog = import.Log,
                 ImportGate = import.Gate,
+                FilesWritten = import.FilesWritten,
+                FilesRemoved = import.FilesRemoved,
                 Note = notes.Length == 0 ? null : string.Join(' ', notes),
             };
             Log.PrepFinished(context.Logger, context.ProjectDir, result.Build, result.Import);
@@ -500,22 +502,69 @@ internal static class ProjectPrep
         }
 
         context.BeforeImport();
+        IReadOnlyDictionary<string, (long Length, DateTime LastWriteUtc)> before = PrepScan.Sidecars(context.ProjectDir);
         IReadOnlySet<string>? classesBefore = PrepScan.IsFormatClassStale(context.ProjectDir, files)
             ? PrepScan.CachedFormatClasses(context.ProjectDir, files)
             : null;
         string godot = Installation.FindGodot();
         PrepWrapper? wrap = wrapper.Value;
         string log = Path.Combine(LogFolder(context.ProjectDir), "import.log");
-        ToolProcessResult first = await RunImportAsync(
-            ImportRequest(godot, context.ProjectDir, log, append: false),
-            context,
-            wrap,
-            cancellationToken
-        );
-        string? reason = SecondPassReason(log, classesBefore, context.ProjectDir, files);
-        return reason is null
-            ? new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log, Gate = GateVerdictOf(wrap, log, context.Logger) }
-            : await SecondImportAsync(godot, context, wrap, first, reason, cancellationToken);
+        try
+        {
+            ToolProcessResult first = await RunImportAsync(
+                ImportRequest(godot, context.ProjectDir, log, append: false),
+                context,
+                wrap,
+                cancellationToken
+            );
+            string? reason = SecondPassReason(log, classesBefore, context.ProjectDir, files);
+            PrepStep step = reason is null
+                ? new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log, Gate = GateVerdictOf(wrap, log, context.Logger) }
+                : await SecondImportAsync(godot, context, wrap, first, reason, cancellationToken);
+            return WithSidecarChanges(step, context.ProjectDir, before);
+        }
+        catch (SessionException e)
+        {
+            string? stopped = SidecarStoppedNote(context.ProjectDir, before);
+            if (stopped is null)
+            {
+                throw;
+            }
+
+            throw new SessionException(e.Message + " " + stopped, e);
+        }
+    }
+
+    /// <summary>The step, with the .uid and .import files the import it ran created, changed or deleted.</summary>
+    private static PrepStep WithSidecarChanges(
+        PrepStep step,
+        string projectDir,
+        IReadOnlyDictionary<string, (long Length, DateTime LastWriteUtc)> before
+    )
+    {
+        (IReadOnlyList<string>? written, IReadOnlyList<string>? removed) = PrepScan.SidecarChanges(projectDir, before, PrepScan.Sidecars(projectDir));
+        return step with { FilesWritten = written, FilesRemoved = removed };
+    }
+
+    /// <summary>
+    /// The sentence a failed import's message ends with, naming the .uid and .import files it wrote or removed before it
+    /// stopped, or null when it changed none.
+    /// </summary>
+    private static string? SidecarStoppedNote(string projectDir, IReadOnlyDictionary<string, (long Length, DateTime LastWriteUtc)> before)
+    {
+        (IReadOnlyList<string>? written, IReadOnlyList<string>? removed) = PrepScan.SidecarChanges(projectDir, before, PrepScan.Sidecars(projectDir));
+        List<string> parts = [];
+        if (written is not null)
+        {
+            parts.Add($"wrote {string.Join(", ", written)}");
+        }
+
+        if (removed is not null)
+        {
+            parts.Add($"removed {string.Join(", ", removed)}");
+        }
+
+        return parts.Count == 0 ? null : $"Before it stopped, the import {string.Join("; ", parts)}.";
     }
 
     /// <summary>
@@ -718,6 +767,12 @@ internal static class ProjectPrep
 
         /// <summary>The wrapper's verdict from the step's capture log; null when it ran through no wrapper or left none.</summary>
         public string? Gate { get; init; }
+
+        /// <summary>The .uid and .import files the step's import created or changed, as res:// paths; null when it changed none.</summary>
+        public IReadOnlyList<string>? FilesWritten { get; init; }
+
+        /// <summary>The .uid and .import files the step's import deleted, as res:// paths; null when it deleted none.</summary>
+        public IReadOnlyList<string>? FilesRemoved { get; init; }
     }
 }
 

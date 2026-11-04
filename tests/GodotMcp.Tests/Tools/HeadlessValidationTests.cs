@@ -277,6 +277,36 @@ public sealed class HeadlessValidationTests : IDisposable
     }
 
     [Fact]
+    public void ThePrepsWrittenAndRemovedFilesShowUnderPrep()
+    {
+        JsonNode reply = JsonNode.Parse("""{"checked": 1, "results": []}""")!;
+        PrepResult prep = new()
+        {
+            Build = "no-csproj",
+            Import = "done",
+            FilesWritten = ["res://a.gd.uid"],
+            FilesRemoved = ["res://old.png.import"],
+        };
+
+        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], prep, null), []);
+
+        Assert.Equal("res://a.gd.uid", shaped["prep"]!["filesWritten"]![0]!.GetValue<string>());
+        Assert.Equal("res://old.png.import", shaped["prep"]!["filesRemoved"]![0]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AnImportThatWroteNothingLeavesTheFieldsOut()
+    {
+        JsonNode reply = JsonNode.Parse("""{"checked": 1, "results": []}""")!;
+        PrepResult prep = new() { Build = "no-csproj", Import = "done" };
+
+        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], prep, null), []);
+
+        Assert.Null(shaped["prep"]!["filesWritten"]);
+        Assert.Null(shaped["prep"]!["filesRemoved"]);
+    }
+
+    [Fact]
     public void ASymptomOfAFailedBuildIsLeftOutAndCounted()
     {
         JsonObject reply = new()

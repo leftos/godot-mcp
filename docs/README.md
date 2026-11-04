@@ -16,7 +16,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 
 | Term | Meaning |
 |---|---|
-| .uid file (uid sidecar) | The file `<path>.uid` beside a script, shader or `.xscn`/`.xres` that holds its uid (one `uid://` line), because the format has no header to hold it; a headless save that creates one lists it in `uidFilesWritten` to commit |
+| .uid file (uid sidecar) | The file `<path>.uid` beside a script, shader or `.xscn`/`.xres` that holds its uid (one `uid://` line), because the format has no header to hold it; a headless save that creates one lists it in `uidFilesWritten` to commit, and a prep import that creates one lists it in `prep.filesWritten` |
 | Armed folder | A project folder `arm_project` has prepared: its injection `override.cfg` and `.godot/godot-mcp/armed.json` stay until `disarm_project` or the server exits, so every game started on it meanwhile carries a dormant bridge |
 | Attached session, attach file | A session on a game `run_project` did not start: `attach_project` writes the injection `override.cfg` and a one-use `<project>/.godot/godot-mcp/attach.json` ({port, token}) and waits for a game launched after it to dial in; `detach_project` ends it and leaves the game running. It has no captured output |
 | Backstop | The gate's last-resort kill at five times the ceiling in wall time (`gate: BACKSTOP`); with a low "machine free" figure it means the machine was busy, and the run is re-run once alone |
