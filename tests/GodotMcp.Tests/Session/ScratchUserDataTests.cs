@@ -5,6 +5,9 @@ namespace GodotMcp.Tests.Session;
 
 public sealed class ScratchUserDataTests : IDisposable
 {
+    /// <summary>A run that sets no project settings.</summary>
+    private const string NoSettings = "";
+
     /// <summary>Session names Windows folds into one folder name: a trailing period dropped, and case ignored.</summary>
     private static readonly string[] FoldedNames = ["game", "game.", "Game", "GAME"];
 
@@ -44,7 +47,10 @@ public sealed class ScratchUserDataTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsLinux(), "Only Windows turns '\\' into '/' in a data path.");
         string project = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\n");
 
-        Assert.Equal("/home/u/a\\b/root/godot/app_userdata/InputProbe", ScratchUserData.UserDataDir(project, "/home/u/a\\b/root"));
+        Assert.Equal(
+            "/home/u/a\\b/root/godot/app_userdata/InputProbe",
+            ScratchUserData.UserDataDir(project, "/home/u/a\\b/root", NoSettings, recording: false)
+        );
     }
 
     [Fact]
@@ -53,18 +59,18 @@ public sealed class ScratchUserDataTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows turns '\\' into '/' in a data path.");
         string project = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\n");
 
-        Assert.Equal("C:/u/a/root/Godot/app_userdata/InputProbe", ScratchUserData.UserDataDir(project, @"C:\u\a\root"));
+        Assert.Equal("C:/u/a/root/Godot/app_userdata/InputProbe", ScratchUserData.UserDataDir(project, @"C:\u\a\root", NoSettings, recording: false));
     }
 
     [Fact]
     public void CreateEmptiesAFolderAlreadyThere()
     {
         string project = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\n");
-        string stale = Path.Combine(ScratchUserData.UserDataDir(project, Root), "stale.sav");
+        string stale = Path.Combine(ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false), "stale.sav");
         Directory.CreateDirectory(Path.GetDirectoryName(stale)!);
         File.WriteAllText(stale, "old");
 
-        ScratchUserData.Create(project, Root, seed: null);
+        ScratchUserData.Create(project, Root, seed: null, NoSettings, recording: false);
 
         Assert.True(Directory.Exists(Root));
         Assert.False(File.Exists(stale));
@@ -84,7 +90,7 @@ public sealed class ScratchUserDataTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Root)!);
         MakeJunction(Root, target);
 
-        string userDir = ScratchUserData.Create(project, Root, seed);
+        string userDir = ScratchUserData.Create(project, Root, seed, NoSettings, recording: false);
 
         Assert.Null(new DirectoryInfo(Root).LinkTarget);
         Assert.Equal("seeded", File.ReadAllText(Path.Combine(userDir, "seed.txt")));
@@ -120,7 +126,10 @@ public sealed class ScratchUserDataTests : IDisposable
     {
         string project = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\n");
 
-        Assert.Equal($"{GodotRoot}/{ScratchUserData.GodotDirName}/app_userdata/InputProbe", ScratchUserData.UserDataDir(project, Root));
+        Assert.Equal(
+            $"{GodotRoot}/{ScratchUserData.GodotDirName}/app_userdata/InputProbe",
+            ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false)
+        );
     }
 
     [Fact]
@@ -128,7 +137,10 @@ public sealed class ScratchUserDataTests : IDisposable
     {
         string project = ProjectWith("[application]\n\nconfig/name=\" My: Game*?<>|/v1.. \"\n");
 
-        Assert.Equal($"{GodotRoot}/{ScratchUserData.GodotDirName}/app_userdata/My- Game------v1", ScratchUserData.UserDataDir(project, Root));
+        Assert.Equal(
+            $"{GodotRoot}/{ScratchUserData.GodotDirName}/app_userdata/My- Game------v1",
+            ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false)
+        );
         Assert.Equal("a-b-c-d-e-f-g-h-i-j", ScratchUserData.SafeDirName(" a:b*c?d\"e<f>g|h/i\\j.. ", allowPaths: false));
         Assert.Equal("dot", ScratchUserData.SafeDirName(" . ", allowPaths: false));
         Assert.Equal("twodots", ScratchUserData.SafeDirName("..", allowPaths: false));
@@ -143,8 +155,8 @@ public sealed class ScratchUserDataTests : IDisposable
         );
         string unnamedCustom = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\nconfig/use_custom_user_dir=true\n", "Other");
 
-        Assert.Equal($"{GodotRoot}/Studio/Game-1", ScratchUserData.UserDataDir(custom, Root));
-        Assert.Equal($"{GodotRoot}/InputProbe", ScratchUserData.UserDataDir(unnamedCustom, Root));
+        Assert.Equal($"{GodotRoot}/Studio/Game-1", ScratchUserData.UserDataDir(custom, Root, NoSettings, recording: false));
+        Assert.Equal($"{GodotRoot}/InputProbe", ScratchUserData.UserDataDir(unnamedCustom, Root, NoSettings, recording: false));
     }
 
     [Fact]
@@ -153,8 +165,11 @@ public sealed class ScratchUserDataTests : IDisposable
         string project = ProjectWith("[display]\n\nwindow/size/viewport_width=640\n");
         string blank = ProjectWith("[application]\n\nconfig/name=\" . \"\nconfig/use_custom_user_dir=true\n", "Blank");
 
-        Assert.Equal($"{GodotRoot}/{ScratchUserData.GodotDirName}/app_userdata/[unnamed project]", ScratchUserData.UserDataDir(project, Root));
-        Assert.Equal($"{GodotRoot}/dot", ScratchUserData.UserDataDir(blank, Root));
+        Assert.Equal(
+            $"{GodotRoot}/{ScratchUserData.GodotDirName}/app_userdata/[unnamed project]",
+            ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false)
+        );
+        Assert.Equal($"{GodotRoot}/dot", ScratchUserData.UserDataDir(blank, Root, NoSettings, recording: false));
     }
 
     [Fact]
@@ -167,9 +182,9 @@ public sealed class ScratchUserDataTests : IDisposable
         File.WriteAllText(Path.Combine(seed, "top.txt"), "top");
         File.WriteAllText(Path.Combine(seed, "sub", "deeper", "inner.cfg"), "inner");
 
-        string userDir = ScratchUserData.Create(project, Root, seed);
+        string userDir = ScratchUserData.Create(project, Root, seed, NoSettings, recording: false);
 
-        Assert.Equal(ScratchUserData.UserDataDir(project, Root), userDir);
+        Assert.Equal(ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false), userDir);
         Assert.Equal("top", File.ReadAllText(Path.Combine(userDir, "top.txt")));
         Assert.Equal("inner", File.ReadAllText(Path.Combine(userDir, "sub", "deeper", "inner.cfg")));
         Assert.True(Directory.Exists(Path.Combine(userDir, "empty")));
@@ -180,7 +195,7 @@ public sealed class ScratchUserDataTests : IDisposable
     {
         string project = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\n");
 
-        ScratchUserData.Create(project, Root, seed: null);
+        ScratchUserData.Create(project, Root, seed: null, NoSettings, recording: false);
 
         Assert.True(Directory.Exists(Root));
         Assert.Empty(Directory.EnumerateFileSystemEntries(Root));
@@ -190,7 +205,7 @@ public sealed class ScratchUserDataTests : IDisposable
     public void DeleteRemovesTheRootAndIgnoresAMissingOne()
     {
         string project = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\n");
-        string userDir = ScratchUserData.Create(project, Root, seed: null);
+        string userDir = ScratchUserData.Create(project, Root, seed: null, NoSettings, recording: false);
         Directory.CreateDirectory(userDir);
         File.WriteAllText(Path.Combine(userDir, "save.dat"), "x");
 
@@ -200,6 +215,130 @@ public sealed class ScratchUserDataTests : IDisposable
         Assert.False(Directory.Exists(Root));
         Assert.True(Directory.Exists(Path.GetDirectoryName(Root)));
     }
+
+    [Fact]
+    public void AFeatureTaggedCustomDirTheGameHasWins()
+    {
+        string project = ProjectWith(
+            "[application]\n\nconfig/name=\"Game\"\nconfig/use_custom_user_dir=true\nconfig/custom_user_dir_name=\"Plain\"\n"
+                + "config/custom_user_dir_name.editor=\"Dev\"\n"
+        );
+
+        Assert.Equal($"{GodotRoot}/Dev", ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false));
+    }
+
+    [Fact]
+    public void AFeatureTaggedNameForATagTheGameLacksIsIgnored()
+    {
+        string project = ProjectWith("[application]\n\nconfig/name=\"Game\"\nconfig/name.template=\"Shipped\"\n");
+
+        Assert.Equal(AppUserdata("Game"), ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false));
+    }
+
+    [Fact]
+    public void TheFirstMatchingTaggedKeyInFileOrderWins()
+    {
+        string pcFirst = ProjectWith("[application]\n\nconfig/name=\"Game\"\nconfig/name.pc=\"A\"\nconfig/name.editor=\"B\"\n");
+        string editorFirst = ProjectWith("[application]\n\nconfig/name=\"Game\"\nconfig/name.editor=\"B\"\nconfig/name.pc=\"A\"\n", "Other");
+
+        Assert.Equal(AppUserdata("A"), ScratchUserData.UserDataDir(pcFirst, Root, NoSettings, recording: false));
+        Assert.Equal(AppUserdata("B"), ScratchUserData.UserDataDir(editorFirst, Root, NoSettings, recording: false));
+    }
+
+    [Fact]
+    public void AKeyWithTwoTagsMatchesEither()
+    {
+        string project = ProjectWith("[application]\n\nconfig/name=\"Game\"\nconfig/name.template.editor=\"E\"\n");
+
+        Assert.Equal(AppUserdata("E"), ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false));
+    }
+
+    [Fact]
+    public void TheMovieTagCountsOnlyWhenTheRunRecords()
+    {
+        string project = ProjectWith("[application]\n\nconfig/name=\"Game\"\nconfig/name.movie=\"M\"\n");
+
+        Assert.Equal(AppUserdata("M"), ScratchUserData.UserDataDir(project, Root, NoSettings, recording: true));
+        Assert.Equal(AppUserdata("Game"), ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false));
+    }
+
+    [Fact]
+    public void TheRunsProjectSettingsOverrideTheFile()
+    {
+        string named = ProjectWith("[application]\n\nconfig/name=\"Game\"\n");
+        string custom = ProjectWith(
+            "[application]\n\nconfig/name=\"Game\"\nconfig/use_custom_user_dir=true\nconfig/custom_user_dir_name=\"Plain\"\n",
+            "Other"
+        );
+
+        Assert.Equal(AppUserdata("FromRun"), ScratchUserData.UserDataDir(named, Root, Block("config/name=\"FromRun\"\n"), recording: false));
+        Assert.Equal(
+            $"{GodotRoot}/RunDev",
+            ScratchUserData.UserDataDir(custom, Root, Block("config/custom_user_dir_name.editor=\"RunDev\"\n"), recording: false)
+        );
+    }
+
+    [Fact]
+    public void AFileTaggedKeyKeepsItsPlaceWhenTheRunSetsItAgain()
+    {
+        string both = ProjectWith("[application]\n\nconfig/name=\"Game\"\nconfig/name.pc=\"P\"\nconfig/name.editor=\"E\"\n");
+        string editorOnly = ProjectWith("[application]\n\nconfig/name=\"Game\"\nconfig/name.editor=\"E\"\n", "Other");
+        string block = Block("config/name.editor=\"E2\"\n");
+
+        Assert.Equal(AppUserdata("P"), ScratchUserData.UserDataDir(both, Root, block, recording: false));
+        Assert.Equal(AppUserdata("E2"), ScratchUserData.UserDataDir(editorOnly, Root, block, recording: false));
+    }
+
+    [Fact]
+    public void EscapesInANameAreUndone()
+    {
+        string quoted = ProjectWith("[application]\n\nconfig/name=\"My \\\"Game\\\"\"\n", "Quoted");
+        string backslash = ProjectWith("[application]\n\nconfig/name=\"A\\\\B\"\n", "Backslash");
+        string unicode = ProjectWith("[application]\n\nconfig/name=\"Caf\\u00e9\"\n", "Unicode");
+        string malformed = ProjectWith("[application]\n\nconfig/name=\"Caf\\u00zz\"\n", "Malformed");
+
+        Assert.Equal(AppUserdata("My -Game-"), ScratchUserData.UserDataDir(quoted, Root, NoSettings, recording: false));
+        Assert.Equal(AppUserdata("A-B"), ScratchUserData.UserDataDir(backslash, Root, NoSettings, recording: false));
+        Assert.Equal(AppUserdata("Café"), ScratchUserData.UserDataDir(unicode, Root, NoSettings, recording: false));
+        Assert.Equal(AppUserdata("[unnamed project]"), ScratchUserData.UserDataDir(malformed, Root, NoSettings, recording: false));
+    }
+
+    [Fact]
+    public void UseCustomUserDirHonoursATaggedValue()
+    {
+        string project = ProjectWith(
+            "[application]\n\nconfig/name=\"Game\"\nconfig/use_custom_user_dir=false\nconfig/use_custom_user_dir.editor=true\n"
+                + "config/custom_user_dir_name=\"Custom\"\n"
+        );
+
+        Assert.Equal($"{GodotRoot}/Custom", ScratchUserData.UserDataDir(project, Root, NoSettings, recording: false));
+    }
+
+    [Fact]
+    public void ReconcileKeepsTheServersFolderWhenTheGameAgreesOrSaysNothing()
+    {
+        Assert.Equal(("C:/a/Game", (string?)null), ScratchUserData.Reconcile("C:/a/Game", "C:/a/Game"));
+        Assert.Equal(("C:/a/Game", (string?)null), ScratchUserData.Reconcile("C:/a/Game", null));
+    }
+
+    [Fact]
+    public void ReconcileTakesTheGamesFolderAndWarnsWhenTheyDiffer()
+    {
+        Assert.Equal(
+            (
+                "C:/a/Game-dev",
+                "The game reads its user data from C:/a/Game-dev, not C:/a/Game where godot-mcp made the scratch folder and copied any "
+                    + "seed; set userData's seed or the project's custom_user_dir_name so they agree."
+            ),
+            ScratchUserData.Reconcile("C:/a/Game", "C:/a/Game-dev")
+        );
+    }
+
+    /// <summary>The game's user data folder for a plain <paramref name="name"/>: Godot's app_userdata folder under the root.</summary>
+    private string AppUserdata(string name) => $"{GodotRoot}/{ScratchUserData.GodotDirName}/app_userdata/{name}";
+
+    /// <summary>A run's projectSettings block holding <paramref name="settings"/> under <c>[application]</c>.</summary>
+    private static string Block(string settings) => $"{ProjectSettingsText.BlockMarker}\n\n[application]\n\n{settings}";
 
     /// <summary>A project folder under the temp folder whose project.godot holds <paramref name="settings"/>.</summary>
     private string ProjectWith(string settings, string name = "Probe")

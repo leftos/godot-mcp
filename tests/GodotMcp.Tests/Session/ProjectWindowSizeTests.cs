@@ -19,7 +19,7 @@ public sealed class ProjectWindowSizeTests : IDisposable
 
     [Fact]
     public void ReadsAKeyOfAnySectionUnquoted() =>
-        Assert.Equal("My Game", ProjectWindowSize.Read(Project("[application]\n\nconfig/name=\"My Game\"\n"), "application", "config/name"));
+        Assert.Equal("My Game", ProjectWindowSize.ReadSection(Project("[application]\n\nconfig/name=\"My Game\"\n"), "application")["config/name"]);
 
     [Fact]
     public void AProjectWithNoWindowSettingsTakesGodotsDefault() =>

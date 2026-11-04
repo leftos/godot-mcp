@@ -81,6 +81,12 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// </summary>
     public long? HelloTicksUsec { get; init; }
 
+    /// <summary>
+    /// The game's own user data folder, <c>OS.get_user_data_dir()</c> in Godot's '/' form, as its hello carried it; null when the
+    /// hello carried none (a bridge older than the field).
+    /// </summary>
+    public string? HelloUserDataDir { get; init; }
+
     /// <summary>The drive time the hello was read, the latest moment its remote ticks can be from; 0 when none was read.</summary>
     public double HelloReceivedMs { get; init; }
 

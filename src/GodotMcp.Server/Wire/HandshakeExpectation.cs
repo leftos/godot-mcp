@@ -9,8 +9,8 @@ namespace GodotMcp.Server.Wire;
 /// What the bridge's first frame must carry for the run the server launched: <c>{type: "hello", token, projectPath}</c>.
 /// The hello's <c>pid</c>, the game's own process id, is read by <see cref="ReadProcessId"/>, its <c>window</c>, the game
 /// window's size, by <see cref="ReadWindow"/>, its <c>hwnd</c>, the main window's native handle, by
-/// <see cref="ReadWindowHandle"/>, and its <c>ticksUsec</c>, the bridge's own clock, by <see cref="ReadTicksUsec"/>; none is
-/// checked.
+/// <see cref="ReadWindowHandle"/>, its <c>ticksUsec</c>, the bridge's own clock, by <see cref="ReadTicksUsec"/>, and its
+/// <c>userDataDir</c>, the game's user data folder, by <see cref="ReadUserDataDir"/>; none is checked.
 /// </summary>
 internal sealed record HandshakeExpectation(string Token, string ProjectPath)
 {
@@ -47,6 +47,12 @@ internal sealed record HandshakeExpectation(string Token, string ProjectPath)
 
         return null;
     }
+
+    /// <summary>
+    /// The game's own user data folder, which the hello carries as <c>userDataDir</c> (<c>OS.get_user_data_dir()</c>, in
+    /// Godot's '/' form); null when it carries none (a bridge older than the field) or one that is not a string.
+    /// </summary>
+    internal static string? ReadUserDataDir(JsonObject hello) => ReadString(hello, "userDataDir");
 
     internal static string? ReadString(JsonObject message, string name) =>
         message[name] is JsonValue value && value.TryGetValue(out string? text) ? text : null;

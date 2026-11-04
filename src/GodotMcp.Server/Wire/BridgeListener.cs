@@ -214,6 +214,7 @@ internal sealed class BridgeListener : IDisposable
             Window = HandshakeExpectation.ReadWindow(hello),
             WindowHandle = HandshakeExpectation.ReadWindowHandle(hello),
             HelloTicksUsec = HandshakeExpectation.ReadTicksUsec(hello),
+            HelloUserDataDir = HandshakeExpectation.ReadUserDataDir(hello),
             HelloReceivedMs = receivedMs,
         };
         await HandOverAsync(waiter, connection);

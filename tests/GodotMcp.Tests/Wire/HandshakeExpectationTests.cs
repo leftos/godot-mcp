@@ -202,6 +202,22 @@ public sealed class HandshakeExpectationTests
         Assert.Null(_expected.FindMismatch(hello));
     }
 
+    [Fact]
+    public void ReadsTheGamesUserDataDirFromTheHello()
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath, "{\"userDataDir\":\"C:/Users/u/AppData/Roaming/Godot/app_userdata/Game\"}");
+
+        Assert.Equal("C:/Users/u/AppData/Roaming/Godot/app_userdata/Game", HandshakeExpectation.ReadUserDataDir(hello));
+        Assert.Null(_expected.FindMismatch(hello));
+    }
+
+    [Fact]
+    public void AHelloWithoutAStringUserDataDirHasNone()
+    {
+        Assert.Null(HandshakeExpectation.ReadUserDataDir(Hello(Token, BridgeProjectPath)));
+        Assert.Null(HandshakeExpectation.ReadUserDataDir(Hello(Token, BridgeProjectPath, "{\"userDataDir\":5}")));
+    }
+
     /// <summary>The hello's base fields, plus <paramref name="extra"/>'s fields as the bridge writes them: as JSON text.</summary>
     private static JsonObject Hello(string token, string projectPath, string extra)
     {

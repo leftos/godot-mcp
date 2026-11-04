@@ -91,7 +91,8 @@ static func frees_silently(dir: String) -> bool:
 
 
 ## The hello the bridge sends first on a connection: its token, the project's folder, its process
-## id, its window's size and native handle and its ticks; kind "editor" in an editor session.
+## id, its window's size and native handle, its ticks and the game's user data folder (so the
+## server can check the one it worked out for a scratch run); kind "editor" in an editor session.
 static func hello_frame(
 	token: String, editor: bool, window_size: Vector2i, native_handle: int
 ) -> Dictionary:
@@ -103,6 +104,7 @@ static func hello_frame(
 		"window": {"width": window_size.x, "height": window_size.y},
 		"hwnd": native_handle,
 		"ticksUsec": Time.get_ticks_usec(),
+		"userDataDir": OS.get_user_data_dir(),
 	}
 	if editor:
 		hello["kind"] = "editor"

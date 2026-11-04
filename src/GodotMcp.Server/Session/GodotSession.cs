@@ -917,7 +917,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         _userDataRoot = root;
         try
         {
-            _userDataDir = ScratchUserData.Create(ProjectDir, root, scratch.SeedFolder);
+            _userDataDir = ScratchUserData.Create(ProjectDir, root, scratch.SeedFolder, ProjectSettings, request.Record);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -1068,16 +1068,30 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         Log.RunStarted(_logger, processId, run.ProjectDir);
         LastLaunch = request;
+        string? windowWarning = GodotCommandLine.DescribeWindowMismatch(GodotCommandLine.RequestedWindowSize(request.EngineArgs), connection.Window);
+        (string? userDataDir, string? userDataWarning) = ScratchUserDataResult(request, connection);
         LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prepared.Prep, prepared.Godot)
         {
             Recording = _recording is { } recording ? new RecordingResult { Mode = Recording.MovieMode, Path = recording.Path } : null,
             Window = connection.Window,
-            Warning = GodotCommandLine.DescribeWindowMismatch(GodotCommandLine.RequestedWindowSize(request.EngineArgs), connection.Window),
+            Warning = JoinWarnings(windowWarning, userDataWarning),
             Log = run.OutputLog?.Path,
-            UserDataDir = request.ScratchUserData is null ? null : _userDataDir,
+            UserDataDir = userDataDir,
         };
         return (started, prepared.Previous, prepared.PreviousRecording);
     }
+
+    /// <summary>
+    /// A scratch run's user data folder and its warning, as <see cref="ScratchUserData.Reconcile"/> sets them from the folder the
+    /// server made and the one the game's hello reported; neither for a run without scratch user data.
+    /// </summary>
+    private (string? UserDataDir, string? Warning) ScratchUserDataResult(LaunchRequest request, BridgeConnection connection) =>
+        request.ScratchUserData is not null && _userDataDir is { } serverDir
+            ? ScratchUserData.Reconcile(serverDir, connection.HelloUserDataDir)
+            : (null, null);
+
+    /// <summary>Two warnings joined with a space, either alone when the other is null; null when both are.</summary>
+    private static string? JoinWarnings(string? first, string? second) => first is null || second is null ? first ?? second : $"{first} {second}";
 
     /// <summary>The creation time of a game the server holds a handle on; null without one, or when it cannot be read.</summary>
     private static DateTime? StartTimeOf(Process? game)

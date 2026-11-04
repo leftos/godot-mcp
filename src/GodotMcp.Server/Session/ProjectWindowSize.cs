@@ -40,13 +40,6 @@ internal static class ProjectWindowSize
     }
 
     /// <summary>
-    /// The value <paramref name="key"/> holds under <paramref name="section"/>, unquoted, or null when the file, the section or the
-    /// key is missing or the file cannot be read.
-    /// </summary>
-    public static string? Read(string projectDir, string section, string key) =>
-        ReadSection(projectDir, section).TryGetValue(key, out string? value) ? value : null;
-
-    /// <summary>
     /// Every <c>key=value</c> of one <c>[section]</c>, a quote around a value taken off. A folder with no project.godot, or one
     /// the server cannot read, yields no settings: a launch of such a folder is refused before it reaches here, so the caller
     /// reading a default is the right answer rather than a failure to report.
@@ -54,34 +47,55 @@ internal static class ProjectWindowSize
     internal static Dictionary<string, string> ReadSection(string projectDir, string section)
     {
         Dictionary<string, string> values = new(StringComparer.Ordinal);
+        foreach ((string key, string value) in ReadSectionRaw(projectDir, section))
+        {
+            values[key] = value.Trim('"');
+        }
+
+        return values;
+    }
+
+    /// <summary>
+    /// Every <c>key=value</c> of one <c>[section]</c> of project.godot in file order, a key set twice listed twice, each value's
+    /// text as written (a string still quoted and escaped). A folder with no project.godot, or one the server cannot read,
+    /// yields none, as <see cref="ReadSection"/> does.
+    /// </summary>
+    internal static IReadOnlyList<KeyValuePair<string, string>> ReadSectionRaw(string projectDir, string section)
+    {
         string file = Path.Combine(projectDir, ProjectFile);
         try
         {
-            if (!File.Exists(file))
-            {
-                return values;
-            }
-
-            bool inSection = false;
-            foreach (string raw in File.ReadLines(file))
-            {
-                string line = raw.Trim();
-                if (line.StartsWith('['))
-                {
-                    inSection = line == $"[{section}]";
-                    continue;
-                }
-
-                int equals = line.IndexOf('=');
-                if (inSection && equals > 0)
-                {
-                    values[line[..equals].Trim()] = line[(equals + 1)..].Trim().Trim('"');
-                }
-            }
+            return File.Exists(file) ? ReadSectionRaw(File.ReadAllLines(file), section) : [];
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return values;
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Every <c>key=value</c> line of one <c>[section]</c> of a settings text's <paramref name="lines"/> in order, each value's
+    /// text as written: project.godot's, or a run's projectSettings block (<see cref="ProjectSettingsText.Block"/>), whose
+    /// marker line holds no '=' and is passed over.
+    /// </summary>
+    internal static IReadOnlyList<KeyValuePair<string, string>> ReadSectionRaw(IEnumerable<string> lines, string section)
+    {
+        List<KeyValuePair<string, string>> values = [];
+        bool inSection = false;
+        foreach (string raw in lines)
+        {
+            string line = raw.Trim();
+            if (line.StartsWith('['))
+            {
+                inSection = line == $"[{section}]";
+                continue;
+            }
+
+            int equals = line.IndexOf('=');
+            if (inSection && equals > 0)
+            {
+                values.Add(new(line[..equals].Trim(), line[(equals + 1)..].Trim()));
+            }
         }
 
         return values;

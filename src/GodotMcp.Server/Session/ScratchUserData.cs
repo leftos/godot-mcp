@@ -54,8 +54,8 @@ internal static class ScratchUserData
     /// <c>APPDATA</c> with '\' turned to '/'). Only Windows turns '\' to '/': elsewhere (<c>drivers/unix/os_unix.cpp</c>
     /// L1142-1144) it is a file name's own character, so the root is kept as it is.
     /// </summary>
-    public static string UserDataDir(string projectDir, string root) =>
-        PathJoin(OperatingSystem.IsWindows() ? root.Replace('\\', '/') : root, RelativeUserDir(projectDir));
+    public static string UserDataDir(string projectDir, string root, string projectSettings, bool recording) =>
+        PathJoin(OperatingSystem.IsWindows() ? root.Replace('\\', '/') : root, RelativeUserDir(projectDir, projectSettings, recording));
 
     /// <summary>
     /// Godot's <c>OS::get_safe_dir_name</c> (4.7.2 <c>core/os/os.cpp</c> L262-289): with paths allowed, '\' becomes '/', "//"
@@ -99,11 +99,11 @@ internal static class ScratchUserData
     /// <returns>The game's user data folder (<see cref="UserDataDir"/>).</returns>
     /// <exception cref="IOException">The folder could not be made or a seed file not copied.</exception>
     /// <exception cref="UnauthorizedAccessException">The same, for want of access.</exception>
-    public static string Create(string projectDir, string root, string? seed)
+    public static string Create(string projectDir, string root, string? seed, string projectSettings, bool recording)
     {
         Delete(root);
         Directory.CreateDirectory(root);
-        string userDir = UserDataDir(projectDir, root);
+        string userDir = UserDataDir(projectDir, root, projectSettings, recording);
         if (seed is not null)
         {
             CopyTree(seed, userDir);
@@ -135,27 +135,50 @@ internal static class ScratchUserData
         folder.Delete(recursive: true);
     }
 
-    /// <summary>The game's user data folder relative to its data path, as <see cref="UserDataDir"/> works it out.</summary>
-    private static string RelativeUserDir(string projectDir)
+    /// <summary>
+    /// The folder a scratch run's result names, from the one the server worked out and the one the game's hello reported: the
+    /// game's, with a warning naming both, when the two differ (ordinally, both in Godot's '/' form); the server's, with no
+    /// warning, when they agree or the hello carried none (a bridge older than the field).
+    /// </summary>
+    public static (string UserDataDir, string? Warning) Reconcile(string serverDir, string? gameDir) =>
+        gameDir is null || string.Equals(gameDir, serverDir, StringComparison.Ordinal)
+            ? (serverDir, null)
+            : (
+                gameDir,
+                $"The game reads its user data from {gameDir}, not {serverDir} where godot-mcp made the scratch folder and copied any "
+                    + "seed; set userData's seed or the project's custom_user_dir_name so they agree."
+            );
+
+    /// <summary>
+    /// The game's user data folder relative to its data path, as <see cref="UserDataDir"/> works it out: its three settings read
+    /// from project.godot's <c>[application]</c> section and then the run's <paramref name="projectSettings"/> block's, in the
+    /// order Godot registers them (it reads override.cfg after project.godot, 4.7.2 <c>core/config/project_settings.cpp</c>
+    /// L773-781, L985-989).
+    /// </summary>
+    private static string RelativeUserDir(string projectDir, string projectSettings, bool recording)
     {
-        string appName = SafeDirName(Setting(projectDir, "config/name"), allowPaths: false);
+        ApplicationSettings settings = new(
+            [
+                .. ProjectWindowSize.ReadSectionRaw(projectDir, ApplicationSection),
+                .. ProjectWindowSize.ReadSectionRaw(projectSettings.Split('\n'), ApplicationSection),
+            ],
+            recording
+        );
+        string appName = SafeDirName(settings.Get("config/name"), allowPaths: false);
         string appUserdata = $"{GodotDirName}/app_userdata";
         if (appName.Length == 0)
         {
             return $"{appUserdata}/{UnnamedProject}";
         }
 
-        if (Setting(projectDir, "config/use_custom_user_dir") != "true")
+        if (settings.Get("config/use_custom_user_dir") != "true")
         {
             return $"{appUserdata}/{appName}";
         }
 
-        string custom = SafeDirName(Setting(projectDir, "config/custom_user_dir_name"), allowPaths: true);
+        string custom = SafeDirName(settings.Get("config/custom_user_dir_name"), allowPaths: true);
         return custom.Length == 0 ? appName : custom;
     }
-
-    /// <summary>One <c>[application]</c> setting of project.godot; empty when the file leaves it out, as Godot's default is.</summary>
-    private static string Setting(string projectDir, string key) => ProjectWindowSize.Read(projectDir, ApplicationSection, key) ?? "";
 
     /// <summary>Godot's <c>String::path_join</c>: one '/' between the two unless either side already has it.</summary>
     private static string PathJoin(string path, string file) =>
@@ -176,6 +199,184 @@ internal static class ScratchUserData
         foreach (string file in Directory.EnumerateFiles(source, "*", everything))
         {
             File.Copy(file, Path.Combine(destination, Path.GetRelativePath(source, file)), overwrite: true);
+        }
+    }
+
+    /// <summary>
+    /// One section's settings as a game run reads them with <c>ProjectSettings::get_setting_with_override</c> (4.7.2
+    /// <c>core/config/project_settings.cpp</c> L415-439; <c>GLOBAL_GET</c> is that call, <c>project_settings.h</c> L265).
+    /// Setting <c>key.&lt;tag&gt;[.&lt;tag&gt;…]</c> registers one feature override of <c>key</c> per tag, each tag's edges
+    /// stripped, in the order the names are set (L324-340); the lookup takes the first whose tag the game has
+    /// (<see cref="GameFeatureTags"/>), else the plain key. A name set twice keeps its first place and takes its last value.
+    /// </summary>
+    /// <param name="registered">Every <c>key=value</c> in the order Godot sets them, values as written.</param>
+    /// <param name="recording">Whether the run records from launch, which gives the game the <c>movie</c> tag.</param>
+    private sealed class ApplicationSettings(IReadOnlyList<KeyValuePair<string, string>> registered, bool recording)
+    {
+        /// <summary>
+        /// The value <paramref name="key"/> reads as, a string's quotes and escapes undone and any other value as written; empty
+        /// when it is unset or a string Godot fails to parse, as Godot's default is.
+        /// </summary>
+        public string Get(string key)
+        {
+            string name = registered.Select(entry => entry.Key).FirstOrDefault(set => IsOverrideTheGameHas(set, key)) ?? key;
+            return LastValue(name) is { } text ? GodotValue(text) ?? "" : "";
+        }
+
+        /// <summary>Whether <paramref name="name"/> is a feature override of <paramref name="key"/> for a tag the game has.</summary>
+        private bool IsOverrideTheGameHas(string name, string key)
+        {
+            string[] parts = name.Split('.');
+            return parts.Length > 1
+                && string.Equals(parts[0], key, StringComparison.Ordinal)
+                && parts.Skip(1).Any(tag => GameFeatureTags.Has(tag.Trim(Edges), recording));
+        }
+
+        /// <summary>The value text <paramref name="name"/> was last set to; null when it was never set.</summary>
+        private string? LastValue(string name)
+        {
+            for (int index = registered.Count - 1; index >= 0; index--)
+            {
+                if (string.Equals(registered[index].Key, name, StringComparison.Ordinal))
+                {
+                    return registered[index].Value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>A quoted value's content (<see cref="QuotedString"/>); an unquoted one (<c>true</c>) as written.</summary>
+        private static string? GodotValue(string text) => text.StartsWith('"') ? new QuotedString(text).Read() : text;
+    }
+
+    /// <summary>
+    /// A quoted Godot string's content, its escapes undone as Godot's parser undoes them (4.7.2
+    /// <c>core/variant/variant_parser.cpp</c> L277-395): <c>\b \t \n \f \r</c>, <c>\uXXXX</c> (4 hex digits) and
+    /// <c>\UXXXXXX</c> (6), a UTF-16 surrogate pair of escapes joined into one code point, and any other escaped character
+    /// standing for itself. Read by code point, as Godot reads it.
+    /// </summary>
+    /// <param name="text">The value text, starting with its opening quote.</param>
+    private sealed class QuotedString(string text)
+    {
+        private const string HexDigits = "0123456789abcdef";
+        private static readonly int[] EscapeLetters = ['b', 't', 'n', 'f', 'r'];
+        private static readonly int[] EscapeCodes = [8, 9, 10, 12, 13];
+        private readonly int[] _codes = [.. text.EnumerateRunes().Select(rune => rune.Value)];
+        private readonly StringBuilder _value = new();
+        private int _at = 1;
+        private int _lead;
+
+        /// <summary>
+        /// The content up to the closing quote; null where Godot fails to parse it: an unterminated string, a malformed hex
+        /// escape, an unpaired surrogate, or a code point past U+10FFFF.
+        /// </summary>
+        public string? Read()
+        {
+            while (_at < _codes.Length)
+            {
+                int code = _codes[_at++];
+                if (code == '"')
+                {
+                    return _lead == 0 ? _value.ToString() : null;
+                }
+
+                int? character = code == '\\' ? Escaped() : code;
+                if (character is null || !Add(character.Value))
+                {
+                    return null;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>The code point the escape after a backslash stands for; null when the string ends or a hex digit is bad.</summary>
+        private int? Escaped()
+        {
+            if (_at >= _codes.Length)
+            {
+                return null;
+            }
+
+            int next = _codes[_at++];
+            int letter = Array.IndexOf(EscapeLetters, next);
+            if (letter >= 0)
+            {
+                return EscapeCodes[letter];
+            }
+
+            return next is 'u' or 'U' ? Hex(next == 'u' ? 4 : 6) : next;
+        }
+
+        /// <summary>The next <paramref name="digits"/> hex digits' value; null when the string ends first or one is not hex.</summary>
+        private int? Hex(int digits)
+        {
+            int value = 0;
+            for (int read = 0; read < digits; read++)
+            {
+                int digit = _at < _codes.Length ? HexValue(_codes[_at++]) : -1;
+                if (digit < 0)
+                {
+                    return null;
+                }
+
+                value = (value << 4) | digit;
+            }
+
+            return value;
+        }
+
+        /// <summary>A hex digit's value, either case; -1 for any other code point.</summary>
+        private static int HexValue(int code) => code <= 0x7F ? HexDigits.IndexOf(char.ToLowerInvariant((char)code), StringComparison.Ordinal) : -1;
+
+        /// <summary>
+        /// Appends one code point, holding a lead surrogate for the trail that must follow it; false where Godot fails: a lead
+        /// after a lead, a trail without one, anything else after one, or a code point past U+10FFFF.
+        /// </summary>
+        private bool Add(int code)
+        {
+            if (code is >= 0xD800 and <= 0xDBFF)
+            {
+                return Lead(code);
+            }
+
+            int joined =
+                code is >= 0xDC00 and <= 0xDFFF ? Trail(code)
+                : _lead == 0 ? code
+                : -1;
+            if (joined is < 0 or > 0x10FFFF)
+            {
+                return false;
+            }
+
+            _value.Append(char.ConvertFromUtf32(joined));
+            return true;
+        }
+
+        /// <summary>Holds a lead surrogate; false when one is already held.</summary>
+        private bool Lead(int code)
+        {
+            if (_lead != 0)
+            {
+                return false;
+            }
+
+            _lead = code;
+            return true;
+        }
+
+        /// <summary>The code point the held lead and this trail make; -1 when no lead is held.</summary>
+        private int Trail(int code)
+        {
+            if (_lead == 0)
+            {
+                return -1;
+            }
+
+            int joined = char.ConvertToUtf32((char)_lead, (char)code);
+            _lead = 0;
+            return joined;
         }
     }
 }

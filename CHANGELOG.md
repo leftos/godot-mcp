@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A scratch `userData` run's folder and seed follow the project's feature-tagged user data name, such as `custom_user_dir_name.editor`, as the game resolves it.
+
 ## 0.33.0 - 2026-11-03
 
 ### Added

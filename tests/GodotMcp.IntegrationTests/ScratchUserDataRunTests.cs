@@ -80,6 +80,40 @@ public sealed class ScratchUserDataRunTests : IAsyncDisposable
         Assert.False(File.Exists(realProbe));
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AFeatureTaggedCustomDirIsTheOneTheGameUses()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = File.ReadAllText(_probe.ProjectFile);
+        File.WriteAllText(
+            _probe.ProjectFile,
+            project.Replace(
+                "[application]\n",
+                "[application]\n\nconfig/use_custom_user_dir=true\nconfig/custom_user_dir_name=\"ProbePlain\"\n"
+                    + "config/custom_user_dir_name.editor=\"ProbeDev\"\n",
+                StringComparison.Ordinal
+            )
+        );
+        string seed = Path.Combine(_probe.Directory, "seed-data");
+        Directory.CreateDirectory(seed);
+        File.WriteAllText(Path.Combine(seed, "seed.txt"), "seeded");
+
+        string launched = await _project.RunProjectAsync(
+            _probe.Directory,
+            options: new RunOptions(UserData: JsonSerializer.SerializeToElement(new { seed = "seed-data" })),
+            cancellationToken: cancellation
+        );
+        JsonNode result = JsonNode.Parse(launched)!;
+        JsonNode game = await RunAsync("return [OS.get_user_data_dir(), FileAccess.get_file_as_string(\"user://seed.txt\")]");
+        await _project.StopProjectAsync(session: null, cancellationToken: cancellation);
+
+        string userDataDir = result["userDataDir"]!.GetValue<string>();
+        Assert.Equal(game[0]!.GetValue<string>(), userDataDir);
+        Assert.EndsWith("/ProbeDev", userDataDir, StringComparison.Ordinal);
+        Assert.Equal("seeded", game[1]!.GetValue<string>());
+        Assert.Null(result["warning"]);
+    }
+
     /// <summary>Runs a script in the game and returns the value it returns.</summary>
     private async Task<JsonNode> RunAsync(string body)
     {
