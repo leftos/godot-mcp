@@ -4,24 +4,18 @@
 
 ## Do first
 
-- [ ] GMCP-433 TheFrontIsToldBusyBeforeARunAnswersAndFreeAfterTheStop fails under concurrent itest lanes · release vNext — Urgent · Singles
-- [ ] GMCP-449 Flaky: HeadlessXscnTests.ABatchOnAXscnThatLoadedWithErrorsIsRefusedAndWritesNothing sees the import refusal · release vNext — Urgent · Singles
-- [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves · release vNext — High · Ideas from the survey and the projects
-- [ ] GMCP-407 Editor-driving tools: open, save and run a scene in the Godot editor, read its output, build C# · release vNext — High · Ideas from the survey and the projects
-- [ ] GMCP-420 Headless edits refuse a folder an editor session holds; decision 17 replaced · release vNext — High · Ideas from the survey and the projects
-- [ ] GMCP-455 scratch_status: wait for a background run to finish · release vNext — High · Ideas from the survey and the projects
+- [ ] GMCP-468 Flaky: the editor itest group timed out once at its 300 s ceiling with no failed test · release vNext — Urgent · Singles
 - [ ] GMCP-456 run_scratches: a .NET finalizer crash at quit after the exit marker is a warning, not a red scene · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-459 run_scratches: turn a shader compile error red, and let a project judge engine warnings · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-460 Quiet runs: the engine's pointer position follows injected input · release vNext — High · Ideas from the survey and the projects
+- [ ] GMCP-462 run_scratches: honour the profile's userData: scratch, one folder per scene · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-311 stop_project / list_sessions: no read-only view of who holds a folder's override.cfg · release vNext — High · Singles
-- [ ] GMCP-437 validate shows missing-assembly lines after a failed build · release vNext — High · Singles
 - [ ] GMCP-191 run_project: import an asset that has no .import file · release vNext — High · Singles
 - [ ] GMCP-277 Prep: detect import errors through a prepWrapper that prefixes output lines · release vNext — High · Singles
 - [ ] GMCP-305 A process prep's prepWrapper runs in the process cwd, breaking project-relative wrapper paths · release vNext — High · Singles
 - [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time · release vNext — High · Singles
 - [ ] GMCP-394 run_scratches: prune old scratch shot folders beside the run logs · release vNext — High · Singles
 - [ ] GMCP-457 Release notes: name the changes an agent driving a game will notice · release vNext — High · Docs
-- [ ] GMCP-451 A feature-tagged setting in project.godot defeats the bridge's override.cfg lines · release vNext — High · No project
 
 ## Ideas from the survey and the projects
 
@@ -43,6 +37,8 @@
 - [ ] GMCP-348 frame_control: a step's screenshot takes no crop
 - [ ] GMCP-450 projectSettings: refuse out-of-range numbers and raw values carrying extra assignments
 - [ ] GMCP-461 click: when nothing fired, say why and name the nearest Control that listens
+- [ ] GMCP-464 Scratch user data: resolve the game's folder name as Godot does (feature tags, projectSettings, escapes)
+- [ ] GMCP-466 Scratch user data: stop and retire wait for a game the console wrapper outlived; resolve the seed's links
 
 ## Singles
 
@@ -156,6 +152,8 @@
 - [ ] GMCP-447 watch: the unknown-monitor refusal does not name frame_work_ms
 - [ ] GMCP-448 stamp_uids: report and fix uids two files share
 - [ ] GMCP-458 simulate_action: reach a game that reads its keys in _unhandled_key_input
+- [ ] GMCP-465 Process sessions: join the own-work job or say in ARCHITECTURE.md that their CPU counts as load
+- [ ] GMCP-467 A prep's Godot import failed once under load; root-cause it from the next failure's full text
 
 ## Docs
 
@@ -167,7 +165,3 @@
 - [ ] GMCP-396 Re-read docs/csharp-runtime-tools.md against its named files' 10 commits since 2026-10-26
 - [ ] GMCP-410 Create docs/agents/orchestrator.md and move the profile's orchestration rules into it (CC-567)
 - [ ] GMCP-411 Durable docs: drop counts and this repo's path:line references, pointing by symbol, heading or test name
-
-## Design files
-
-- [editor-tools.md](editor-tools.md) — GMCP-407, GMCP-420
