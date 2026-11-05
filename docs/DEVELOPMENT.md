@@ -328,7 +328,9 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   On a machine with no GPU, Godot falls back to ANGLE on Direct3D 11 WARP, which makes a window only in a logged-on console session: in an ssh session 0 it logs `Failed to create ANGLE OpenGL window.` and the bridge never connects; a launch watches for that line and fails at once, naming it, instead of after the handshake wait. The itests still fail there, so the footgun stands.
 
-  `.gate/desktop.toml` declares the commands that need the build box's console desktop (`itest -InGate` with its arguments, which is what the routed `itest` runs, `itest-csharp`, and the `tools/hidden-desktop.ps1` runs of `PrepTests`, `RestartTests` and the `headless` group's classes). The gate routes one there only while the PC's `%LOCALAPPDATA%\gate\remote.json` lists the pattern under both `repos` and `desktop`, else it runs on this machine.
+  `.gate/desktop.toml` declares the commands that need a desktop on the build box. Under `hidden`, run on a hidden desktop of its console session, lock-free beside other desktop runs: `itest-csharp` and the `tools/hidden-desktop.ps1` runs of `PrepTests`, `RestartTests` and the `headless` group's classes, each proven there. Under `patterns`, run on the locked visible console desktop: `itest -InGate` with its arguments, which is what the routed `itest` runs, since a bare `itest` runs the `capture` group too.
+
+  The `capture` group fails on a hidden desktop (the harness's `EnumWindows` fails, and Windows.Graphics.Capture sees a 0x0 item), while every group that goes through `tools/hidden-desktop.ps1` passes there. The gate routes a declared command to the builder only while the PC's `%LOCALAPPDATA%\gate\remote.json` lists the pattern under both `repos` and `desktop`, else it runs on this machine.
 
   A change to those commands' text updates the file, whose patterns must equal `remote.json`'s letter for letter; a file the gate cannot read keeps every routed godot-mcp command on this machine.
 

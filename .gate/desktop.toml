@@ -1,7 +1,9 @@
-patterns = [
-  'pwsh -NoProfile -File run.ps1 itest',
-  'pwsh -NoProfile -File run.ps1 itest -*',
+hidden = [
   'pwsh -NoProfile -File run.ps1 itest-csharp',
   'pwsh -NoProfile -File run.ps1 itest-csharp -Filter *',
   'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class *',
+]
+patterns = [
+  'pwsh -NoProfile -File run.ps1 itest',
+  'pwsh -NoProfile -File run.ps1 itest -*',
 ]
