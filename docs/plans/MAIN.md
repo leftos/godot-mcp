@@ -16,6 +16,7 @@
 - [ ] GMCP-305 A process prep's prepWrapper runs in the process cwd, breaking project-relative wrapper paths · release vNext — High · Singles
 - [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time · release vNext — High · Singles
 - [ ] GMCP-394 run_scratches: prune old scratch shot folders beside the run logs · release vNext — High · Singles
+- [ ] GMCP-496 Say what a wrapped prep step waited on when its ceiling kills it, and decide whether a gate's slot wait counts · release vNext — High · Singles
 - [ ] GMCP-457 Release notes: name the changes an agent driving a game will notice · release vNext — High · Docs
 
 ## Ideas from the survey and the projects
@@ -44,6 +45,7 @@
 
 ## Singles
 
+- [ ] GMCP-494 Route the capture itest group as its own command so the routed itest moves to gate's hidden desktop · release vNext
 - [ ] GMCP-430 A scene named with an upper-case extension loses its uid on each in-place save
 - [ ] GMCP-435 attach_script writes a script's .uid before a refusal and never reports it
 - [ ] GMCP-436 A headless edit can lose what Godot drops with a warning
@@ -141,12 +143,10 @@
 - [ ] GMCP-376 wait_for then.record: its mark does not close the other calls open at its frame
 - [ ] GMCP-388 run.ps1 gdtest: the import stamp never moves, so every run re-imports
 - [ ] GMCP-391 Property paths: take the ClassDB route on every segment a script member could hide
-- [ ] GMCP-392 Declare the hidden-desktop itest forms under .gate/desktop.toml's session key
 - [ ] GMCP-393 run_scratches: a voice still playing at the game's exit can be judged a leak
 - [ ] GMCP-395 A met wait whose screenshot fails is a warning, not a refused until
 - [ ] GMCP-397 Report window and viewport sizes beside take_screenshot, wait_for, frame_control and capture_frames captures
 - [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time'
-- [ ] GMCP-425 Prove the itest desktop commands on gate's hidden desktop and move them to hidden
 - [ ] GMCP-445 crop_screenshot: check a link's target before opening, re-check the write folder, and guard non-Windows
 - [ ] GMCP-446 compare_screenshot: measure options.colors on a fully changed 4K frame against the 20 s timeout
 - [ ] GMCP-447 watch: the unknown-monitor refusal does not name frame_work_ms
@@ -157,6 +157,8 @@
 - [ ] GMCP-471 Prune the scratch userdata-* folders a killed server leaves, or say decision 47 does not · release vNext
 - [ ] GMCP-474 --run-scratches CLI: take --session like run_scratches' options.session · release vNext
 - [ ] GMCP-489 BridgeConnectionTests: short real-time read and wait bounds should be hang guards · release vNext
+- [ ] GMCP-495 validate reports a csproj-level MSBuild error with no code as a red build with no errors · release vNext
+- [ ] GMCP-497 Expand simulate_input's pressed-omitted events on the server, as frame_control step does · release vNext
 
 ## Docs
 
