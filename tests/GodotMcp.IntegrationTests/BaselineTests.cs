@@ -13,13 +13,16 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// save_screenshot_baseline and compare_screenshot against the InputProbe running in the real Godot: one shared run, reset
-/// and cleared of baselines before each test, except for the test that relaunches at another size.
+/// and cleared of baselines before each test, except for the tests that relaunch it themselves: at another size, and under
+/// the Forward+ renderer.
 /// </summary>
 public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Full = "probe_full";
+    private const string Compat = "compat";
+    private const string Red = "#ff0000";
 
     // main.tscn's RedSquare: a ColorRect of Color(1, 0, 0) from (400, 40) to (520, 120), 120 x 80 pixels in the 640 x 360 window.
     private const int SquarePixels = 120 * 80;
@@ -180,6 +183,55 @@ public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, I
             mismatch.Message.Contains($"the screenshot is 1000x562 but baseline is {baselineSize}", StringComparison.Ordinal),
             mismatch.Message
         );
+    }
+
+    // A windowed run with the Forward+ renderer must draw the same frame as the Compatibility one, whichever RenderingDevice
+    // driver it started on: a black or blank frame changes every pixel, so the 1% bound catches it, and the changed pixels
+    // counted by their colour in the baseline catch a frame that lost the red square.
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
+    [InlineData("vulkan")]
+    [InlineData("d3d12")]
+    public async Task AForwardPlusRunDrawsTheSameFrameAsCompatibility(string driver)
+    {
+        // Both rows relaunch the probe under another renderer, so each has runs of its own.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
+        JsonNode saved = JsonNode.Parse(await tools.SaveScreenshotBaselineAsync(Compat, null, null, cancellationToken: cancellation))!;
+        await StopAndCheckCleanAsync(harness, probe);
+
+        string[] forwardPlus = ["--rendering-method", "forward_plus", "--rendering-driver", driver];
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, forwardPlus, [], true, false, Prepare: true), null, cancellation);
+        JsonNode compared = Text(
+            await tools.CompareScreenshotAsync(
+                Compat,
+                null,
+                2,
+                new GodotMcp.Server.Tools.CompareOptions(Colors: [Red], ColorsIn: "baseline"),
+                cancellationToken: cancellation
+            )
+        );
+        DebugOutput output = harness.Sessions.GetDebugOutput(null, 50, null);
+        await StopAndCheckCleanAsync(harness, probe);
+
+        // Godot prints the renderer it initialized as "<API> <version> - Forward+ - Using Device #<n>: ..." (4.7.2
+        // servers/rendering/rendering_device.cpp L8388); a run that fell back to Compatibility says "Compatibility" there
+        // instead, so the line is what proves the frame came from Forward+.
+        string banner = string.Join('\n', output.Stdout);
+        Assert.True(banner.Contains("- Forward+ -", StringComparison.Ordinal), $"{driver} printed no Forward+ line: {banner}");
+
+        // The entry for the red square's colour: a comparison that asked another colour has no entry for it, so a run that
+        // changed the asked colour fails here rather than passing on a zero it never meant to count.
+        JsonArray counts = compared["colorCounts"]!.AsArray();
+        JsonNode? square = counts.FirstOrDefault(entry => entry!["color"]!.GetValue<string>() == Red);
+        Assert.NotNull(square);
+        int changed = compared["changedPixels"]!.GetValue<int>();
+        int total = compared["totalPixels"]!.GetValue<int>();
+        Assert.Equal(0, square!["changedPixels"]!.GetValue<int>());
+        Assert.Equal(saved["width"]!.GetValue<int>() * saved["height"]!.GetValue<int>(), total);
+        Assert.True(changed * 100 <= total, $"{changed} of {total} pixels differ from the Compatibility frame, more than 1%");
     }
 
     // Baselines, screenshots and diffs are written under the ignored .godot/, so the tree stays clean.
