@@ -26,6 +26,11 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
 
     private const string SceneText = Comment + "\n" + SceneBody;
 
+    private const string UsesCSharpScene =
+        Comment
+        + "\n[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://CsTargets.cs\" id=\"1\"]\n\n"
+        + "[node name=\"Uses\" type=\"Node\"]\nscript = ExtResource(\"1\")\n";
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -233,6 +238,21 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
         string[] failing = [.. swept["results"]!.AsArray().Select(result => result!["path"]!.GetValue<string>())];
         Assert.Contains("res://broken.xscn", failing);
         Assert.Contains("res://broken.xres", failing);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ValidateListsTheXscnThatAttachesACSharpTarget()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Built();
+        File.WriteAllText(Path.Combine(project, "uses.xscn"), UsesCSharpScene);
+        Git.CommitAll(project);
+
+        JsonNode result = JsonNode.Parse(await _tools.ValidateAsync(project, ["res://CsTargets.cs"], cancellationToken: cancellation))!;
+
+        JsonNode file = Assert.Single(result["csharp"]!["files"]!.AsArray())!;
+        Assert.Equal("res://CsTargets.cs", file["path"]!.GetValue<string>());
+        Assert.Equal(["res://uses.xscn"], file["scenes"]!.AsArray().Select(scene => scene!.GetValue<string>()));
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

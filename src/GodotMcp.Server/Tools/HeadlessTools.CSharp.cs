@@ -16,7 +16,8 @@ internal sealed partial class HeadlessTools
 {
     internal const int MaxAttachingScenes = 20;
     private const string NoBuildYet = "no build: options.prepare is never and no earlier build was saved";
-    private static readonly string[] AttachingExtensions = [".tscn", ".tres"];
+    private static readonly string[] XamlExtensions = [".xscn", ".xres"];
+    private static readonly string[] AttachingExtensions = [".tscn", ".tres", .. XamlExtensions];
 
     /// <summary>
     /// The .cs targets among the checked files, once each, with the versioned scenes and resources that attach each one.
@@ -93,8 +94,8 @@ internal sealed partial class HeadlessTools
     }
 
     /// <summary>
-    /// The project folder's git-versioned .tscn and .tres files that exist, in ordinal order, each with the res:// paths its
-    /// <c>[ext_resource</c> lines name; none outside git.
+    /// The project folder's git-versioned .tscn, .tres, .xscn and .xres files that exist, in ordinal order, each with the res://
+    /// paths it attaches; none outside git.
     /// </summary>
     private static IReadOnlyList<(string Scene, string[] Attached)> AttachingFiles(string projectDir, ILogger logger)
     {
@@ -111,18 +112,34 @@ internal sealed partial class HeadlessTools
                 .Where(path => AttachingExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
                 .Where(path => File.Exists(Path.Combine(projectDir, path)))
                 .Order(StringComparer.Ordinal)
-                .Select(path => ("res://" + path, ExtResourcePaths(Path.Combine(projectDir, path)))),
+                .Select(path => ("res://" + path, AttachedPaths(Path.GetExtension(path), File.ReadLines(Path.Combine(projectDir, path))))),
         ];
     }
 
-    private static string[] ExtResourcePaths(string file) =>
-        [
-            .. File.ReadLines(file)
-                .Where(line => line.StartsWith("[ext_resource", StringComparison.Ordinal))
-                .Select(line => ExtResourcePath().Match(line))
-                .Where(match => match.Success)
-                .Select(match => match.Groups[1].Value),
-        ];
+    /// <summary>
+    /// The res:// paths the lines of a scene or resource of the given extension attach: an <c>[ext_resource</c> line's path, and
+    /// in a godot-xaml .xscn or .xres every whole attribute value that is a res:// path, each once, in the order the lines name them.
+    /// </summary>
+    internal static string[] AttachedPaths(string extension, IEnumerable<string> lines)
+    {
+        bool xaml = XamlExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+        List<string> paths = [];
+        foreach (string line in lines)
+        {
+            Match extResource = ExtResourcePath().Match(line);
+            if (line.StartsWith("[ext_resource", StringComparison.Ordinal) && extResource.Success)
+            {
+                paths.Add(extResource.Groups[1].Value);
+            }
+
+            if (xaml)
+            {
+                paths.AddRange(ValuePath().Matches(line).Select(match => match.Groups["path"].Value));
+            }
+        }
+
+        return [.. paths.Distinct(StringComparer.Ordinal)];
+    }
 
     /// <summary>
     /// csharp's <c>files</c> (one per .cs target: its errors and warnings, which build they came from, and the scenes checked) and
@@ -191,6 +208,9 @@ internal sealed partial class HeadlessTools
 
     [GeneratedRegex(@"\spath=""([^""]*)""")]
     private static partial Regex ExtResourcePath();
+
+    [GeneratedRegex("""=\s*(?<quote>["'])(?<path>res://[^"']*)\k<quote>""")]
+    private static partial Regex ValuePath();
 
     /// <summary>The csproj that compiles the .cs targets, and the full paths of its Compile items.</summary>
     private sealed record CsBuild(string Csproj, IReadOnlyList<string> Compiled);

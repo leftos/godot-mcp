@@ -15,6 +15,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - A `run_scratches` step's until now waits its pace in load-adjusted time, so a loaded machine drawing fewer frames no longer turns a frame-counting until red.
 
+### Fixed
+
+- `validate` on a `.cs` target lists the godot-xaml `.xscn` and `.xres` files that attach it in `scenes`, as it lists `.tscn` files.
+
 ## 0.35.0 - 2026-11-04
 
 ### Added
