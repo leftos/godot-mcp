@@ -67,8 +67,12 @@ public sealed class ScratchCommandTests : IDisposable
         Assert.Null(parsed.Options.Details);
         Assert.Null(parsed.Options.Only);
         Assert.Null(parsed.Options.KeepGoing);
+        Assert.Null(parsed.Options.Steps);
         Assert.Null(parsed.Options.UserArgs);
         Assert.Null(parsed.Options.EngineArgs);
+        Assert.Null(parsed.Options.Windowed);
+        Assert.Null(parsed.Options.Audible);
+        Assert.Null(parsed.Options.Capture);
         Assert.False(parsed.Json);
     }
 
@@ -145,6 +149,40 @@ public sealed class ScratchCommandTests : IDisposable
         Assert.Equal(refusal, error);
     }
 
+    [Fact]
+    public void ParseReadsTheWindowedAudibleStepsAndCaptureSwitches()
+    {
+        ScratchArguments? parsed = ScratchCommand.Parse(
+            Words("--run-scratches C:/game --windowed --audible --steps 0 --steps calm --capture --capture-step 1 --capture-step close"),
+            out string? error
+        );
+
+        Assert.Null(error);
+        Assert.NotNull(parsed);
+        Assert.True(parsed.Options.Windowed);
+        Assert.True(parsed.Options.Audible);
+        Assert.Equal(["0", "calm"], parsed.Options.Steps!.Value.EnumerateArray().Select(token => token.GetString()!));
+        Assert.True(parsed.Options.Capture!.Screenshot);
+        Assert.Equal(["1", "close"], parsed.Options.Capture.Steps!.Value.EnumerateArray().Select(token => token.GetString()!));
+    }
+
+    [Fact]
+    public void ParseShootsEveryPlayedStepWhenCaptureIsGivenNoStepOfItsOwn()
+    {
+        ScratchArguments parsed = ScratchCommand.Parse(Words("--run-scratches C:/game --capture"), out string? error)!;
+
+        Assert.Null(error);
+        Assert.True(parsed.Options.Capture!.Screenshot);
+        Assert.Null(parsed.Options.Capture.Steps);
+    }
+
+    [Fact]
+    public void ParseRefusesACaptureStepWithoutACapture()
+    {
+        Assert.Null(ScratchCommand.Parse(Words("--run-scratches game --capture-step 1"), out string? error));
+        Assert.Equal("--capture-step needs --capture", error);
+    }
+
     [Theory]
     [InlineData(true, 0)]
     [InlineData(false, 1)]
@@ -210,6 +248,36 @@ public sealed class ScratchCommandTests : IDisposable
             ScratchGreen: green (3/3 steps, 2.0s)
             ScratchKnown: known-now-green (2/2 steps, 0.4s)
             scratch: passed (2 green, 1 known, 0 no steps)
+            """;
+
+        AssertLines(expected, ScratchCommand.Describe(result));
+    }
+
+    [Fact]
+    public void DescribeNamesTheFolderOfAScenesShotsAndNoLineForASceneWithoutOne()
+    {
+        string shot = "C:/game/.godot/godot-mcp/scratch-1/ScratchGreen/0-open.png";
+        JsonObject result = JsonNode
+            .Parse(
+                $$"""
+                {
+                  "passed": true, "green": 2, "red": 0, "killed": 0, "known": 0, "noSteps": 0,
+                  "scenes": [
+                    { "scene": "ScratchGreen", "verdict": "green", "steps": { "played": 1, "total": 1 }, "seconds": 1,
+                      "details": [ { "index": 0, "name": "open", "ok": true, "status": "opened", "screenshot": "{{shot}}" } ],
+                      "exit": { "code": 0 } },
+                    { "scene": "ScratchPlain", "verdict": "green", "steps": { "played": 1, "total": 1 }, "seconds": 1,
+                      "exit": { "code": 0 } }
+                  ]
+                }
+                """
+            )!
+            .AsObject();
+        string expected = $"""
+            ScratchGreen: green (1/1 steps, 1.0s)
+              shots: {Path.GetDirectoryName(shot)}
+            ScratchPlain: green (1/1 steps, 1.0s)
+            scratch: passed (2 green, 0 known, 0 no steps)
             """;
 
         AssertLines(expected, ScratchCommand.Describe(result));

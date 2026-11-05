@@ -50,6 +50,12 @@ internal static class ScratchCommand
             return null;
         }
 
+        if (flags.CaptureSteps.Count > 0 && !flags.Capture)
+        {
+            error = "--capture-step needs --capture";
+            return null;
+        }
+
         return new ScratchArguments(flags.Project, scenes.Count == 0 ? null : [.. scenes], flags.Options, flags.Json);
     }
 
@@ -203,6 +209,24 @@ internal static class ScratchCommand
             return null;
         }
 
+        if (arg is "--windowed")
+        {
+            flags.Windowed = true;
+            return null;
+        }
+
+        if (arg is "--audible")
+        {
+            flags.Audible = true;
+            return null;
+        }
+
+        if (arg is "--capture")
+        {
+            flags.Capture = true;
+            return null;
+        }
+
         return arg.StartsWith("--", StringComparison.Ordinal) ? Option(args, ref index, flags, scenes) : Project(flags, arg);
     }
 
@@ -241,8 +265,11 @@ internal static class ScratchCommand
         return Value(flags, scenes, arg, value);
     }
 
-    /// <summary>The options given more than once, each occurrence appending one value: --scene, --user-arg and --engine-arg.</summary>
-    private static bool Repeatable(string option) => option is "--scene" or "--user-arg" or "--engine-arg";
+    /// <summary>
+    /// The options given more than once, each occurrence appending one value: --scene, --user-arg, --engine-arg, --steps and
+    /// --capture-step.
+    /// </summary>
+    private static bool Repeatable(string option) => option is "--scene" or "--user-arg" or "--engine-arg" or "--steps" or "--capture-step";
 
     /// <summary>
     /// Whether <paramref name="option"/> is the last argument or is followed by another option. --user-arg and --engine-arg take
@@ -255,11 +282,21 @@ internal static class ScratchCommand
     private static bool TakesAnyValue(string option) => option is "--user-arg" or "--engine-arg";
 
     /// <summary>
-    /// The options the command takes, each once but <c>--scene</c>, <c>--user-arg</c> and <c>--engine-arg</c>, and each of them in
-    /// the usage text.
+    /// The options the command takes, each once but the repeatable ones, and each of them in the usage text.
     /// </summary>
     private static bool Known(string option) =>
-        option is "--scene" or "--pace" or "--time-scale" or "--parallel" or "--prepare" or "--details" or "--only" or "--user-arg" or "--engine-arg";
+        option
+            is "--scene"
+                or "--pace"
+                or "--time-scale"
+                or "--parallel"
+                or "--prepare"
+                or "--details"
+                or "--only"
+                or "--user-arg"
+                or "--engine-arg"
+                or "--steps"
+                or "--capture-step";
 
     /// <summary>One known option's value, as the tool itself reads it: the command holds no check of its own.</summary>
     private static string? Value(Flags flags, List<string> scenes, string option, string value)
@@ -273,6 +310,18 @@ internal static class ScratchCommand
         if (option is "--user-arg" or "--engine-arg")
         {
             (option is "--user-arg" ? flags.UserArgs : flags.EngineArgs).Add(value);
+            return null;
+        }
+
+        if (option is "--steps")
+        {
+            flags.Steps.Add(value);
+            return null;
+        }
+
+        if (option is "--capture-step")
+        {
+            flags.CaptureSteps.Add(value);
             return null;
         }
 
@@ -329,7 +378,7 @@ internal static class ScratchCommand
         return null;
     }
 
-    /// <summary>One scene's block: its verdict line, the step it failed at and what its exit did.</summary>
+    /// <summary>One scene's block: its verdict line, the step it failed at, what its exit did and the folder of its shots.</summary>
     private static string Scene(JsonObject scene)
     {
         JsonObject steps = scene["steps"]!.AsObject();
@@ -360,7 +409,26 @@ internal static class ScratchCommand
             text.Append(ExitLines(exit));
         }
 
+        if (ShotFolder(scene) is string shots)
+        {
+            text.Append("  shots: ").AppendLine(shots);
+        }
+
         return text.ToString();
+    }
+
+    /// <summary>The folder a scene's first shot was written to, or null when the scene took none.</summary>
+    private static string? ShotFolder(JsonObject scene)
+    {
+        foreach (JsonNode? node in scene["details"]?.AsArray() ?? [])
+        {
+            if (node is JsonObject step && step["screenshot"] is JsonValue shot && shot.TryGetValue(out string? path))
+            {
+                return Path.GetDirectoryName(path);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>What a scene's exit did, one <c>  exit: </c> line a reason: the patterns it never printed, its error, or its kill.</summary>
@@ -420,15 +488,27 @@ internal static class ScratchCommand
 
         public bool Json { get; set; }
 
+        public bool Windowed { get; set; }
+
+        public bool Audible { get; set; }
+
+        public bool Capture { get; set; }
+
         /// <summary>The --user-arg values in the order given, which the tool appends to the profile's own.</summary>
         public List<string> UserArgs { get; } = [];
 
         /// <summary>The --engine-arg values in the order given, which the tool places in that order.</summary>
         public List<string> EngineArgs { get; } = [];
 
+        /// <summary>The --steps values in the order given, which the tool reads as its list for every scene.</summary>
+        public List<string> Steps { get; } = [];
+
+        /// <summary>The --capture-step values in the order given, which the tool reads as the capture's own step list.</summary>
+        public List<string> CaptureSteps { get; } = [];
+
         /// <summary>
-        /// The options read so far, so a second one of them is refused; --scene, --user-arg and --engine-arg are not ones, being
-        /// repeatable.
+        /// The options read so far, so a second one of them is refused; the repeatable ones (--scene, --user-arg, --engine-arg,
+        /// --steps and --capture-step) are not ones.
         /// </summary>
         public HashSet<string> Given { get; } = new(StringComparer.Ordinal);
 
@@ -437,13 +517,23 @@ internal static class ScratchCommand
             new(
                 Pace: Pace,
                 TimeScale: TimeScale,
+                Steps: Tokens(Steps),
                 Prepare: Prepare,
                 Details: Details,
                 Parallel: Parallel,
                 KeepGoing: KeepGoing ? true : null,
                 Only: Only,
                 UserArgs: UserArgs.Count == 0 ? null : [.. UserArgs],
-                EngineArgs: EngineArgs.Count == 0 ? null : [.. EngineArgs]
+                EngineArgs: EngineArgs.Count == 0 ? null : [.. EngineArgs],
+                Windowed: Windowed ? true : null,
+                Audible: Audible ? true : null,
+                Capture: CaptureOptions()
             );
+
+        /// <summary>The capture the switches ask for, null when --capture is not given.</summary>
+        private ScratchCaptureOptions? CaptureOptions() => Capture ? new ScratchCaptureOptions(Steps: Tokens(CaptureSteps), Screenshot: true) : null;
+
+        /// <summary>The step tokens as the tool reads them, null when none is given.</summary>
+        private static JsonElement? Tokens(List<string> tokens) => tokens.Count == 0 ? null : JsonSerializer.SerializeToElement(tokens);
     }
 }

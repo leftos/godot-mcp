@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `godot-mcp --run-scratches` takes `--windowed`, `--audible`, `--steps` and `--capture`, so a capture run works from a terminal, hook or gate job.
+
 ### Changed
 
 - A `run_scratches` step's until now waits its pace in load-adjusted time, so a loaded machine drawing fewer frames no longer turns a frame-counting until red.
