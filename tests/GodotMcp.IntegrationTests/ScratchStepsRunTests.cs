@@ -300,6 +300,36 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ListStepsListsTheWholeStepListWithoutPlayingAStep()
+    {
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchHidden"], new ScratchOptions(ListSteps: true), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("listed", scene["verdict"]!.GetValue<string>());
+        Assert.Equal((0, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
+        Assert.Equal(
+            ["0 (hidden) fight setup", "1 first view", "2 second view"],
+            scene["stepList"]!.AsArray().Select(line => line!.GetValue<string>())
+        );
+        Assert.Null(scene["failedAt"]);
+        Assert.False(scene.ContainsKey("details"), scene.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ListStepsDoesNotPlayARedScenesSteps()
+    {
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchTwoRed"], new ScratchOptions(ListSteps: true), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("listed", scene["verdict"]!.GetValue<string>());
+        Assert.Equal((0, 4), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
+        Assert.Equal(["0 calm", "1 first", "2 second", "3 last"], scene["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
+        Assert.Null(scene["failedAt"]);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task EachStepsStatusIsWrittenIntoTheSceneLogButNotItsLines()
     {
         ScratchOptions options = new(Details: FullDetails);

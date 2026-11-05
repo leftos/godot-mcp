@@ -112,6 +112,9 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// <summary>The timeline of options.watch over the scene's steps, as the watch tool's stop returns it; null when none ran.</summary>
     public JsonObject? Watch { get; init; }
 
+    /// <summary>options.listSteps: the scene was booted and its steps read, none played.</summary>
+    public bool Listed { get; init; }
+
     public double Seconds { get; init; }
 }
 
@@ -164,6 +167,10 @@ internal sealed record ScratchRunResult(
     /// <summary>options.timeScale, the time scale the scenes' games ran at; null at 1.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? TimeScale { get; init; }
+
+    /// <summary>How many scenes options.listSteps listed; null when it listed none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Listed { get; init; }
 }
 
 /// <summary>A scene's steps played and in all.</summary>
@@ -332,7 +339,7 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     /// <summary>
     /// The scene's steps, one "&lt;index&gt; &lt;name&gt;" each, with " (hidden)" after the index of a step its root's
     /// GetStepHidden marks hidden: on a run that played only part of it (<see cref="Selected"/> is present), only the steps it
-    /// selected; on a whole run, every step, present only when one is hidden; null otherwise.
+    /// selected; on a whole run, every step, present only when one is hidden; on a listed run, every step, always; null otherwise.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? StepList { get; init; }
@@ -399,13 +406,18 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
 /// <summary>
 /// Turns what the runner saw of a scene into its verdict, with no Godot: green when every step played with no call error, no
 /// error in the feed and no line matching a pattern, and the game exited 0 with no leak and no matching line after, and the
-/// scene's output held a line for every pattern it expects (unless options.steps played only part of it); red otherwise;
-/// no-steps, killed, and known or known-now-green for a scene the profile knows to fail.
+/// scene's output held a line for every pattern it expects (unless options.steps played only part of it); listed instead of
+/// green when options.listSteps read its steps without playing one; red otherwise; no-steps, killed, and known or
+/// known-now-green for a scene the profile knows to fail.
 /// </summary>
 internal static partial class ScratchVerdict
 {
     public const string Green = "green";
     public const string Red = "red";
+
+    /// <summary>A scene options.listSteps booted, read every step's name of and stopped without playing one.</summary>
+    public const string Listed = "listed";
+
     public const string NoSteps = "no-steps";
     public const string Killed = "killed";
     public const string KnownRed = "known";
@@ -580,9 +592,11 @@ internal static partial class ScratchVerdict
         int Count(params string[] verdicts) => scenes.Count(scene => verdicts.Contains(scene.Verdict, StringComparer.Ordinal));
         int red = Count(Red, KnownNowGreen);
         int killed = Count(Killed);
+        int listed = Count(Listed);
         return new ScratchRunResult(red == 0 && killed == 0, Count(Green), red, Count(KnownRed), Count(NoSteps), killed, prep, scenes)
         {
             TimeScale = timeScale == 1 ? null : timeScale,
+            Listed = listed > 0 ? listed : null,
         };
     }
 
@@ -674,7 +688,12 @@ internal static partial class ScratchVerdict
             }
         }
 
-        return ExitFails(seen, patterns, missing) ? (Red, null) : (Green, null);
+        return (
+            ExitFails(seen, patterns, missing) ? Red
+            : seen.Listed ? Listed
+            : Green,
+            null
+        );
     }
 
     /// <summary>
@@ -738,10 +757,15 @@ internal static partial class ScratchVerdict
 
     /// <summary>
     /// The scene's step list: the lines of the steps the call selected, in their order, on a run that played part of it; every
-    /// step's line on a whole run, present only when one is hidden; else null.
+    /// step's line on a whole run, present only when one is hidden; every step's on a listed run; else null.
     /// </summary>
     private static IReadOnlyList<string>? StepList(ScratchObservation seen)
     {
+        if (seen.Listed)
+        {
+            return seen.StepNames.Lines();
+        }
+
         if (seen.Selected is { } selected)
         {
             IReadOnlyList<string> lines = seen.StepNames.Lines();
@@ -784,7 +808,7 @@ internal static partial class ScratchVerdict
     /// <summary>
     /// One entry per expected pattern no line of the scene's output (launch, steps and exit) matched, in the order expected; null
     /// when every one matched, or the scene is not judged for them: it expects none, was killed, refused or red at the boot, has
-    /// no steps, or options.steps played only part of it.
+    /// no steps, options.steps played only part of it, or options.listSteps played none.
     /// </summary>
     private static List<string>? Missing(ScratchObservation seen, IReadOnlyList<ScratchPattern> expect, IReadOnlyList<ScratchPattern> patterns)
     {
@@ -800,7 +824,7 @@ internal static partial class ScratchVerdict
     }
 
     private static bool JudgedForExpected(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns) =>
-        BeforeAnyStep(seen, patterns) is null && seen.Total > 0 && !PlayedInPart(seen);
+        BeforeAnyStep(seen, patterns) is null && seen.Total > 0 && !PlayedInPart(seen) && !seen.Listed;
 
     /// <summary>
     /// The entry of an expected pattern no line matched, with the reason, the lines the output buffer dropped and a timeout on a

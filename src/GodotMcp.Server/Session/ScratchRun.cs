@@ -104,9 +104,10 @@ internal readonly partial record struct ScratchStepToken(string Text, bool IsNum
 
 /// <summary>
 /// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, how
-/// many scenes play at once, whether the call listed its scenes rather than leaving them to the folder, the prefix each
-/// scene's session is named with, whether a scene plays on past a failed step, the steps options.steps selects, the call's
-/// time scale, and how many characters a step's status and each of its lines keep.
+/// many scenes play at once, whether the call listed its scenes rather than leaving them to the folder, whether it reads every
+/// scene's steps without playing one, the prefix each scene's session is named with, whether a scene plays on past a failed
+/// step, the steps options.steps selects, the call's time scale, and how many characters a step's status and each of its
+/// lines keep.
 /// </summary>
 internal sealed record ScratchPlan(
     string ProjectDir,
@@ -121,6 +122,9 @@ internal sealed record ScratchPlan(
     public required int Parallel { get; init; }
 
     public required bool Listed { get; init; }
+
+    /// <summary>options.listSteps: every scene is booted and its steps read, none played; false when left out.</summary>
+    public bool ListSteps { get; init; }
 
     public required string SessionPrefix { get; init; }
 
@@ -1201,7 +1205,7 @@ internal sealed class ScratchRun
             return Seen(session.Name) with { Refusal = refusal };
         }
 
-        if (_names.Count > 0 && !ScratchVerdict.RedAtBoot(_bootErrors, _launchLines, _plan.Patterns))
+        if (!_plan.ListSteps && _names.Count > 0 && !ScratchVerdict.RedAtBoot(_bootErrors, _launchLines, _plan.Patterns))
         {
             await StartWatchAsync(session, cancellationToken);
             _deadline = _registry.Clock.Start(_walk.Ceiling, cancellationToken);
@@ -1874,6 +1878,7 @@ internal sealed class ScratchRun
             ExitHold = _scene.ExitHold,
             Warnings = [.. _warnings],
             Watch = _watch,
+            Listed = _plan.ListSteps,
         };
 
     private static int WholeNumber(JsonNode? node) =>

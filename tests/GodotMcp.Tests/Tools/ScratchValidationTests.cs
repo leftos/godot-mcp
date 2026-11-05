@@ -337,6 +337,44 @@ public sealed class ScratchValidationTests : IDisposable
     public void AllAndRedAreAcceptedAsOnly(string only) =>
         Assert.Equal("res://Other.tscn", Assert.Single(Plan(["res://Other.tscn"], new ScratchOptions(Only: only)).Scenes).ResPath);
 
+    [Fact]
+    public void ListStepsIsCarriedOntoThePlan() => Assert.True(Plan(["res://Other.tscn"], new ScratchOptions(ListSteps: true)).ListSteps);
+
+    [Fact]
+    public void ListStepsIsAcceptedWithAWindowedRun()
+    {
+        ScratchPlan plan = Plan(["res://Other.tscn"], new ScratchOptions(ListSteps: true, Windowed: true));
+
+        Assert.True(plan.ListSteps);
+        Assert.True(plan.Windowed);
+    }
+
+    [Theory]
+    [InlineData("steps")]
+    [InlineData("capture")]
+    [InlineData("watch")]
+    [InlineData("background")]
+    public void ListStepsIsRefusedWithAnOptionThatPlaysAStep(string key)
+    {
+        ScratchOptions options = key switch
+        {
+            "steps" => new ScratchOptions(ListSteps: true, Steps: Tokens("[0]")),
+            "capture" => new ScratchOptions(ListSteps: true, Windowed: true, Capture: new ScratchCaptureOptions(Screenshot: true)),
+            "watch" => new ScratchOptions(ListSteps: true, Watch: new ScratchWatchOptions()),
+            _ => new ScratchOptions(ListSteps: true, Background: true),
+        };
+
+        Assert.Equal($"options.listSteps plays no step, so it takes no options.{key}", Refused(() => Plan(["res://Other.tscn"], options)));
+    }
+
+    [Fact]
+    public void ListStepsNamesTheFirstOfItsOffendingOptionsInItsOwnOrder()
+    {
+        ScratchOptions options = new(ListSteps: true, Steps: Tokens("[0]"), Watch: new ScratchWatchOptions(), Background: true);
+
+        Assert.Equal("options.listSteps plays no step, so it takes no options.steps", Refused(() => Plan(["res://Other.tscn"], options)));
+    }
+
     [Theory]
     [InlineData(0.01)]
     [InlineData(0.5)]

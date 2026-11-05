@@ -1466,6 +1466,119 @@ public sealed class ScratchVerdictTests
         Assert.False(without.ContainsKey("stepList"), without.ToJsonString());
     }
 
+    [Fact]
+    public void AListedSceneWithAHiddenStepIsListedWithItsWholeStepList()
+    {
+        ScratchObservation seen = ListedScene(new(["fight setup", "first view"], new HashSet<int> { 0 }));
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain);
+
+        Assert.Equal(ScratchVerdict.Listed, result.Verdict);
+        Assert.Equal(new ScratchStepCount(0, 2), result.Steps);
+        Assert.Equal(["0 (hidden) fight setup", "1 first view"], result.StepList);
+        Assert.Null(result.FailedAt);
+        Assert.Null(result.Details);
+    }
+
+    [Fact]
+    public void AListedSceneWithoutAHiddenStepStillCarriesItsWholeStepList()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(ListedScene(["open", "close"]), Plain);
+
+        Assert.Equal(ScratchVerdict.Listed, result.Verdict);
+        Assert.Equal(["0 open", "1 close"], result.StepList);
+    }
+
+    [Fact]
+    public void AListedSceneIsNotJudgedForExpectedLines()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(ListedScene(["open"]), Plain with { Expect = [Expected("^bye$")] });
+
+        Assert.Equal(ScratchVerdict.Listed, result.Verdict);
+        Assert.Null(result.Exit.Missing);
+    }
+
+    [Fact]
+    public void AListedSceneRedAtTheBootIsRed()
+    {
+        ScratchObservation seen = ListedScene(["open"]) with { BootErrors = [Error("boot failure", "", 0)] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal((-1, "boot"), (result.FailedAt!.Index, result.FailedAt.Name));
+    }
+
+    [Fact]
+    public void AListedSceneWithNoStepsIsNoSteps() =>
+        Assert.Equal(
+            ScratchVerdict.NoSteps,
+            ScratchVerdict.Judge(new ScratchObservation("Scene", "p.scratch-Scene", 0.5, 0) { Listed = true }, Plain).Verdict
+        );
+
+    [Fact]
+    public void AListedSceneStaysListedThoughTheProfileKnowsItToFail()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(ListedScene(["open"]), Plain with { Known = "flaky tray" });
+
+        Assert.Equal(ScratchVerdict.Listed, result.Verdict);
+        Assert.Null(result.Known);
+    }
+
+    [Fact]
+    public void AListedSceneWhoseExitFailedIsRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(ListedScene(["open"]) with { ExitCode = 1 }, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(["0 open"], result.StepList);
+    }
+
+    [Fact]
+    public void TheRunCountsListedScenesAndPasses()
+    {
+        ScratchSceneResult listed = ScratchVerdict.Judge(ListedScene(["open"]), Plain);
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0)), Plain);
+
+        ScratchRunResult run = ScratchVerdict.Summarise([listed, listed], PrepResult.Skipped, timeScale: 1);
+        JsonObject json = RunJson(listed, listed);
+        JsonObject greens = RunJson(green);
+
+        Assert.True(run.Passed);
+        Assert.Equal(2, run.Listed);
+        Assert.Equal((0, 0), (run.Red, run.Killed));
+        Assert.Equal(2, json["listed"]!.GetValue<int>());
+        Assert.Null(greens["listed"]);
+    }
+
+    [Fact]
+    public void AListedSceneNeverPlaysAgainAlone()
+    {
+        ScratchSceneResult listed = ScratchVerdict.Judge(ListedScene(["open"]), Plain);
+
+        Assert.False(ScratchVerdict.PlaysAgainAlone(listed, parallel: 4));
+    }
+
+    [Fact]
+    public void OnlyRedKeepsAListedScenesLineAndWholeStepList()
+    {
+        JsonObject scene = Assert
+            .Single(ScratchView.Result(RunJson(ScratchVerdict.Judge(ListedScene(["open"]), Plain)), redOnly: true)["scenes"]!.AsArray())!
+            .AsObject();
+
+        Assert.Equal("listed", scene["verdict"]!.GetValue<string>());
+        Assert.Equal(["0 open"], scene["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
+        Assert.False(scene.ContainsKey("details"), scene.ToJsonString());
+    }
+
+    private static ScratchObservation ListedScene(ScratchStepNames names) =>
+        new("Scene", "probe.scratch-Scene", 0.5, names.Count)
+        {
+            ExitCode = 0,
+            Listed = true,
+            StepNames = names,
+        };
+
     private const string TwoRedSteps = "its steps are 0 calm, 1 first, 2 second, 3 last";
 
     private static readonly ScratchStepNames TwoRed = ["calm", "first", "second", "last"];

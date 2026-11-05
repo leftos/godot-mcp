@@ -109,7 +109,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "not refused before its first "
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
-            + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, buildGate?, import, importMs?, "
+            + "{passed, green, red, known, noSteps, killed, listed?, prep: {build, buildMs?, buildLog?, buildGate?, import, importMs?, "
             + "importLog?, importGate?, note?}, "
             + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, exitHold?, seconds, "
             + "session, log?, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, "
@@ -118,7 +118,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "setup steps the run added to them, both fixed when the steps resolve, so a scene stopped at a step, at the boot or by "
             + "a kill still lists them; log is the scene's own whole-output file, each step's status when not its name written into "
             + "it as \"[godot-mcp] step <i> <name>: <status>\"; stepList lists the selected steps on a partial run, every step on a "
-            + "whole run that has a hidden step; "
+            + "whole run that has a hidden step and on an options.listSteps run, whose scenes are verdict listed, counted as listed; "
             + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game ran at another speed "
             + "than the call's, its scratch.pace entry having \"timeScale\": 1; "
             + "failedAt is the first failed step and failures [{index, name, error}] "
@@ -152,8 +152,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, parallel, session, keepGoing, steps, background, "
-                + "only, watch, windowed, audible, userData}: pace in seconds for every "
+            "{pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, parallel, session, keepGoing, steps, listSteps, "
+                + "background, only, watch, windowed, audible, userData}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
@@ -448,6 +448,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         string projectDir = ProjectDir(projectPath);
         var profile = ProjectProfile.Load(projectDir);
         ScratchProfile scratch = profile.Scratch ?? ScratchProfile.None;
+        bool listSteps = CheckListSteps(options);
         CheckPace(options.Pace);
         CheckTimeScale(options.TimeScale);
         CheckDetailChars(options.DetailChars);
@@ -478,6 +479,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             DetailChars = options.DetailChars ?? ScratchVerdict.DefaultDetailChars,
             Parallel = Math.Max(1, Math.Min(options.Parallel ?? scratch.Parallel, plans.Count)),
             Listed = scenes is not null,
+            ListSteps = listSteps,
             SessionPrefix = prefix,
             KeepGoing = options.KeepGoing ?? false,
             Steps = steps,
@@ -489,6 +491,27 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             UserData = userData,
             Capture = capture,
         };
+    }
+
+    /// <summary>options.listSteps as the plan holds it; false when left out.</summary>
+    /// <exception cref="McpException">
+    /// options.listSteps is true with options.steps, options.capture, options.watch or options.background true; the first of
+    /// them in that order is named.
+    /// </exception>
+    private static bool CheckListSteps(ScratchOptions options)
+    {
+        if (options.ListSteps is not true)
+        {
+            return false;
+        }
+
+        string? beside =
+            options.Steps is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } ? "steps"
+            : options.Capture is not null ? "capture"
+            : options.Watch is not null ? "watch"
+            : options.Background is true ? "background"
+            : null;
+        return beside is null ? true : throw new McpException($"options.listSteps plays no step, so it takes no options.{beside}");
     }
 
     /// <summary>options.audible as the plan holds it; false when left out.</summary>
@@ -1255,6 +1278,11 @@ internal sealed record ScratchOptions(
             + "ascending with them; its result lists the selected indices as selected and the added setup steps as setup."
     )]
         JsonElement? Steps = null,
+    [property: Description(
+        "true boots each scene, reads its steps' names (hidden ones marked) and stops its game without playing a step: each "
+            + "scene's result is verdict listed with its whole stepList. Refused with steps, capture, watch or background."
+    )]
+        bool? ListSteps = null,
     [property: Description(
         "true returns at once, once the plan is checked, with {runId, statusFile, logFile, scenes} (scenes the names in play "
             + "order), and the run plays on in the server, ended only by scratch_status {stop: true} or the server's exit, never by "

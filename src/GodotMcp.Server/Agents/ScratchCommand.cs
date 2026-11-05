@@ -457,11 +457,14 @@ internal static class ScratchCommand
     private static string Seconds(JsonNode seconds) => seconds.GetValue<double>().ToString("F1", CultureInfo.InvariantCulture);
 
     private static string PassedCounts(JsonObject result) =>
-        $"{Count(result, "green")} green, {Count(result, "known")} known, {Count(result, "noSteps")} no steps";
+        $"{Count(result, "green")} green, {Count(result, "known")} known, {Count(result, "noSteps")} no steps{ListedCount(result)}";
 
     private static string FailedCounts(JsonObject result) =>
         $"{Count(result, "green")} green, {Count(result, "red")} red, {Count(result, "killed")} killed, "
-        + $"{Count(result, "known")} known, {Count(result, "noSteps")} no steps";
+        + $"{Count(result, "known")} known, {Count(result, "noSteps")} no steps{ListedCount(result)}";
+
+    /// <summary>", N listed" for a run that listed scenes, which the command itself never asks for; nothing else.</summary>
+    private static string ListedCount(JsonObject result) => result["listed"]?.GetValue<int>() is { } listed ? $", {listed} listed" : string.Empty;
 
     private static int Count(JsonObject result, string field) => result[field]?.GetValue<int>() ?? 0;
 

@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Added
 
+- `run_scratches` takes `options.listSteps`, which boots each scene and returns its whole step list without playing a step.
 - `godot-mcp --run-scratches` takes `--windowed`, `--audible`, `--steps` and `--capture`, so a capture run works from a terminal, hook or gate job.
 
 ### Changed
