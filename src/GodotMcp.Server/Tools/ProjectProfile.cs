@@ -132,6 +132,7 @@ internal sealed partial class ProjectProfile
         "engineArgs",
         "pace",
         "ceilings",
+        "memoryCeilings",
         "setup",
         "known",
         "patterns",
@@ -711,6 +712,7 @@ internal sealed partial class ProjectProfile
         )
         {
             Parallel = ReadParallel(scratch, place),
+            MemoryCeilings = ReadMap(scratch, "memoryCeilings", place, (scene, ceiling) => ReadMemoryCeiling(scene, ceiling, place)),
             UserData = scratch.TryGetValue(UserDataKey, out JsonElement userData)
                 ? UserDataChoice.Parse(userData, problem => Refused(place, problem))
                 : null,
@@ -1133,6 +1135,19 @@ internal sealed partial class ProjectProfile
             );
 
     /// <summary>
+    /// One scene's memory ceiling: a number of megabytes from <see cref="ScratchProfile.MinMemoryCeilingMegabytes"/> to
+    /// <see cref="ScratchProfile.MaxMemoryCeilingMegabytes"/>.
+    /// </summary>
+    private static double ReadMemoryCeiling(string scene, JsonElement value, Place place) =>
+        value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double megabytes) && ScratchProfile.IsMemoryCeiling(megabytes)
+            ? megabytes
+            : throw Refused(
+                place,
+                $"scratch.memoryCeilings.{scene} must be a number of megabytes at least {ScratchProfile.MinMemoryCeilingMegabytes} "
+                    + $"and at most {ScratchProfile.MaxMemoryCeilingMegabytes}; got {Shown(value)}"
+            );
+
+    /// <summary>
     /// One scene's declared setup steps: a non-empty array of step keys, each an index written plainly or a step's exact name,
     /// which step each names only known once the scene has started; or an object of the scene-wide "always" list and the "steps"
     /// map, each step key to the setup steps of its own, a partial run adding a step's list only when it selects that step.
@@ -1387,7 +1402,8 @@ internal sealed record ScratchSetup(IReadOnlyList<string> Always, IReadOnlyDicti
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
 /// scratch run starts with in place of the top-level ones (null when the section sets none), the engine arguments each scene's
 /// game launches with before --, after the runner's own --headless and --time-scale (null when the section sets none), each
-/// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds, each scene's declared setup steps,
+/// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds, each scene's own memory ceiling in
+/// megabytes, each scene's declared setup steps,
 /// the scenes known to fail with the reason, the patterns a step's output lines fail it by, the patterns every scene's output
 /// and each scene's own must match a line of, and how many scenes play at once.
 /// </summary>
@@ -1407,6 +1423,12 @@ internal sealed record ScratchProfile(
     /// <summary>The longest ceiling a scene can be given, in seconds.</summary>
     public const int MaxCeilingSeconds = 3600;
 
+    /// <summary>The smallest memory ceiling a scene can be given, in megabytes.</summary>
+    public const int MinMemoryCeilingMegabytes = 64;
+
+    /// <summary>The largest memory ceiling a scene can be given, in megabytes.</summary>
+    public const int MaxMemoryCeilingMegabytes = 1048576;
+
     /// <summary>How many scenes play at once when neither options.parallel nor the section sets it.</summary>
     public const int DefaultParallel = 1;
 
@@ -1420,6 +1442,12 @@ internal sealed record ScratchProfile(
     /// The section's userData, the scratch <c>user://</c> each scene's game gets; null when the section sets none.
     /// </summary>
     public UserDataChoice? UserData { get; init; }
+
+    /// <summary>
+    /// Each scene's own memory ceiling in megabytes, by scene name: the game is killed once its private memory passes it; empty
+    /// when the section sets none.
+    /// </summary>
+    public IReadOnlyDictionary<string, double> MemoryCeilings { get; init; } = ReadOnlyDictionary<string, double>.Empty;
 
     /// <summary>
     /// Each scene's declared setup steps, by scene name: the scene-wide list a partial run adds to the ones options.steps
@@ -1460,6 +1488,12 @@ internal sealed record ScratchProfile(
 
     /// <summary>Whether <paramref name="seconds"/> is a ceiling: above 0 and at most <see cref="MaxCeilingSeconds"/>.</summary>
     public static bool IsCeiling(double seconds) => seconds is > 0 and <= MaxCeilingSeconds;
+
+    /// <summary>
+    /// Whether <paramref name="megabytes"/> is a memory ceiling: at least <see cref="MinMemoryCeilingMegabytes"/> and at most
+    /// <see cref="MaxMemoryCeilingMegabytes"/>.
+    /// </summary>
+    public static bool IsMemoryCeiling(double megabytes) => megabytes is >= MinMemoryCeilingMegabytes and <= MaxMemoryCeilingMegabytes;
 
     /// <summary>Whether <paramref name="parallel"/> is a number of scenes at once: from 1 to <see cref="MaxParallel"/>.</summary>
     public static bool IsParallel(int parallel) => parallel is >= 1 and <= MaxParallel;

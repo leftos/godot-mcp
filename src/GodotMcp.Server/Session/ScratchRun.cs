@@ -27,6 +27,19 @@ internal sealed record ScratchCeiling(double Seconds, string Source)
 }
 
 /// <summary>
+/// A scene's memory ceiling given rather than left unbounded: how many megabytes of private memory its game may use before it is
+/// killed, and what set it, options.memoryCeilings or the profile's scratch.memoryCeilings.
+/// </summary>
+internal sealed record ScratchMemoryCeiling(double Megabytes, string Source)
+{
+    /// <summary>The source a call's options.memoryCeilings sets a ceiling under.</summary>
+    public const string OptionsSource = "options.memoryCeilings";
+
+    /// <summary>The source the profile's scratch.memoryCeilings sets a ceiling under.</summary>
+    public const string ProfileSource = "the profile's scratch.memoryCeilings";
+}
+
+/// <summary>
 /// A scratch scene to play: its name (the file's, without its extension), its res:// path, its pace in seconds, the user arguments it
 /// starts with, the engine arguments its game launches with, the ceiling the call or the profile gives it, if any, the reason the
 /// profile knows it to fail, if any, the profile's reason for its pace, if any, the paces of single steps, keyed by a step's index
@@ -77,6 +90,12 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     /// scratch.ceilings; null derives it from the played steps' paces.
     /// </summary>
     public ScratchCeiling? Ceiling { get; init; }
+
+    /// <summary>
+    /// The megabytes of private memory the scene's game may use before it is killed, given by options.memoryCeilings or the
+    /// profile's scratch.memoryCeilings; null leaves it unbounded.
+    /// </summary>
+    public ScratchMemoryCeiling? MemoryCeiling { get; init; }
 }
 
 /// <summary>
@@ -399,6 +418,7 @@ internal sealed class ScratchRun
     private int[] _setupOnly = [];
     private GodotSession? _session;
     private LoadDeadline? _deadline;
+    private string? _memoryKill;
     private LineMark _mark;
     private int _inFlight = -1;
     private string _rootPath = string.Empty;
@@ -1212,12 +1232,60 @@ internal sealed class ScratchRun
         if (!_plan.ListSteps && _names.Count > 0 && !ScratchVerdict.RedAtBoot(_bootErrors, _launchLines, _plan.Patterns))
         {
             await StartWatchAsync(session, cancellationToken);
-            _deadline = _registry.Clock.Start(_walk.Ceiling, cancellationToken);
-            await PlayStepsAsync(session, _deadline.Token);
+            LoadDeadline deadline = _registry.Clock.Start(_walk.Ceiling, cancellationToken);
+            _deadline = deadline;
+            await PlayToCeilingAsync(session, deadline);
             await CollectWatchAsync(session, _bounds.Call, cancellationToken);
         }
 
         return Seen(session.Name);
+    }
+
+    /// <summary>
+    /// Plays the scene's steps on a token its ceiling or its memory watch cancels, with the watch read from the game's private
+    /// memory while they play and stopped and disposed before the play ends, on every path.
+    /// </summary>
+    private async Task PlayToCeilingAsync(GodotSession session, LoadDeadline deadline)
+    {
+        using var play = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        ScratchMemoryWatch? memory = MemoryWatch(session, play);
+        try
+        {
+            await PlayStepsAsync(session, play.Token);
+        }
+        finally
+        {
+            _memoryKill = memory?.KillReason;
+            if (memory is not null)
+            {
+                await memory.DisposeAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The watch of the scene's game against its memory ceiling, started: null when the scene has no ceiling, and one whose game
+    /// reported no process id is named in the scene's warnings and left unwatched.
+    /// </summary>
+    private ScratchMemoryWatch? MemoryWatch(GodotSession session, CancellationTokenSource play)
+    {
+        if (_scene.MemoryCeiling is not { } ceiling)
+        {
+            return null;
+        }
+
+        if (session.GameProcessId is not { } game)
+        {
+            _warnings.Add(
+                "the scene's game reported no process id, so its memory ceiling of "
+                    + $"{ceiling.Megabytes.ToString(CultureInfo.InvariantCulture)} MB was not watched"
+            );
+            return null;
+        }
+
+        ScratchMemoryWatch watch = new(ceiling, _registry.Clock.Time, play);
+        watch.Start(game);
+        return watch;
     }
 
     /// <summary>
@@ -1858,6 +1926,11 @@ internal sealed class ScratchRun
 
     private string KillReason(Exception e)
     {
+        if (_memoryKill is { } memory)
+        {
+            return memory;
+        }
+
         if (e is TimeoutException)
         {
             return e.Message;

@@ -285,6 +285,41 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Null(plan.Scenes[2].Ceiling);
     }
 
+    [Theory]
+    [InlineData(0.0, "0")]
+    [InlineData(63.0, "63")]
+    [InlineData(1048577.0, "1048577")]
+    [InlineData(double.NaN, "NaN")]
+    public void AnOptionsMemoryCeilingOutsideItsRangeIsRefused(double megabytes, string shown)
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(MemoryCeilings: new() { ["Other"] = megabytes })));
+
+        Assert.Equal($"options.memoryCeilings.Other must be a number of megabytes at least 64 and at most 1048576; got {shown}.", message);
+    }
+
+    [Fact]
+    public void OptionsMemoryCeilingsNamingASceneOutsideThePlanIsRefused()
+    {
+        string message = Refused(() => Plan(["res://Scratch/Beta.tscn"], new ScratchOptions(MemoryCeilings: new() { ["Alpha"] = 512 })));
+
+        Assert.Equal(
+            "options.memoryCeilings scene 'Alpha' is not in the plan; its scenes are Beta. Pass one of those, or leave the scene " + "unbounded.",
+            message
+        );
+    }
+
+    [Fact]
+    public void AnOptionsMemoryCeilingWinsOverTheProfilesForItsScene()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "memoryCeilings": { "Beta": 2048, "Alpha": 4096 } } }""");
+
+        ScratchPlan plan = Plan(["Beta", "Alpha", "res://Other.tscn"], new ScratchOptions(MemoryCeilings: new() { ["Beta"] = 512 }));
+
+        Assert.Equal(new ScratchMemoryCeiling(512, ScratchMemoryCeiling.OptionsSource), plan.Scenes[0].MemoryCeiling);
+        Assert.Equal(new ScratchMemoryCeiling(4096, ScratchMemoryCeiling.ProfileSource), plan.Scenes[1].MemoryCeiling);
+        Assert.Null(plan.Scenes[2].MemoryCeiling);
+    }
+
     [Fact]
     public void ASceneExpectsTheProfilesExpectThenItsOwnExpectFor()
     {

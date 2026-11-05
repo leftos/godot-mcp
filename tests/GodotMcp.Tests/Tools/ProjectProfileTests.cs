@@ -528,6 +528,36 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void ScratchMemoryCeilingsAreReadPerScene()
+    {
+        Write("""{ "scratch": { "memoryCeilings": { "Combat": 512, "Tray": 1048576 } } }""");
+        ScratchProfile set = ProjectProfile.Load(_temp.Path).Scratch!;
+        Write("""{ "scratch": { "folder": "res://Scratch" } }""");
+        ScratchProfile unset = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal(2, set.MemoryCeilings.Count);
+        Assert.Equal(512, set.MemoryCeilings["Combat"]);
+        Assert.Equal(1048576, set.MemoryCeilings["Tray"]);
+        Assert.Empty(unset.MemoryCeilings);
+        Assert.Empty(ScratchProfile.None.MemoryCeilings);
+    }
+
+    [Theory]
+    [InlineData("""{ "scratch": { "memoryCeilings": { "Combat": 63 } } }""", "63")]
+    [InlineData("""{ "scratch": { "memoryCeilings": { "Combat": 0 } } }""", "0")]
+    [InlineData("""{ "scratch": { "memoryCeilings": { "Combat": 1048577 } } }""", "1048577")]
+    [InlineData("""{ "scratch": { "memoryCeilings": { "Combat": "512" } } }""", "a string")]
+    public void AScratchMemoryCeilingOutsideItsRangeIsRefused(string json, string shown)
+    {
+        Write(json);
+
+        Assert.Equal(
+            $"{FilePath} (scratch): scratch.memoryCeilings.Combat must be a number of megabytes at least 64 and at most " + $"1048576; got {shown}.",
+            Refused(() => ProjectProfile.Load(_temp.Path))
+        );
+    }
+
+    [Fact]
     public void ScratchSetupIsReadAsStepKeysPerScene()
     {
         Write("""{ "scratch": { "setup": { "Combat": [0, "build", "2"], "Tray": ["open"] } } }""");
@@ -803,8 +833,8 @@ public sealed class ProjectProfileTests : IDisposable
     [Theory]
     [InlineData(
         """{ "scratch": { "threads": 2 } }""",
-        "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, setup, known, "
-            + "patterns, expect, expectFor, parallel, userData. Remove or rename it."
+        "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, memoryCeilings, "
+            + "setup, known, patterns, expect, expectFor, parallel, userData. Remove or rename it."
     )]
     [InlineData("""{ "scratch": { "parallel": 0 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 0.")]
     [InlineData("""{ "scratch": { "parallel": 5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 5.")]

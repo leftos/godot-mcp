@@ -619,6 +619,10 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   It replaces the ceiling derived from the paces, lower or higher (a value below the paces' sum is allowed), and wins over the profile's `scratch.ceilings` for the same scene; a scene in neither keeps the derived ceiling. A key naming no scene of the run is refused before any scene runs.
 
+  `memoryCeilings {<scene>: megabytes}` (at least 64, at most 1048576; 1 MB is 1048576 bytes) bounds a scene's game by its memory: while its steps play, the server reads the game process's private bytes about once a second, and a reading above the ceiling stops the game, the scene `killed` with `failedAt.error` `the scene's game passed its memory ceiling of <N> MB (<M> MB private), set by options.memoryCeilings, so its game was stopped` (`set by the profile's scratch.memoryCeilings` for the profile's).
+
+  It wins over the profile's `scratch.memoryCeilings` for the same scene, a scene in neither has no memory bound, and a key naming no scene of the run is refused before any scene runs. The boot and the exit wait are not watched, only the game's own process is counted (not a child it starts), and a game that reported no process id is played unwatched with the warning `the scene's game reported no process id, so its memory ceiling of <N> MB was not watched`.
+
   `keepGoing` true (default false; no profile key) plays a scene's next step after one that failed on a pushed error or a matching line, so independent red steps are all reported; a step whose own call failed (the game gone or stuck) still stops the scene. Steps are usually stateful and sequential, so off is the default. With `keepGoing` the wait after the last step runs and the exit is judged too.
 
   `steps` (an array of tokens, or an object mapping a scene name to such an array; left out, `null` or `{}`: every step) plays only some steps, once each, in ascending order. An array applies to every scene of the call; an object gives each scene it names its own list, and a scene it leaves out plays every step.
@@ -651,7 +655,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   it says why the scene needs that pace, and the reason comes back as `paceReason` on a `red` or `killed` scene whose pace came from the profile, the failed step's own reason when that step has a pace of its own (none when its pace is a bare number), since a step that ran into the next is usually a pace set too short),
 
-  `ceilings {<Scene>: seconds}` (the same map as `options.ceilings`: above 0, at most 3600; a key naming a scene outside the run is ignored, and `options.ceilings` wins for the same scene),
+  `ceilings {<Scene>: seconds}` (the same map as `options.ceilings`: above 0, at most 3600; a key naming a scene outside the run is ignored, and `options.ceilings` wins for the same scene), `memoryCeilings {<Scene>: megabytes}` (the same map as `options.memoryCeilings`, read the same way), `memoryCeilings {<Scene>: megabytes}` (the same map as `options.memoryCeilings`, read the same way),
 
   `setup {<Scene>: [step, ...]}` (the steps a scene's partial run needs for the state the selected steps build on; each step is an index written plainly or a step's exact name, resolved as a `pace.steps` key is; with `options.steps` they play with the selected steps, ascending, and a setup step is judged like any other, `keepGoing` included; without `options.steps` every step plays and `setup` changes nothing; a duplicate entry is deduped).
 

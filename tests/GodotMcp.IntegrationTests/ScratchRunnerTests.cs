@@ -178,6 +178,41 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         Assert.Contains("set by options.ceilings", scene["failedAt"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
+    /// The game's only step allocates and keeps 1536 MB: a 1024 MB memory ceiling kills the scene while its steps play, and a
+    /// 4096 MB one leaves it green. The step's pace, given by the call, is the wait after it the watch reads memory in; the watch
+    /// decides on a reading the unit tests call directly, so no test waits on its second.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AScenePastItsMemoryCeilingIsKilledAndOneUnderItIsGreen()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch_memory"), Path.Combine(_probe.Directory, "scratch_memory"));
+
+        JsonObject killed = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["res://scratch_memory/ScratchMemory.tscn"],
+                new ScratchOptions(Pace: 30, MemoryCeilings: new() { ["ScratchMemory"] = 1024 }),
+                cancellation
+            )
+        );
+        Assert.Equal("killed", killed["verdict"]!.GetValue<string>());
+        Assert.StartsWith(
+            "the scene's game passed its memory ceiling of 1024 MB (",
+            killed["failedAt"]!["error"]!.GetValue<string>(),
+            StringComparison.Ordinal
+        );
+
+        JsonObject green = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["res://scratch_memory/ScratchMemory.tscn"],
+                new ScratchOptions(Pace: 1, MemoryCeilings: new() { ["ScratchMemory"] = 4096 }),
+                cancellation
+            )
+        );
+        Assert.True(green["verdict"]!.GetValue<string>() == "green", green.ToJsonString());
+    }
+
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnErrorInThePaceAfterTheLastStepIsRedInTheExit()
     {

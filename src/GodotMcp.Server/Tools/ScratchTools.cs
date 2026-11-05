@@ -92,7 +92,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "scene red. An error logged, or a line matching scratch.patterns printed, between the launch and the first step turns "
             + "the scene red at the boot (failedAt index -1, name \"boot\", with pattern for a line) and plays no step. "
             + "Settings live in godot-mcp.json's scratch section "
-            + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, expect, expectFor, parallel, userData}, where setup "
+            + "{folder, userArgs, engineArgs, pace, ceilings, memoryCeilings, setup, known, patterns, expect, expectFor, parallel, "
+            + "userData}, where setup "
             + "{<scene>: [step, ...]} "
             + "names a scene's declared setup steps, which a run given options.steps adds to the selection; an entry may instead be "
             + "{always?: [step, ...], steps?: {\"<step>\": [step, ...]}}: every partial run adds the always list, and a step's own list "
@@ -153,8 +154,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, parallel, session, keepGoing, steps, listSteps, "
-                + "background, only, watch, windowed, audible, userData}: pace in seconds for every "
+            "{pace, timeScale, userArgs, engineArgs, ceilings, memoryCeilings, prepare, details, parallel, session, keepGoing, "
+                + "steps, listSteps, background, only, watch, windowed, audible, userData}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
@@ -165,6 +166,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "engineArgs placed before -- after the profile's scratch.engineArgs; "
                 + "ceilings {<scene>: seconds} the scene's own ceiling of load-adjusted time from its first step, replacing the one "
                 + "derived from the paces and beating the profile's scratch.ceilings, and not scaled by timeScale; "
+                + "memoryCeilings {<scene>: megabytes} stops a scene's game, killed, once its private memory passes that many megabytes "
+                + "(at least 64, at most 1048576), checked about once a second while its steps play, beating the profile's "
+                + "scratch.memoryCeilings, a scene in neither left unbounded; "
                 + "prepare as run_project's; "
                 + "details true or \"full\" lists every scene's steps and gives every step its full detail, \"compact\" lists them "
                 + "with a green step as one line; parallel the scenes at once, 1 to 4 "
@@ -465,6 +469,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         List<string> engineArgs = EngineArgs(profile, scratch, options);
         List<string> resPaths = ResolveScenes(profile, scratch, scenes);
         CheckCeilings(options.Ceilings, resPaths);
+        CheckMemoryCeilings(options.MemoryCeilings, resPaths);
         (IReadOnlyList<ScratchStepToken>? steps, Dictionary<string, IReadOnlyList<ScratchStepToken>> stepsByScene) = PlanSteps(
             options.Steps,
             resPaths
@@ -791,7 +796,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
     /// step; the profile pace's exit hold, which options.pace keeps; and options.timeScale, else 1, unless the profile's pace has
     /// "timeScale": 1, which keeps the scene at normal speed even beside options.pace; the ceiling options.ceilings or the
-    /// profile's scratch.ceilings gives the scene, if either does; the setup steps the profile's scratch.setup declares for the
+    /// profile's scratch.ceilings gives the scene, if either does; the memory ceiling options.memoryCeilings or the profile's
+    /// scratch.memoryCeilings gives it, if either does; the setup steps the profile's scratch.setup declares for the
     /// scene; the patterns its scratch.expect and scratch.expectFor make the scene's output match a line of; and the engine
     /// arguments its game launches with.
     /// </summary>
@@ -814,6 +820,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             TimeScale = TimeScaleFor(entry, options),
             EngineArgs = engineArgs,
             Ceiling = CeilingFor(name, scratch, options),
+            MemoryCeiling = MemoryCeilingFor(name, scratch, options),
             Setup = SetupFor(name, scratch),
             Expect = ExpectFor(name, scratch),
         };
@@ -847,6 +854,22 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         return scratch.Ceilings.TryGetValue(name, out double profiled) ? new ScratchCeiling(profiled, ScratchCeiling.ProfileSource) : null;
     }
 
+    /// <summary>
+    /// The scene's own memory ceiling: options.memoryCeilings for it, else the profile's scratch.memoryCeilings, else none, which
+    /// leaves its game unbounded.
+    /// </summary>
+    private static ScratchMemoryCeiling? MemoryCeilingFor(string name, ScratchProfile scratch, ScratchOptions options)
+    {
+        if (options.MemoryCeilings is { } ceilings && ceilings.TryGetValue(name, out double given))
+        {
+            return new ScratchMemoryCeiling(given, ScratchMemoryCeiling.OptionsSource);
+        }
+
+        return scratch.MemoryCeilings.TryGetValue(name, out double profiled)
+            ? new ScratchMemoryCeiling(profiled, ScratchMemoryCeiling.ProfileSource)
+            : null;
+    }
+
     /// <summary>Checks options.ceilings: each key a planned scene, each value a number of seconds above 0 and at most 3600.</summary>
     /// <exception cref="McpException">A key names no scene of the plan, or a value is outside (0, 3600].</exception>
     private static void CheckCeilings(Dictionary<string, double>? ceilings, List<string> resPaths)
@@ -872,6 +895,39 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 throw new McpException(
                     $"options.ceilings.{scene} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}; "
                         + $"got {seconds.ToString(CultureInfo.InvariantCulture)}."
+                );
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks options.memoryCeilings: each key a planned scene, each value a number of megabytes from 64 to 1048576.
+    /// </summary>
+    /// <exception cref="McpException">A key names no scene of the plan, or a value is outside [64, 1048576].</exception>
+    private static void CheckMemoryCeilings(Dictionary<string, double>? ceilings, List<string> resPaths)
+    {
+        if (ceilings is null)
+        {
+            return;
+        }
+
+        List<string> names = [.. resPaths.Select(Path.GetFileNameWithoutExtension).Select(name => name!)];
+        foreach ((string scene, double megabytes) in ceilings)
+        {
+            if (!names.Contains(scene))
+            {
+                throw new McpException(
+                    $"options.memoryCeilings scene '{scene}' is not in the plan; its scenes are {string.Join(", ", names)}. Pass one "
+                        + "of those, or leave the scene unbounded."
+                );
+            }
+
+            if (!ScratchProfile.IsMemoryCeiling(megabytes))
+            {
+                throw new McpException(
+                    $"options.memoryCeilings.{scene} must be a number of megabytes at least "
+                        + $"{ScratchProfile.MinMemoryCeilingMegabytes} and at most {ScratchProfile.MaxMemoryCeilingMegabytes}; "
+                        + $"got {megabytes.ToString(CultureInfo.InvariantCulture)}."
                 );
             }
         }
@@ -1236,6 +1292,12 @@ internal sealed record ScratchOptions(
             + "derived ceiling, and a name that is not a planned scene is refused."
     )]
         Dictionary<string, double>? Ceilings = null,
+    [property: Description(
+        "{<scene>: megabytes}: stops a scene's game, killed, once its private memory passes that many megabytes (at least 64, at "
+            + "most 1048576), checked about once a second while its steps play; beats the profile's scratch.memoryCeilings. Left "
+            + "out, a scene has no memory bound."
+    )]
+        Dictionary<string, double>? MemoryCeilings = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
     [property: Description(
         "true or \"full\" lists every scene's steps and gives every step, green or red, its full detail (error, errors, lines "
