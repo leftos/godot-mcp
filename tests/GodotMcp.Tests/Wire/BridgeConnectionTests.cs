@@ -146,8 +146,13 @@ public sealed class BridgeConnectionTests : IDisposable
 
         Task<JsonNode?> sent = connection.SendAsync("call_method", [], TimeSpan.FromSeconds(6), cancellation, TimeSpan.FromSeconds(1));
         await ReadRequiredAsync(bridge, "the request", cancellation);
+        // Just past the release's 5 s backstop. Its cancel goes out from a pool thread that reads the fake clock first, and a
+        // thread reading a FakeTimeProvider runs its due timers: a deadline re-armed there while this thread ran on would be
+        // due after the run ends. Once the cancel is in, that thread is done with the clock and every timer fires in Run.
+        Run(TimeSpan.FromSeconds(5.2));
+        await ReadRequiredAsync(bridge, "the release's cancel", cancellation);
         // Time stops just past the reply's backstop: a wait that went on past it would never end.
-        Run(TimeSpan.FromSeconds(30.2));
+        Run(TimeSpan.FromSeconds(25));
         LoadTimeoutException timedOut = await Assert.ThrowsAsync<LoadTimeoutException>(() => sent.WaitAsync(HangGuard, cancellation));
 
         Assert.Equal(DeadlineReason.Backstop, timedOut.Deadline.Reason);
