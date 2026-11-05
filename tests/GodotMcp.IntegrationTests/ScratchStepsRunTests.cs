@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
 using static GodotMcp.IntegrationTests.ScratchRunnerTests;
@@ -285,6 +286,37 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
         Assert.Equal(["last"], scenes[0]!["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
         Assert.Equal([0, 2], Indices(scenes[1]!["selected"]!));
         Assert.Equal(["open", "close"], scenes[1]!["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ABatchesMapPlaysTheSceneOncePerBatchInItsOwnGame()
+    {
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            ["ScratchTwoRed"],
+            new ScratchOptions(Steps: Tokens("""{ "ScratchTwoRed": [[0], [1]] }""")),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonArray scenes = result["scenes"]!.AsArray();
+        Assert.Equal(2, scenes.Count);
+        Assert.Equal(["ScratchTwoRed", "ScratchTwoRed"], scenes.Select(scene => scene!["scene"]!.GetValue<string>()));
+        Assert.Equal([0, 1], scenes.Select(scene => scene!["batch"]!.GetValue<int>()));
+        Assert.All(scenes, scene => Assert.Equal(2, scene!["batches"]!.GetValue<int>()));
+        Assert.Equal(
+            [(1, 4), (1, 4)],
+            scenes.Select(scene => (scene!["steps"]!["played"]!.GetValue<int>(), scene!["steps"]!["total"]!.GetValue<int>()))
+        );
+        Assert.Equal(["green", "red"], scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
+        Assert.Equal([0, 1], scenes.SelectMany(scene => Indices(scene!["selected"]!)));
+        string prefix = SessionRegistry.NameFor(null, _probe.Directory);
+        Assert.Equal(
+            [$"{prefix}.scratch-ScratchTwoRed.batch0", $"{prefix}.scratch-ScratchTwoRed.batch1"],
+            scenes.Select(scene => scene!["session"]!.GetValue<string>())
+        );
+        Assert.Equal(1, result["green"]!.GetValue<int>());
+        Assert.Equal(1, result["red"]!.GetValue<int>());
+        Assert.False(result["passed"]!.GetValue<bool>());
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

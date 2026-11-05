@@ -96,6 +96,15 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     /// profile's scratch.memoryCeilings; null leaves it unbounded.
     /// </summary>
     public ScratchMemoryCeiling? MemoryCeiling { get; init; }
+
+    /// <summary>The batch's place among the scene's batches, 0-based, when options.steps gave it several; null otherwise.</summary>
+    public int? Batch { get; init; }
+
+    /// <summary>How many batches the scene's options.steps entry gave it; null when it gave none.</summary>
+    public int? Batches { get; init; }
+
+    /// <summary>The batch's own options.steps tokens; null when the scene plays a plan-wide list, a map list or every step.</summary>
+    public IReadOnlyList<ScratchStepToken>? StepTokens { get; init; }
 }
 
 /// <summary>
@@ -563,6 +572,13 @@ internal sealed class ScratchRun
         IEnumerable<int> places = Enumerable.Range(0, scenes.Count);
         return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].LargestPace / scenes[place].TimeScale)];
     }
+
+    /// <summary>
+    /// The name a scene's session is named after: its own, and the batch's place when options.steps gave the scene several
+    /// batches, so each batch keeps a session of its own.
+    /// </summary>
+    internal static string SessionScene(ScratchScenePlan scene) =>
+        scene.Batch is int batch ? string.Create(CultureInfo.InvariantCulture, $"{scene.Name}.batch{batch}") : scene.Name;
 
     /// <summary>Plays and judges the scene at <paramref name="index"/>; <paramref name="alone"/> for its replay alone.</summary>
     private static async Task<ScratchSceneResult> PlayOneAsync(RunContext context, int index, bool alone, CancellationToken cancellationToken)
@@ -1112,7 +1128,7 @@ internal sealed class ScratchRun
         {
             session = await _registry.ReserveScratchAsync(
                 _plan.ProjectDir,
-                _scene.Name,
+                SessionScene(_scene),
                 _scene.ResPath,
                 _plan.SessionPrefix,
                 held: _observer is not null
@@ -1128,7 +1144,7 @@ internal sealed class ScratchRun
         }
         catch (SessionException e)
         {
-            string name = _session?.Name ?? SessionRegistry.ScratchName(_plan.SessionPrefix, _scene.Name);
+            string name = _session?.Name ?? SessionRegistry.ScratchName(_plan.SessionPrefix, SessionScene(_scene));
             return Seen(name) with { Refusal = $"{_scene.ResPath} did not start: {e.Message}" };
         }
 
@@ -1449,7 +1465,7 @@ internal sealed class ScratchRun
             return captureError;
         }
 
-        IReadOnlyList<ScratchStepToken>? tokens = _plan.StepsFor(_scene.Name);
+        IReadOnlyList<ScratchStepToken>? tokens = _scene.StepTokens ?? _plan.StepsFor(_scene.Name);
         if (tokens is null)
         {
             _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale)
@@ -1956,6 +1972,8 @@ internal sealed class ScratchRun
             Warnings = [.. _warnings],
             Watch = _watch,
             Listed = _plan.ListSteps,
+            Batch = _scene.Batch,
+            Batches = _scene.Batches,
         };
 
     private static int WholeNumber(JsonNode? node) =>

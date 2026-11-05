@@ -115,6 +115,12 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// <summary>options.listSteps: the scene was booted and its steps read, none played.</summary>
     public bool Listed { get; init; }
 
+    /// <summary>The batch's place among the scene's batches, 0-based, when options.steps gave it several; null otherwise.</summary>
+    public int? Batch { get; init; }
+
+    /// <summary>How many batches the scene's options.steps entry gave it; null when it gave none.</summary>
+    public int? Batches { get; init; }
+
     public double Seconds { get; init; }
 }
 
@@ -336,6 +342,14 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<int>? Setup { get; init; }
 
+    /// <summary>The batch's place among the scene's batches, 0-based, when options.steps gave it several; null otherwise.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Batch { get; init; }
+
+    /// <summary>How many batches the scene's options.steps entry gave it; null when it gave none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Batches { get; init; }
+
     /// <summary>
     /// The scene's steps, one "&lt;index&gt; &lt;name&gt;" each, with " (hidden)" after the index of a step its root's
     /// GetStepHidden marks hidden: on a run that played only part of it (<see cref="Selected"/> is present), only the steps it
@@ -524,6 +538,8 @@ internal static partial class ScratchVerdict
         {
             Selected = seen.Selected,
             Setup = seen.Setup,
+            Batch = seen.Batch,
+            Batches = seen.Batches,
             StepList = StepList(seen),
             TimeScale = seen.TimeScale,
             ExitHold = seen.ExitHold,

@@ -284,6 +284,34 @@ public sealed class ScratchCommandTests : IDisposable
     }
 
     [Fact]
+    public void DescribeMarksEachBatchOfASceneInItsLine()
+    {
+        JsonObject result = JsonNode
+            .Parse(
+                """
+                {
+                  "passed": false, "green": 1, "red": 1, "killed": 0, "known": 0, "noSteps": 0,
+                  "scenes": [
+                    { "scene": "ScratchTwoRed", "verdict": "green", "steps": { "played": 1, "total": 4 }, "seconds": 1,
+                      "batch": 0, "batches": 2, "exit": { "code": 0 } },
+                    { "scene": "ScratchTwoRed", "verdict": "red", "steps": { "played": 1, "total": 4 }, "seconds": 0.5,
+                      "batch": 1, "batches": 2, "failedAt": { "index": 1, "name": "first", "error": "boom" }, "exit": { "code": 0 } }
+                  ]
+                }
+                """
+            )!
+            .AsObject();
+        string expected = """
+            ScratchTwoRed [batch 1/2]: green (1/4 steps, 1.0s)
+            ScratchTwoRed [batch 2/2]: red (1/4 steps, 0.5s)
+              failed at step 1 first: boom
+            scratch: failed (1 green, 1 red, 0 killed, 0 known, 0 no steps)
+            """;
+
+        AssertLines(expected, ScratchCommand.Describe(result));
+    }
+
+    [Fact]
     public async Task ARunOfARefusedPlanExitsTwoWithTheMessageOnStderr()
     {
         string project = _temp.Combine("game");

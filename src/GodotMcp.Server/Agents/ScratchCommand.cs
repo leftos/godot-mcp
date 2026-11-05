@@ -383,8 +383,13 @@ internal static class ScratchCommand
     {
         JsonObject steps = scene["steps"]!.AsObject();
         StringBuilder text = new();
-        text.Append(scene["scene"]!.GetValue<string>())
-            .Append(": ")
+        text.Append(scene["scene"]!.GetValue<string>());
+        if (scene["batch"] is JsonValue batch && scene["batches"] is JsonValue batches)
+        {
+            text.Append(" [batch ").Append(batch.GetValue<int>() + 1).Append('/').Append(batches.GetValue<int>()).Append(']');
+        }
+
+        text.Append(": ")
             .Append(scene["verdict"]!.GetValue<string>())
             .Append(" (")
             .Append(steps["played"]!.GetValue<int>())

@@ -40,6 +40,27 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void ABatchObservationCarriesItsBatchAndCount()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)) with { Batch = 1, Batches = 2 }, Plain);
+
+        Assert.Equal(1, result.Batch);
+        Assert.Equal(2, result.Batches);
+        Assert.Equal(1, JsonSerializer.SerializeToNode(result)!["Batch"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void ASceneWithoutBatchesCarriesNeitherBatchNorBatches()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)), Plain);
+
+        Assert.Null(result.Batch);
+        Assert.Null(result.Batches);
+        Assert.False(JsonSerializer.SerializeToNode(result)!.AsObject().ContainsKey("Batch"));
+        Assert.False(JsonSerializer.SerializeToNode(result)!.AsObject().ContainsKey("Batches"));
+    }
+
+    [Fact]
     public void DetailsListAGreenScenesStepsWithTheirNotes()
     {
         ScratchSceneResult result = ScratchVerdict.Judge(

@@ -58,6 +58,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     private const string ScratchAuto = "--scratch-auto";
     private const string UserArgsSeparator = "--";
     private const string AlternateUserArgsSeparator = "++";
+
+    /// <summary>The most batches a scene's options.steps map entry may give it.</summary>
+    private const int MaxBatches = 20;
+
     private static readonly string[] RunnerEngineArgs = ["--headless", "--time-scale", ScratchAuto];
 
     private const string DisplayDriverArg = "--display-driver";
@@ -112,7 +116,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, listed?, prep: {build, buildMs?, buildLog?, buildGate?, import, importMs?, "
             + "importLog?, importGate?, note?}, "
-            + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, exitHold?, seconds, "
+            + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, batch?, batches?, stepList?, timeScale?, pace, "
+            + "paceReason?, exitHold?, seconds, "
             + "session, log?, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, "
             + "known?, warnings?, alone?, "
             + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
@@ -470,14 +475,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         List<string> resPaths = ResolveScenes(profile, scratch, scenes);
         CheckCeilings(options.Ceilings, resPaths);
         CheckMemoryCeilings(options.MemoryCeilings, resPaths);
-        (IReadOnlyList<ScratchStepToken>? steps, Dictionary<string, IReadOnlyList<ScratchStepToken>> stepsByScene) = PlanSteps(
-            options.Steps,
-            resPaths
-        );
+        (
+            IReadOnlyList<ScratchStepToken>? steps,
+            Dictionary<string, IReadOnlyList<ScratchStepToken>> stepsByScene,
+            Dictionary<string, IReadOnlyList<IReadOnlyList<ScratchStepToken>>> batches
+        ) = PlanSteps(options.Steps, resPaths);
         List<ScratchScenePlan> plans = [];
         foreach (string resPath in resPaths)
         {
-            plans.Add(ScenePlan(Path.GetFileNameWithoutExtension(resPath), resPath, scratch, options, userArgs, engineArgs));
+            string name = Path.GetFileNameWithoutExtension(resPath);
+            ScratchScenePlan scene = ScenePlan(name, resPath, scratch, options, userArgs, engineArgs);
+            plans.AddRange(ScenePlans(scene, batches.GetValueOrDefault(name)));
         }
 
         return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, details)
@@ -616,34 +624,46 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 
     /// <summary>
-    /// options.steps as the plan holds it: a list's tokens, which every scene plays, or a map's tokens by scene; neither when it
-    /// is left out or null.
+    /// options.steps as the plan holds it: a list's tokens, which every scene plays, or a map's tokens by scene, with the batches
+    /// a scene's entry gives it; neither when it is left out or null.
     /// </summary>
     /// <exception cref="McpException">
-    /// options.steps is neither an array nor an object, a map key names no scene of the plan, or a list is refused as
-    /// <see cref="StepTokens"/> refuses one (in a map, named with its scene).
+    /// options.steps is neither an array nor an object, an array holds an array (batches are taken only per scene, in the map
+    /// form), a map key names no scene of the plan, or a list is refused as <see cref="StepTokens"/> refuses one (in a map, named
+    /// with its scene, and in a batch, with its scene and batch).
     /// </exception>
-    private static (IReadOnlyList<ScratchStepToken>? Steps, Dictionary<string, IReadOnlyList<ScratchStepToken>> ByScene) PlanSteps(
-        JsonElement? steps,
-        List<string> resPaths
-    )
+    private static (
+        IReadOnlyList<ScratchStepToken>? Steps,
+        Dictionary<string, IReadOnlyList<ScratchStepToken>> ByScene,
+        Dictionary<string, IReadOnlyList<IReadOnlyList<ScratchStepToken>>> Batches
+    ) PlanSteps(JsonElement? steps, List<string> resPaths)
     {
         if (steps is not { } given)
         {
-            return (null, []);
+            return (null, [], []);
         }
 
         return given.ValueKind switch
         {
-            JsonValueKind.Null or JsonValueKind.Undefined => (null, []),
-            JsonValueKind.Array => (StepTokens([.. given.EnumerateArray()]), []),
-            JsonValueKind.Object => (null, StepsByScene(given, resPaths)),
-            JsonValueKind.String or JsonValueKind.Number => (StepTokens([given]), []),
+            JsonValueKind.Null or JsonValueKind.Undefined => (null, [], []),
+            JsonValueKind.Array => (StepTokens(ListElements(given)), [], []),
+            JsonValueKind.Object => StepsByScene(given, resPaths),
+            JsonValueKind.String or JsonValueKind.Number => (StepTokens([given]), [], []),
             _ => throw new McpException(
                 $"steps is a {Kind(given)}; it must be a step index, name or range, an array of them, or an object mapping a scene name "
                     + "to one or an array."
             ),
         };
+    }
+
+    /// <summary>A top-level array of options.steps as its elements.</summary>
+    /// <exception cref="McpException">An element is an array: batches are taken only per scene, in the map form.</exception>
+    private static JsonElement[] ListElements(JsonElement given)
+    {
+        JsonElement[] elements = [.. given.EnumerateArray()];
+        return elements.Any(element => element.ValueKind == JsonValueKind.Array)
+            ? throw new McpException("steps: an array of batches is taken only per scene, in the map form {\"<Scene>\": [[...], [...]]}.")
+            : elements;
     }
 
     /// <summary>options.details as the plan holds it: full for true or "full", compact for "compact", default when left out or false.</summary>
@@ -668,12 +688,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>A JSON value's kind as a refusal names it, in lower case: string, number, true, ...</summary>
     private static string Kind(JsonElement element) => element.ValueKind.ToString().ToLowerInvariant();
 
-    /// <summary>A map form of options.steps as each scene's tokens, keyed by its scene.</summary>
-    /// <exception cref="McpException">A key names no scene of the plan, or its value is no list of tokens.</exception>
-    private static Dictionary<string, IReadOnlyList<ScratchStepToken>> StepsByScene(JsonElement map, List<string> resPaths)
+    /// <summary>A map form of options.steps as each scene's tokens, or the batches a scene's entry gives it.</summary>
+    /// <exception cref="McpException">A key names no scene of the plan, or its value is no list of tokens or batches.</exception>
+    private static (
+        IReadOnlyList<ScratchStepToken>? Steps,
+        Dictionary<string, IReadOnlyList<ScratchStepToken>> ByScene,
+        Dictionary<string, IReadOnlyList<IReadOnlyList<ScratchStepToken>>> Batches
+    ) StepsByScene(JsonElement map, List<string> resPaths)
     {
         List<string> names = [.. resPaths.Select(Path.GetFileNameWithoutExtension).Select(name => name!)];
         Dictionary<string, IReadOnlyList<ScratchStepToken>> byScene = [];
+        Dictionary<string, IReadOnlyList<IReadOnlyList<ScratchStepToken>>> batches = [];
         foreach (JsonProperty entry in map.EnumerateObject())
         {
             if (!names.Contains(entry.Name))
@@ -684,17 +709,26 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 );
             }
 
-            byScene[entry.Name] = SceneTokens(entry);
+            (IReadOnlyList<ScratchStepToken>? tokens, IReadOnlyList<IReadOnlyList<ScratchStepToken>>? sceneBatches) = SceneSteps(entry);
+            if (tokens is null)
+            {
+                batches[entry.Name] = sceneBatches!;
+            }
+            else
+            {
+                byScene[entry.Name] = tokens;
+            }
         }
 
-        return byScene;
+        return (null, byScene, batches);
     }
 
-    /// <summary>One entry of a map form of options.steps as its scene's tokens.</summary>
+    /// <summary>One entry of a map form of options.steps: its scene's tokens, or its batches, each played in a fresh game.</summary>
     /// <exception cref="McpException">
-    /// The value is no array or lone token, or a list <see cref="StepTokens"/> refuses; named with its scene.
+    /// The value is no array or lone token, it mixes arrays with tokens, or a list <see cref="StepTokens"/> refuses; named with its
+    /// scene, and in a batch with its scene and batch.
     /// </exception>
-    private static IReadOnlyList<ScratchStepToken> SceneTokens(JsonProperty entry)
+    private static (IReadOnlyList<ScratchStepToken>? Tokens, IReadOnlyList<IReadOnlyList<ScratchStepToken>>? Batches) SceneSteps(JsonProperty entry)
     {
         if (entry.Value.ValueKind is not (JsonValueKind.Array or JsonValueKind.String or JsonValueKind.Number))
         {
@@ -703,14 +737,84 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             );
         }
 
-        JsonElement[] elements = entry.Value.ValueKind == JsonValueKind.Array ? [.. entry.Value.EnumerateArray()] : [entry.Value];
+        if (entry.Value.ValueKind != JsonValueKind.Array)
+        {
+            return (TokensOf($"steps for {entry.Name}: ", [entry.Value]), null);
+        }
+
+        JsonElement[] elements = [.. entry.Value.EnumerateArray()];
+        int arrays = elements.Count(element => element.ValueKind == JsonValueKind.Array);
+        if (arrays == 0)
+        {
+            return (TokensOf($"steps for {entry.Name}: ", elements), null);
+        }
+
+        return arrays == elements.Length
+            ? (null, SceneBatches(entry.Name, elements))
+            : throw new McpException(
+                $"steps for {entry.Name}: it mixes batches (arrays) with step tokens; give one list of tokens, or an array of batches, "
+                    + "each a list of tokens."
+            );
+    }
+
+    /// <summary>
+    /// The plans a scene resolves to: its own, or one per batch options.steps gave it, each played in a fresh game and carrying its
+    /// batch's place, count and tokens.
+    /// </summary>
+    private static IEnumerable<ScratchScenePlan> ScenePlans(ScratchScenePlan scene, IReadOnlyList<IReadOnlyList<ScratchStepToken>>? batches)
+    {
+        if (batches is null)
+        {
+            yield return scene;
+            yield break;
+        }
+
+        for (int batch = 0; batch < batches.Count; batch++)
+        {
+            yield return scene with
+            {
+                Batch = batch,
+                Batches = batches.Count,
+                StepTokens = batches[batch],
+            };
+        }
+    }
+
+    /// <summary>The at most <see cref="MaxBatches"/> batches a scene's options.steps entry gives it, each read as a scene's list is.</summary>
+    /// <exception cref="McpException">There are more than <see cref="MaxBatches"/>, one is empty, or a batch's tokens are refused.</exception>
+    private static List<IReadOnlyList<ScratchStepToken>> SceneBatches(string scene, JsonElement[] elements)
+    {
+        if (elements.Length > MaxBatches)
+        {
+            throw new McpException($"steps for {scene}: {elements.Length} batches; at most {MaxBatches}.");
+        }
+
+        List<IReadOnlyList<ScratchStepToken>> batches = [];
+        for (int batch = 0; batch < elements.Length; batch++)
+        {
+            JsonElement[] steps = [.. elements[batch].EnumerateArray()];
+            if (steps.Length == 0)
+            {
+                throw new McpException($"steps for {scene}: batch {batch} is empty; each batch lists at least one step.");
+            }
+
+            batches.Add(TokensOf($"steps for {scene}, batch {batch}: ", steps));
+        }
+
+        return batches;
+    }
+
+    /// <summary>A scene's or a batch's steps as tokens, or why they are refused, prefixed with the scene and batch they belong to.</summary>
+    /// <exception cref="McpException">The list is refused as <see cref="StepTokens"/> refuses one.</exception>
+    private static IReadOnlyList<ScratchStepToken> TokensOf(string prefix, JsonElement[] elements)
+    {
         try
         {
             return StepTokens(elements)!;
         }
         catch (McpException e)
         {
-            throw new McpException($"steps for {entry.Name}: {e.Message}", e);
+            throw new McpException(prefix + e.Message, e);
         }
     }
 
@@ -1339,6 +1443,8 @@ internal sealed record ScratchOptions(
             + "playing every step; a step its scene's GetStepHidden(i) marks hidden keeps its index and plays as any other. "
             + "Each scene adds the steps its profile's scratch.setup declares for it and for each selected step to this selection, "
             + "ascending with them; its result lists the selected indices as selected and the added setup steps as setup."
+            + " In the map form a scene's value may be an array of batches, each a list of tokens ({\"Fight\": [[0, \"2-4\"], "
+            + "[\"6-9\"]]}): the scene plays once per batch, each in a fresh game, each its own result entry with batch and batches."
     )]
         JsonElement? Steps = null,
     [property: Description(

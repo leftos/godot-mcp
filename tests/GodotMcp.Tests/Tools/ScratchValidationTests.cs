@@ -631,6 +631,89 @@ public sealed class ScratchValidationTests : IDisposable
     public void ABadListInAStepsMapIsRefusedNamingItsScene(string steps, string refusal) =>
         Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps)))));
 
+    [Fact]
+    public void AMapValueOfBatchesBuildsAScenePlanPerBatchAtItsPosition()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan plan = Plan(
+            ["Beta", "Alpha"],
+            new ScratchOptions(Steps: Tokens("""{ "Beta": [[0, "2-4"], ["6-9"]] }"""))
+            {
+                Ceilings = new Dictionary<string, double> { ["Beta"] = 30 },
+                MemoryCeilings = new Dictionary<string, double> { ["Beta"] = 256 },
+            }
+        );
+
+        Assert.Equal(["Beta", "Beta", "Alpha"], plan.Scenes.Select(scene => scene.Name));
+        ScratchScenePlan first = plan.Scenes[0];
+        ScratchScenePlan second = plan.Scenes[1];
+        ScratchScenePlan plain = plan.Scenes[2];
+        Assert.Equal(0, first.Batch);
+        Assert.Equal(2, first.Batches);
+        Assert.Equal([new("0", IsNumber: true), new ScratchStepToken("2-4", IsNumber: false)], first.StepTokens);
+        Assert.Equal(1, second.Batch);
+        Assert.Equal(2, second.Batches);
+        Assert.Equal([new ScratchStepToken("6-9", IsNumber: false)], second.StepTokens);
+        Assert.Equal(new ScratchCeiling(30, ScratchCeiling.OptionsSource), first.Ceiling);
+        Assert.Equal(first.Ceiling, second.Ceiling);
+        Assert.Equal(new ScratchMemoryCeiling(256, ScratchMemoryCeiling.OptionsSource), second.MemoryCeiling);
+        Assert.Equal(first.Pace, second.Pace);
+        Assert.Equal(first.UserArgs, second.UserArgs);
+        Assert.Null(plain.Batch);
+        Assert.Null(plain.Batches);
+        Assert.Null(plain.StepTokens);
+        Assert.Null(plan.Steps);
+        Assert.Empty(plan.StepsByScene);
+    }
+
+    [Fact]
+    public void AMapValueMixingBatchesAndTokensIsRefused()
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("""{ "Other": [[0], 1] }"""))));
+
+        Assert.Equal(
+            "steps for Other: it mixes batches (arrays) with step tokens; give one list of tokens, or an array of batches, each a "
+                + "list of tokens.",
+            message
+        );
+    }
+
+    [Fact]
+    public void AnEmptyBatchIsRefusedNamingItsPlace()
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("""{ "Other": [[0], []] }"""))));
+
+        Assert.Equal("steps for Other: batch 1 is empty; each batch lists at least one step.", message);
+    }
+
+    [Fact]
+    public void MoreThanTwentyBatchesAreRefused()
+    {
+        string batches = string.Join(", ", Enumerable.Repeat("[0]", 21));
+
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens($"{{ \"Other\": [{batches}] }}"))));
+
+        Assert.Equal("steps for Other: 21 batches; at most 20.", message);
+    }
+
+    [Theory]
+    [InlineData("""{ "Other": [[1, 1]] }""", "steps for Other, batch 0: options.steps tokens 1 and 1 are the same token; keep one.")]
+    [InlineData(
+        """{ "Other": [["5-2"]] }""",
+        "steps for Other, batch 0: options.steps token \"5-2\" is a range whose start is after its end; write it \"2-5\"."
+    )]
+    public void ABadTokenInABatchIsRefusedNamingItsSceneAndBatch(string steps, string refusal) =>
+        Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps)))));
+
+    [Fact]
+    public void AnArrayOfBatchesOutsideTheMapIsRefused()
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("[[0], [1]]"))));
+
+        Assert.Equal("steps: an array of batches is taken only per scene, in the map form {\"<Scene>\": [[...], [...]]}.", message);
+    }
+
     [Theory]
     [InlineData("true")]
     public void StepsNeitherAnArrayNorAnObjectIsRefused(string steps) =>
@@ -919,6 +1002,22 @@ public sealed class ScratchValidationTests : IDisposable
 
     [Fact]
     public void ASessionPrefixNamesItsSessions() => Assert.Equal("agent-a.scratch-Tray", SessionRegistry.ScratchName("agent-a", "Tray"));
+
+    [Fact]
+    public void ABatchsSessionIsNamedForItsSceneAndBatch()
+    {
+        ScratchScenePlan scene = new("Fight", "res://Fight.tscn", 0.5, []) { TimeScale = 1, EngineArgs = [] };
+
+        Assert.Equal("Fight", ScratchRun.SessionScene(scene));
+        Assert.Equal(
+            "probe.scratch-Fight.batch0",
+            SessionRegistry.ScratchName("probe", ScratchRun.SessionScene(scene with { Batch = 0, Batches = 2 }))
+        );
+        Assert.Equal(
+            "probe.scratch-Fight.batch1",
+            SessionRegistry.ScratchName("probe", ScratchRun.SessionScene(scene with { Batch = 1, Batches = 2 }))
+        );
+    }
 
     [Fact]
     public void TheSessionPrefixIsTheOptionsElseTheFolderName()
