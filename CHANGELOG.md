@@ -2,6 +2,13 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- An `action` event with `pressed` left out is a tap in `simulate_input` and `frame_control` step, as a key is, instead of a held press.
+- An action release with no `strength` given carries strength 0, so `capture_input` records releases as `strength: 0`.
+
 ## 0.36.0 - 2026-11-05
 
 ### Added

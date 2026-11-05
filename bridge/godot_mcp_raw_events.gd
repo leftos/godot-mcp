@@ -134,7 +134,7 @@ func _play_event_of_kind(spec: Dictionary) -> String:
 		"joypad_motion":
 			error = bridge._pads.play_raw_motion(spec)
 		"action":
-			error = _play_action(spec)
+			error = await _play_raw_action(spec)
 		"click_element":
 			error = await _play_click_element(spec)
 		"wait":
@@ -253,6 +253,19 @@ func _play_raw_motion(spec: Dictionary) -> String:
 	return ""
 
 
+## An action event; with pressed omitted, a press and a release one frame apart.
+func _play_raw_action(spec: Dictionary) -> String:
+	if spec.has("pressed"):
+		return _play_action(spec)
+	var press: Dictionary = spec.duplicate()
+	press["pressed"] = true
+	var error: String = _play_action(press)
+	if not error.is_empty():
+		return error
+	await get_tree().process_frame
+	return _play_action({"action": spec.get("action", ""), "pressed": false})
+
+
 func _play_action(spec: Dictionary) -> String:
 	var action := StringName(str(spec.get("action", "")))
 	if not InputMap.has_action(action):
@@ -260,7 +273,7 @@ func _play_action(spec: Dictionary) -> String:
 	var event := InputEventAction.new()
 	event.action = action
 	event.pressed = bool(spec.get("pressed", true))
-	event.strength = float(spec.get("strength", 1.0))
+	event.strength = float(spec.get("strength", 1.0 if event.pressed else 0.0))
 	if event.pressed:
 		_held_actions[action] = true
 	else:

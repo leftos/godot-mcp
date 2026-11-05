@@ -83,6 +83,29 @@ public sealed class StepInputTests(SharedProbeSession shared) : IAsyncLifetime, 
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnActionWithPressedLeftOutPressesAndReleasesInsideTheStep()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await FrameAsync("pause");
+        JsonObject action = new()
+        {
+            ["type"] = "action",
+            ["action"] = "probe_jump",
+            ["frame"] = 1,
+        };
+
+        int jumpsBefore = (await RunBodyAsync("return scene_tree.root.get_node(\"Main/PadProbe\").jump_count", cancellation)).GetValue<int>();
+
+        JsonObject stepped = await FrameAsync("step", 3, new StepOptions(Input: [action]));
+        bool held = (await RunBodyAsync("return Input.is_action_pressed(\"probe_jump\")", cancellation)).GetValue<bool>();
+        int jumpsAfter = (await RunBodyAsync("return scene_tree.root.get_node(\"Main/PadProbe\").jump_count", cancellation)).GetValue<int>();
+
+        Assert.False(stepped.ContainsKey("held"), stepped.ToJsonString());
+        Assert.False(held, "the action the step tapped is not left held");
+        Assert.Equal(jumpsBefore + 1, jumpsAfter);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AnActionSentWhilePausedIsNeverJustPressedInTheStepThatFollows()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

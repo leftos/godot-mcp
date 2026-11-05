@@ -923,6 +923,17 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SimulateInputTapsAnActionWithPressedLeftOut()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        await _tools.SimulateInputAsync([new JsonObject { ["type"] = "action", ["action"] = "probe_jump" }], cancellationToken: cancellation);
+        JsonNode tapped = await RunAsync(ReadJump);
+
+        Assert.Equal("""[false,1]""", tapped.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SimulateActionRefusesAnActionMissingFromTheInputMap()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>

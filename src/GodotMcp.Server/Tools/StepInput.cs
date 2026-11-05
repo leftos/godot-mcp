@@ -12,14 +12,16 @@ internal static class StepInput
 {
     internal const int MaxEvents = 100;
 
-    // The events simulate_input plays as a press and a release a frame apart when pressed is left out (a wheel button aside).
-    private static readonly string[] PressAndReleaseTypes = ["key", "mouse_button", "joypad_button"];
+    // The events simulate_input plays as a press and a release a frame apart when pressed is left out: a key, a mouse
+    // button (a wheel one aside), a pad button or an action.
+    private static readonly string[] PressAndReleaseTypes = ["key", "mouse_button", "joypad_button", "action"];
     private static readonly string[] WheelButtons = ["wheel_up", "wheel_down", "wheel_left", "wheel_right"];
 
     /// <summary>
     /// The events the bridge sends, sorted by frame with list order kept within a frame: each a copy of its entry with frame
     /// (0 when left out) and index, the entry's place in <paramref name="input"/>; an entry with pressed left out that
-    /// simulate_input would press and release a frame apart becomes a press at its frame and a release at the next.
+    /// simulate_input would press and release a frame apart, an action among them, becomes a press at its frame and a
+    /// release at the next.
     /// </summary>
     /// <exception cref="McpException">The unit is physics, there are more than <see cref="MaxEvents"/> events, an entry is
     /// null or of an unknown type, a wait or a click_element, its frame is not a whole number 0 or more or lies past the step's
@@ -116,7 +118,7 @@ internal static class StepInput
     }
 
     /// <summary>Whether simulate_input plays the entry as a press and a release a frame apart: pressed is left out of a key, a
-    /// pad button, or a mouse button other than a wheel one, which is a notch in one frame.</summary>
+    /// pad button, an action, or a mouse button other than a wheel one, which is a notch in one frame.</summary>
     private static bool PressesAndReleases(JsonObject item, string type) =>
         !item.ContainsKey("pressed") && PressAndReleaseTypes.Contains(type) && !(type == "mouse_button" && IsWheel(item["button"]));
 
@@ -130,7 +132,8 @@ internal static class StepInput
         );
 
     /// <summary>A copy of the entry sent at <paramref name="frame"/>, with its index; pressed set when given, and a release
-    /// made from a press-and-release entry carries no doubleClick, as simulate_input's own release does not.</summary>
+    /// made from a press-and-release entry carries no strength and no doubleClick, as simulate_input's own releases do
+    /// not.</summary>
     private static JsonObject Copy(JsonObject item, int index, int frame, bool? pressed)
     {
         JsonObject copy = item.DeepClone().AsObject();
@@ -144,6 +147,7 @@ internal static class StepInput
         if (pressed is false)
         {
             copy.Remove("doubleClick");
+            copy.Remove("strength");
         }
 
         return copy;

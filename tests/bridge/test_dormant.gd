@@ -359,10 +359,49 @@ func test_going_dormant_again_releases_the_keys_and_actions_a_drive_held() -> vo
 	bridge.free()
 
 
+func test_an_action_release_with_no_strength_given_carries_none() -> void:
+	var bridge: Node = _bridge_script.new()
+	var gestures: Node = _input_script.new()
+	var pads: Node = _recording_pads()
+	var raw_events: Node = _raw_events_script.new()
+	var capture: Node = _recording_capture()
+	gestures.bridge = bridge
+	pads.bridge = bridge
+	bridge._gestures = gestures
+	bridge._pads = pads
+	bridge._capture = capture
+	raw_events.bridge = bridge
+	raw_events._gestures = gestures
+	raw_events._gestures_script = _input_script
+	raw_events._play_action({"action": "ui_accept", "pressed": true})
+	raw_events._play_action({"action": "ui_accept", "pressed": false})
+	var sent: Array = capture.sent_events
+	assert_eq(sent.size(), 2, "the press and the release reach Input")
+	assert_eq(sent[0].strength, 1.0, "the press carries the strength left out")
+	assert_eq(sent[1].strength, 0.0, "the release carries none")
+	capture.free()
+	raw_events.free()
+	pads.free()
+	gestures.free()
+	bridge.free()
+
+
 ## A capture that records nothing: what the input player's dispatch reports every sent event to.
 func _stub_capture() -> Node:
 	var script := GDScript.new()
 	script.source_code = "extends Node\n\n\nfunc sent(_event: InputEvent) -> void:\n\tpass\n"
+	script.reload()
+	return script.new()
+
+
+## A capture keeping every event the input player's dispatch reports, so a dispatched action's
+## strength is visible.
+func _recording_capture() -> Node:
+	var script := GDScript.new()
+	script.source_code = (
+		"extends Node\n\n\nvar sent_events: Array = []\n\n\n"
+		+ "func sent(event: InputEvent) -> void:\n\tsent_events.append(event)\n"
+	)
 	script.reload()
 	return script.new()
 

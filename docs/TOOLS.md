@@ -932,8 +932,8 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
 ### `simulate_input`
 
-- **Does:** sends raw `events`, one frame apart: `key`, `mouse_button` (`button` `left`, `right`, `middle`, or a wheel notch `wheel_up`, `wheel_down`, `wheel_left`, `wheel_right` with `factor?`, default 1), `mouse_motion`, `pan_gesture {x, y, delta_x?, delta_y?}` (a trackpad pan, deltas 0 when left out), `joypad_button`, `joypad_motion`, `action` (an InputMap action with `pressed?`, `strength?`), `click_element`, `wait {ms}`.
-- **Use:** input actions directly, curved mouse paths, precise event timing. A `wait {ms}` is game time that `time_scale` does not stretch, so in a recording it lasts its length in the clip however slowly the game runs. An omitted `pressed` on a key, mouse or pad button is a press and a release a frame apart, on a wheel button both in one frame as `scroll` sends them; a wheel button never joins the held buttons. A motion's `relative` and `button_mask` default from the pointer and held buttons.
+- **Does:** sends raw `events`, one frame apart: `key`, `mouse_button` (`button` `left`, `right`, `middle`, or a wheel notch `wheel_up`, `wheel_down`, `wheel_left`, `wheel_right` with `factor?`, default 1), `mouse_motion`, `pan_gesture {x, y, delta_x?, delta_y?}` (a trackpad pan, deltas 0 when left out), `joypad_button`, `joypad_motion`, `action` (an InputMap action with `pressed?`, `strength?`; `strength` defaults to 1 on a press and 0 on a release), `click_element`, `wait {ms}`.
+- **Use:** input actions directly, curved mouse paths, precise event timing. A `wait {ms}` is game time that `time_scale` does not stretch, so in a recording it lasts its length in the clip however slowly the game runs. An omitted `pressed` on a key, mouse or pad button or an action is a press and a release a frame apart, on a wheel button both in one frame as `scroll` sends them; a wheel button never joins the held buttons. A motion's `relative` and `button_mask` default from the pointer and held buttons.
 - **Edges:** `x`, `y` are viewport coordinates as everywhere.
 
 ### `stress_input`
@@ -999,9 +999,9 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   A riding click reaches a world node's `input_event` one physics tick late as well, so place a world click no later than the step's last frame minus 1. Events of one frame are sent in list order; a frame the window does not draw sends nothing and does not move the schedule on.
 
-  A `key`, `mouse_button` (not a wheel notch) or `joypad_button` with `pressed` left out is a press at `frame` and a release at `frame + 1`, which must fall inside the step (otherwise refused naming `pass pressed: true and a release event, or raise count`).
+  A `key`, `mouse_button` (not a wheel notch), `joypad_button` or `action` with `pressed` left out is a press at `frame` and a release at `frame + 1` (an action's release carries no `strength`), which must fall inside the step (otherwise refused naming `pass pressed: true and a release event, or raise count`).
 
-  With `pressed` given, the event is sent as it is; an `action` without `pressed` presses and never releases. A step with input takes the `uiChanged` baseline first when none is pending, so `until: {uiChanged: true}` stops on the frame that input's effect shows; a refused step leaves no baseline pending.
+  With `pressed` given, the event is sent as it is. A step with input takes the `uiChanged` baseline first when none is pending, so `until: {uiChanged: true}` stops on the frame that input's effect shows; a refused step leaves no baseline pending.
 
   When `until` is met before the last frame, the result adds `inputNotSent`, the events left unsent (a press-and-release entry counts as two). A step with input adds `held: {keys, mouseButtons, padButtons, actions}` when anything is still pressed, presses made before the step included, all four lists present; release them with `simulate_input` or the matching tool.
 

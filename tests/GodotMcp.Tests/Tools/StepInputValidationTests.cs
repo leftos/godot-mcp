@@ -146,6 +146,7 @@ public sealed class StepInputValidationTests
     [InlineData("key", "key", "A")]
     [InlineData("mouse_button", "button", "left")]
     [InlineData("joypad_button", "button", "A")]
+    [InlineData("action", "action", "jump")]
     public void AnEventWithPressedLeftOutIsAPressAtItsFrameAndAReleaseAtTheNext(string type, string field, string value)
     {
         JsonObject item = new()
@@ -175,8 +176,7 @@ public sealed class StepInputValidationTests
     [InlineData("{\"type\": \"mouse_button\", \"button\": \"wheel_down\", \"x\": 1, \"y\": 1, \"frame\": 2}")]
     [InlineData("{\"type\": \"mouse_button\", \"button\": \"Wheel_Up\", \"x\": 1, \"y\": 1, \"frame\": 2}")]
     [InlineData("{\"type\": \"mouse_button\", \"button\": 5, \"x\": 1, \"y\": 1, \"frame\": 2}")]
-    [InlineData("{\"type\": \"action\", \"action\": \"jump\", \"frame\": 2}")]
-    public void AWheelNotchAndAnActionWithPressedLeftOutAreSentAsGiven(string json)
+    public void AWheelNotchWithPressedLeftOutIsSentAsGiven(string json)
     {
         JsonObject item = JsonNode.Parse(json)!.AsObject();
 
@@ -185,6 +185,20 @@ public sealed class StepInputValidationTests
         JsonNode entry = Assert.Single(sent)!;
         Assert.Equal(2, entry["frame"]!.GetValue<int>());
         Assert.Null(entry["pressed"]);
+    }
+
+    [Fact]
+    public void AnActionWithPressedLeftOutCarriesItsStrengthOnThePressOnly()
+    {
+        JsonObject item = JsonNode.Parse("{\"type\": \"action\", \"action\": \"jump\", \"strength\": 0.5, \"frame\": 0}")!.AsObject();
+
+        JsonArray sent = Sent(RuntimeTools.BuildFrameParameters("step", 2, null, new StepOptions(Input: [item])));
+
+        Assert.Equal(2, sent.Count);
+        Assert.True(sent[0]!["pressed"]!.GetValue<bool>());
+        Assert.Equal(0.5, sent[0]!["strength"]!.GetValue<double>());
+        Assert.False(sent[1]!.AsObject().ContainsKey("strength"), sent[1]!.ToJsonString());
+        Assert.False(sent[1]!["pressed"]!.GetValue<bool>());
     }
 
     [Fact]
