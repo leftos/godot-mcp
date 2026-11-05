@@ -1794,7 +1794,7 @@ Each preset under `presets` takes the same keys but `presets`, plus `session` an
 
 Parsing is strict: an unknown key, a wrong type or a bad resolution refuses the launch with the file's path and the fix. `restart_project` reuses the merged launch and does not re-read the file. The profile is not a tool and applies to `run_project` only, except `prepWrapper`.
 
-`prepWrapper` (an array of strings: a program, then its arguments) runs the prep's processes, the C# build, its Compile-items listing, the import and a process's `prep`, through a project's own wrapper such as a gate script, for every tool that preps: launch, restart, preview and the headless tools.
+`prepWrapper` (an array of strings: a program, then its arguments) runs the prep's processes, the C# build, the import and a process's `prep`, through a project's own wrapper such as a gate script, for every tool that preps: launch, restart, preview and the headless tools. The Compile-items listing is not among them: it runs `dotnet msbuild` directly, because an evaluation takes about a second on one core and a wrapper that queues its commands (a gate waiting for a slot) would spend the listing's ceiling waiting.
 
 Each runs as the wrapper followed by the process's absolute path and arguments, from the project folder; `{log}` in any element becomes the step's log (`.godot/godot-mcp/build.log`, `import.log`) and `{ceiling}` the prep's ceiling in seconds (300).
 
@@ -1802,13 +1802,13 @@ A program with a folder in it is relative to the project folder, a bare name is 
 
 `{log}` may hold anything the wrapper writes, such as every line prefixed, because the server reads MSBuild's own files first.
 
-The C# build's diagnostics come from MSBuild's quiet file logger (`.godot/godot-mcp/build.diagnostics.log`, from `-fl` and `/flp:LogFile=…;Verbosity=quiet`) and the Compile-items listing from MSBuild's result file (`compile-items-<guid>.json`, from `/getItem:Compile` and `/getResultOutputFile:…`), so `validate`'s C# errors and warnings name their source file under a prefixing wrapper.
+The C# build's diagnostics come from MSBuild's quiet file logger (`.godot/godot-mcp/build.diagnostics.log`, from `-fl` and `/flp:LogFile=…;Verbosity=quiet`) while the Compile-items listing, run without the wrapper, reads MSBuild's result file (`compile-items-<guid>.json`, from `/getItem:Compile` and `/getResultOutputFile:…`), so `validate`'s C# errors and warnings name their source file under a prefixing wrapper.
 
 The switches are on the command line in MSBuild's slash form: a PowerShell wrapper (`pwsh -File`) keeps `/name:value` whole where it splits `-name:value` at the colon, and a gate that routes the build to another machine sees and rewrites the path after the colon.
 
-When MSBuild's file is missing (a routed build's diagnostics file stays on the builder) or a failed build's file logger holds no error (MSBuild's early errors such as MSB1009 reach only the console log), the server reads the captured `build.log` (for the listing, the listing's log) instead, and under a prefixing wrapper those lines keep its prefix.
+When MSBuild's file is missing (a routed build's diagnostics file stays on the builder) or a failed build's file logger holds no error (MSBuild's early errors such as MSB1009 reach only the console log), the server reads the captured `build.log` instead (the listing, when MSBuild wrote no result file, reads its own log), and under a prefixing wrapper those lines keep its prefix.
 
-`build.log` and `build.diagnostics.log` are deleted before each build, so a build whose command never ran (a wrapper exiting 124) leaves no earlier build's log or diagnostics. A listing's `.log` and `.json` are deleted once it succeeds and kept when it fails.
+`build.log` and `build.diagnostics.log` are deleted before each build, so a build whose command never ran (a wrapper exiting 124) leaves no earlier build's log or diagnostics. A listing's `.log` and `.json` (it writes no `.wrapper.log`) are deleted once it succeeds and kept when it fails.
 
 The import is read differently: its `ERROR:` check reads the wrapped import output, so an import error a prefixing wrapper rewrites is not detected.
 

@@ -9,6 +9,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - An `action` event with `pressed` left out is a tap in `simulate_input` and `frame_control` step, as a key is, instead of a held press.
 - An action release with no `strength` given carries strength 0, so `capture_input` records releases as `strength: 0`.
 
+### Fixed
+
+- `validate`'s Compile-items listing runs dotnet directly, not through the `prepWrapper`, so a gate queued for a slot no longer times it out.
+
 ## 0.36.0 - 2026-11-05
 
 ### Added

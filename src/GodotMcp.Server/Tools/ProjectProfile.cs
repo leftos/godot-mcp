@@ -188,8 +188,8 @@ internal sealed partial class ProjectProfile
     public bool Exists { get; }
 
     /// <summary>
-    /// The top-level <c>prepWrapper</c>: the program and arguments the launch prep runs its build, Compile-items listing and
-    /// import through; null when the file sets none.
+    /// The top-level <c>prepWrapper</c>: the program and arguments the launch prep runs its build and its import through;
+    /// null when the file sets none.
     /// </summary>
     public IReadOnlyList<string>? PrepWrapper { get; }
 

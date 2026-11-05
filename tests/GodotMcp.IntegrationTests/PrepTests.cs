@@ -332,11 +332,12 @@ public sealed partial class PrepTests : IAsyncDisposable
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
-    public async Task APrefixingPrepWrapperStillListsTheCompileItems()
+    public async Task TheCompileItemsAreListedPastAPrepWrapperThatNeverRunsItsCommand()
     {
+        // A gate held behind another session's critical request never starts the evaluation; exit 124 stands in for that wait.
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
-        WritePrepWrapper(csProbe.Directory, PrefixingWrapper);
+        WritePrepWrapper(csProbe.Directory, StoppingWrapper);
         string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
 
         IReadOnlyList<string> items = await ProjectPrep.CompileItemsAsync(
@@ -351,12 +352,11 @@ public sealed partial class PrepTests : IAsyncDisposable
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
-    public async Task APlainPrepWrapperListsTheCompileItems()
+    public async Task TheCompileItemsListingNeverStartsThePrepWrapper()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
-        WritePrepWrapper(csProbe.Directory, RunningWrapper);
-        string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
+        string marker = WritePrepWrapper(csProbe.Directory, RunningWrapper);
 
         IReadOnlyList<string> items = await ProjectPrep.CompileItemsAsync(
             csProbe.Directory,
@@ -366,7 +366,7 @@ public sealed partial class PrepTests : IAsyncDisposable
         );
 
         Assert.Contains(csProbe.SourcePath("CsProbeNode.cs"), items, StringComparer.OrdinalIgnoreCase);
-        Assert.Empty(Directory.GetFiles(logFolder, "compile-items-*"));
+        Assert.False(File.Exists(marker), "the listing started the prep wrapper");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]

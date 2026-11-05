@@ -322,12 +322,12 @@ internal static class ProjectPrep
     /// <summary>
     /// The full paths of the csproj's <c>Compile</c> items, from MSBuild's evaluation (<c>dotnet msbuild -getItem:Compile</c>,
     /// MSBuild 17.8 and later: learn.microsoft.com/visualstudio/msbuild/evaluate-items-and-properties), with the build's
-    /// configuration and environment. MSBuild writes the item list to a JSON file of its own beside the log
-    /// (<c>/getResultOutputFile</c>), which a prep wrapper that rewrites the command's output cannot reach; the log is read
-    /// instead when MSBuild wrote no result file. The switches use MSBuild's <c>/name:value</c> form, because a prep wrapper
-    /// written as a PowerShell script splits a <c>-name:value</c> argument at the colon. Each evaluation has a log and a result
-    /// file of its own (<see cref="CompileItemsLog"/>), so evaluations on one folder at once never share them; both are deleted
-    /// once read, and kept when the evaluation failed.
+    /// configuration and environment. dotnet runs directly, never through the prep wrapper: the evaluation takes about a second
+    /// on one core, and a wrapper that queues its commands (a gate waiting for a slot) would spend the listing's ceiling
+    /// waiting instead. MSBuild writes the item list to a JSON file of its own (<c>/getResultOutputFile</c>), which is read; the
+    /// log is read instead when MSBuild wrote no result file. Each evaluation has a log and a result file of its own
+    /// (<see cref="CompileItemsLog"/>), so evaluations on one folder at once never share them; both are deleted once read, and
+    /// kept when the evaluation failed.
     /// </summary>
     /// <exception cref="SessionException">dotnet could not be started, hit its ceiling, failed, or wrote no item list.</exception>
     public static async Task<IReadOnlyList<string>> CompileItemsAsync(
@@ -349,16 +349,14 @@ internal static class ProjectPrep
             "-p:GodotTargetPlatform=windows",
             "-nologo",
         ];
-        var wrapper = PrepWrapper.Read(projectDir);
-        ToolProcessResult listed = await RunStepAsync(
+        ToolProcessResult listed = await RunToolAsync(
             DotnetRequest(Installation.FindDotnet(), arguments, csproj, log),
             "dotnet",
-            wrapper,
             logger,
             cancellationToken
         );
         string failure = $"dotnet msbuild -getItem:Compile on {csproj}";
-        CheckListed(listed, failure, log, wrapper);
+        CheckListed(listed, failure, log);
         string output = File.Exists(result) ? ReadLog(result) : ReadLog(log);
         IReadOnlyList<string> items;
         try
@@ -372,25 +370,16 @@ internal static class ProjectPrep
 
         DeleteLogged(log, logger);
         DeleteLogged(result, logger);
-        if (wrapper is { OwnsLog: true })
-        {
-            DeleteLogged(PrepWrapper.WrapperLog(log), logger);
-        }
 
         return items;
     }
 
-    /// <exception cref="SessionException">The listing hit its ceiling, was stopped by the prep wrapper, or failed.</exception>
-    private static void CheckListed(ToolProcessResult listed, string failure, string log, PrepWrapper? wrapper)
+    /// <exception cref="SessionException">The listing hit its ceiling or failed.</exception>
+    private static void CheckListed(ToolProcessResult listed, string failure, string log)
     {
         if (listed.WasKilled)
         {
             throw new SessionException($"{failure} did not finish {listed.KillPhrase}, so the Compile items are unknown. Its log: {log}");
-        }
-
-        if (wrapper is not null && PrepWrapper.Stopped(listed))
-        {
-            throw new SessionException(wrapper.StoppedNote("the Compile-items listing", log));
         }
 
         if (listed.ExitCode != 0)

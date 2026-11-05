@@ -83,7 +83,6 @@ public sealed class PrepWrapperTests : IDisposable
     [InlineData("build.log", "build.wrapper.log")]
     [InlineData("import.log", "import.wrapper.log")]
     [InlineData("import.2.log", "import.2.wrapper.log")]
-    [InlineData("compile-items-0a1b.log", "compile-items-0a1b.wrapper.log")]
     public void TheWrapperLogIsTheStepLogsNameWithWrapper(string stepLog, string wrapperLog)
     {
         string folder = Path.Combine(_temp.Path, ".godot", "godot-mcp");

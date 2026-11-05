@@ -6,7 +6,7 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// The command a project's godot-mcp.json names under <c>prepWrapper</c>, which the prep runs each of its processes through
-/// (the C# build, the Compile-items listing, the Godot import): the command's first element is the program, the rest its
+/// (the C# build and the Godot import): the command's first element is the program, the rest its
 /// arguments, with <c>{log}</c> replaced by the step's log and <c>{ceiling}</c> by the prep's ceiling in whole seconds, and
 /// the wrapped program and its arguments appended: a program with a folder in it is absolute against its own working
 /// directory, and a bare name is left for the wrapper's PATH. A wrapper that names <c>{log}</c> writes that file itself.
