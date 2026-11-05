@@ -676,6 +676,36 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void AStepPacesOptionalFlagIsReadAndAStepPaceWithoutItIsNotOptional()
+    {
+        Write(
+            """
+            {
+              "scratch": {
+                "pace": {
+                  "A": {
+                    "seconds": 1,
+                    "reason": "x",
+                    "steps": {
+                      "Settle": { "seconds": 2, "reason": "y", "optional": true },
+                      "Fight": 3,
+                      "Shut": { "seconds": 4, "reason": "z", "optional": false }
+                    }
+                  }
+                }
+              }
+            }
+            """
+        );
+
+        IReadOnlyDictionary<string, ScratchPace> steps = ProjectProfile.Load(_temp.Path).Scratch!.Pace["A"].Steps;
+
+        Assert.Equal((2.0, "y", true), (steps["Settle"].Seconds, steps["Settle"].Reason, steps["Settle"].Optional));
+        Assert.False(steps["Fight"].Optional);
+        Assert.False(steps["Shut"].Optional);
+    }
+
+    [Fact]
     public void AnObjectPacesTimeScaleOfOneKeepsTheSceneAtNormalSpeed()
     {
         Write(
@@ -852,7 +882,7 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "exitHold": 1 } } } } } }""",
-        "(scratch, pace of \"A\", step \"2\"): unknown key \"exitHold\"; the allowed keys are seconds, reason. Remove or rename it."
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"exitHold\"; the allowed keys are seconds, reason, optional. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "timeScale": 2 } } } }""",
@@ -866,11 +896,19 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "timeScale": 1 } } } } } }""",
-        "(scratch, pace of \"A\", step \"2\"): unknown key \"timeScale\"; the allowed keys are seconds, reason. Remove or rename it."
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"timeScale\"; the allowed keys are seconds, reason, optional. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "steps": {} } } } } } }""",
-        "(scratch, pace of \"A\", step \"2\"): unknown key \"steps\"; the allowed keys are seconds, reason. Remove or rename it."
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"steps\"; the allowed keys are seconds, reason, optional. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "optional": 1 } } } } } }""",
+        "(scratch, pace of \"A\", step \"2\"): \"optional\" must be true or false, not a number."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "optional": true } } } }""",
+        "(scratch, pace of \"A\"): unknown key \"optional\"; the allowed keys are seconds, reason, steps, timeScale, exitHold. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": 0 } } } } }""",

@@ -1157,6 +1157,54 @@ public sealed class ScratchVerdictTests
         );
 
     [Fact]
+    public void AnOptionalStepPaceKeyThatMatchesNoStepIsNotAWarning()
+    {
+        ScratchScenePlan scene = PacedScene(
+            new()
+            {
+                ["open"] = new ScratchPace(1, null),
+                ["shut"] = new ScratchPace(2, null) { Optional = true },
+            }
+        );
+
+        (ScratchPace[] paces, string? error, IReadOnlyList<string> warnings) = ScratchRun.StepPaces(scene, ["open", "hit"]);
+
+        Assert.Null(error);
+        Assert.Equal([1, 0.5], paces.Select(pace => pace.Seconds));
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void AnOptionalStepPaceKeyThatMatchesAStepSetsItsPace()
+    {
+        ScratchScenePlan scene = PacedScene(new() { ["hit"] = new ScratchPace(2, "the batch") { Optional = true } });
+
+        (ScratchPace[] paces, string? error, IReadOnlyList<string> warnings) = ScratchRun.StepPaces(scene, ["open", "hit"]);
+
+        Assert.Null(error);
+        Assert.Empty(warnings);
+        Assert.Equal([0.5, 2], paces.Select(pace => pace.Seconds));
+        Assert.Equal(["the scene settles", "the batch"], paces.Select(pace => pace.Reason));
+    }
+
+    [Fact]
+    public void AStaleStepPaceKeyWarnsOnlyWhenItIsNotOptional()
+    {
+        ScratchScenePlan scene = PacedScene(
+            new()
+            {
+                ["shut"] = new ScratchPace(2, null),
+                ["rest"] = new ScratchPace(3, null) { Optional = true },
+            }
+        );
+
+        (_, string? error, IReadOnlyList<string> warnings) = ScratchRun.StepPaces(scene, ["open", "hit"]);
+
+        Assert.Null(error);
+        Assert.Equal(["scratch.pace.steps key \"shut\" matches no step of Paced, so it sets no step's pace"], warnings);
+    }
+
+    [Fact]
     public void ASceneCarriesItsWarningsAndOmitsThemWhenItHasNone()
     {
         ScratchSceneResult warned = ScratchVerdict.Judge(Seen(Step(0)) with { Warnings = ["a stale key"] }, Plain);

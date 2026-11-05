@@ -151,6 +151,32 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnOptionalStepPaceKeyThatMatchesNoStepLeavesTheSceneQuiet()
+    {
+        string profile = """
+            {
+              "scratch": {
+                "folder": "scratch",
+                "pace": {
+                  "ScratchGreen": {
+                    "seconds": 0.25,
+                    "reason": "quick",
+                    "steps": { "shut": { "seconds": 2, "reason": "settle", "optional": true } }
+                  }
+                }
+              }
+            }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), profile, TestContext.Current.CancellationToken);
+
+        JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchGreen"], options: null, TestContext.Current.CancellationToken));
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.False(scene.ContainsKey("warnings"), scene.ToJsonString());
+        Assert.Equal((3, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ACSharpStepThatThrowsIsRedWithItsExceptionAReadyThatThrowsIsRedAtTheBootAndAnUntilEndsAStep()
     {
         CsProbeProject csProbe = _csProbe = CsProbeProject.Unbuilt();

@@ -147,6 +147,8 @@ internal sealed partial class ProjectProfile
     private const string StepsKey = "steps";
     private const string TimeScaleKey = "timeScale";
     private static readonly string[] StepPaceKeys = ["seconds", "reason"];
+    private const string OptionalKey = "optional";
+    private static readonly string[] StepPaceObjectKeys = [.. StepPaceKeys, OptionalKey];
     private const string ExitHoldKey = "exitHold";
     private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey, ExitHoldKey];
     private static readonly string[] PatternKeys = ["pattern", "reason"];
@@ -1050,8 +1052,9 @@ internal sealed partial class ProjectProfile
     }
 
     /// <summary>
-    /// A scene's "steps": step keys, each a step's index or its name, to paces, each a bare number or an object of the seconds and
-    /// the reason; which step a key names is only known once the scene has started.
+    /// A scene's "steps": step keys, each a step's index or its name, to paces, each a bare number or an object of the seconds, the
+    /// reason and, optionally, "optional", which lets the key match no step without a warning; which step a key names is only known
+    /// once the scene has started.
     /// </summary>
     private static Dictionary<string, ScratchPace> ReadStepPaces(string scene, JsonElement value, Place pace)
     {
@@ -1063,7 +1066,7 @@ internal sealed partial class ProjectProfile
                 entry.Value,
                 pace,
                 $"\"{StepsKey}\" entry \"{entry.Name}\"",
-                stepPace => ReadSecondsAndReason(Keys(stepPace, StepPaceKeys, step), step)
+                stepPace => ReadStepPace(stepPace, step)
             );
             if (!steps.TryAdd(entry.Name, read))
             {
@@ -1072,6 +1075,13 @@ internal sealed partial class ProjectProfile
         }
 
         return steps;
+    }
+
+    /// <summary>A step's object pace: "seconds" and "reason", and the optional "optional", which lets its key match no step.</summary>
+    private static ScratchPace ReadStepPace(JsonElement value, Place step)
+    {
+        Dictionary<string, JsonElement> keys = Keys(value, StepPaceObjectKeys, step);
+        return ReadSecondsAndReason(keys, step) with { Optional = ReadBool(keys, OptionalKey, step) ?? false };
     }
 
     /// <summary>An object pace's "seconds" and "reason", both required.</summary>
@@ -1461,10 +1471,16 @@ internal sealed record ScratchProfile(
 
 /// <summary>
 /// A scene's or a step's pace in seconds and why it was set; the reason is null when the profile gave a bare number. A scene's
-/// pace may carry the paces of some of its steps, keyed by a step's index or its name.
+/// pace may carry the paces of some of its steps, keyed by a step's index or its name; a step's pace may be optional, which keeps a
+/// key matching no step of the scene from a warning.
 /// </summary>
 internal sealed record ScratchPace(double Seconds, string? Reason)
 {
+    /// <summary>
+    /// Whether a step's pace, marked "optional", may match no step of its scene without a warning; a scene's pace never carries it.
+    /// </summary>
+    public bool Optional { get; init; }
+
     /// <summary>The paces of single steps, keyed by a step's index or its name; empty when the profile sets none.</summary>
     public IReadOnlyDictionary<string, ScratchPace> Steps { get; init; } = ReadOnlyDictionary<string, ScratchPace>.Empty;
 

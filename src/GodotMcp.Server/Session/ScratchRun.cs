@@ -588,7 +588,7 @@ internal sealed class ScratchRun
     /// <summary>
     /// Each of the steps <paramref name="names"/> lists' pace and why: the scene's, or a step pace keyed by the step's index, else
     /// by its name; or why a key names two steps, or two keys name one step. A key naming no step sets no step's pace and is
-    /// named in the warnings.
+    /// named in the warnings, unless its pace is optional.
     /// </summary>
     internal static (ScratchPace[] Paces, string? Error, IReadOnlyList<string> Warnings) StepPaces(ScratchScenePlan scene, ScratchStepNames names)
     {
@@ -600,7 +600,11 @@ internal sealed class ScratchRun
         {
             if (!IsIndex(key, names.Count, out _) && !names.Contains(key, StringComparer.Ordinal))
             {
-                warnings.Add($"scratch.pace.steps key \"{key}\" matches no step of {scene.Name}, so it sets no step's pace");
+                if (!pace.Optional)
+                {
+                    warnings.Add($"scratch.pace.steps key \"{key}\" matches no step of {scene.Name}, so it sets no step's pace");
+                }
+
                 continue;
             }
 
