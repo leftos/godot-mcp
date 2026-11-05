@@ -111,7 +111,6 @@
 - [ ] GMCP-302 override.cfg rewrite can be read half-written by a starting scratch game
 - [ ] GMCP-306 Test helpers kill and wait on processes by pid, which can be reused
 - [ ] GMCP-307 Itests that stop a game right after it spawns a child race the child's start
-- [ ] GMCP-314 run_scratches: list each scene's steps without playing them
 - [ ] GMCP-316 run_scratches steps: the bridge's PlayStep refusal form, a duplicate map key, the options summary
 - [ ] GMCP-317 run.ps1 and docs: read the gate's exit 74 (TRANSFER FAILED) apart from a failure
 - [ ] GMCP-318 Quote a game's modal alert text when a launch's bridge never connects
@@ -157,6 +156,7 @@
 - [ ] GMCP-467 A prep's Godot import failed once under load; root-cause it from the next failure's full text
 - [ ] GMCP-471 Prune the scratch userdata-* folders a killed server leaves, or say decision 47 does not · release vNext
 - [ ] GMCP-474 --run-scratches CLI: take --session like run_scratches' options.session · release vNext
+- [ ] GMCP-489 BridgeConnectionTests: short real-time read and wait bounds should be hang guards · release vNext
 
 ## Docs
 
