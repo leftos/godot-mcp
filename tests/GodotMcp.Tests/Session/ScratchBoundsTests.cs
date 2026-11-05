@@ -20,6 +20,7 @@ public sealed class ScratchBoundsTests
         Assert.True(bounds.Call >= Floor, $"the call timeout is {bounds.Call}");
         Assert.True(bounds.Markers >= Floor, $"the marker wait is {bounds.Markers}");
         Assert.True(bounds.Release(5000, 1) >= Floor, $"the pace release is {bounds.Release(5000, 1)}");
+        Assert.True(bounds.UntilRelease(5000, 1) >= Floor, $"the until release is {bounds.UntilRelease(5000, 1)}");
         Assert.True(bounds.Release(20000, 0.5) >= Floor, $"the scaled pace release is {bounds.Release(20000, 0.5)}");
         Assert.True((Walk with { Floor = Floor }).Ceiling >= Floor, $"the walk's ceiling is {(Walk with { Floor = Floor }).Ceiling}");
     }
@@ -52,6 +53,16 @@ public sealed class ScratchBoundsTests
         Assert.Equal(TimeSpan.FromSeconds(15), bounds.Release(5000, 1));
         Assert.Equal(TimeSpan.FromSeconds(50), bounds.Release(20000, 0.5));
         Assert.Equal(ScratchRun.Ceiling([0.5, 2], 1, null), (Walk with { Floor = floor }).Ceiling);
+    }
+
+    [Fact]
+    public void AnUntilsReleaseIsItsPaceAtTheTimeScaleFlooredAndWithNoStepAllowance()
+    {
+        ScratchBounds unfloored = new(TimeSpan.Zero);
+
+        Assert.Equal(TimeSpan.FromSeconds(30), unfloored.UntilRelease(60000, 2));
+        Assert.Equal(TimeSpan.FromSeconds(40), unfloored.Release(60000, 2));
+        Assert.Equal(Floor, new ScratchBounds(Floor).UntilRelease(5000, 1));
     }
 
     [Fact]

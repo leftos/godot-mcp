@@ -1185,7 +1185,8 @@ internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time every step plays before the next, above 0 and at most 120, its scratch.pace steps entries "
             + "included; else the profile's scratch.pace for the step, else for the scene, else 0.5. For a step whose scene gives a "
-            + "GetStepUntil condition, the pace is the most game time the step may take before its condition holds."
+            + "GetStepUntil condition, the pace is the most load-adjusted time, at the scene's time scale, the step waits for its "
+            + "condition to hold."
     )]
         double? Pace = null,
     [property: Description(

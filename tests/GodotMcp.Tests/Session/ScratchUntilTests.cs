@@ -60,7 +60,7 @@ public sealed class ScratchUntilTests
         Assert.Equal("signal", wait!["kind"]!.GetValue<string>());
         Assert.Equal(("Dice", "Settled"), (wait["node"]!.GetValue<string>(), wait["signal"]!.GetValue<string>()));
         Assert.Equal(5000, wait["timeoutMs"]!.GetValue<int>());
-        Assert.Equal(5000, wait["limitGameMs"]!.GetValue<int>());
+        Assert.Equal(5000 * LoadClock.BackstopFactor, wait["limitGameMs"]!.GetValue<int>());
         Assert.Equal("{\"node\":\"/root/ScratchScene\",\"method\":\"PlayStep\",\"args\":[2]}", wait["call"]!.ToJsonString());
     }
 
@@ -94,22 +94,55 @@ public sealed class ScratchUntilTests
     }
 
     [Fact]
-    public void AnUntilNotMetSaysWhichStepItsPaceAndWhatToDo() =>
+    public void AnUntilNotMetSaysWhichStepItsPaceAndWhatToDo()
+    {
         Assert.Equal(
-            "step 0 'wait': its until was not met within its pace of 0.25 s; give it a longer scratch.pace, or check the condition "
-                + "GetStepUntil gives",
-            ScratchRun.UntilNotMet(0, "wait", 0.25)
+            "step 0 'wait': its until was not met within its pace of 0.25 s of load-adjusted time; give it a longer scratch.pace, or "
+                + "check the condition GetStepUntil gives",
+            ScratchRun.UntilNotMet(0, "wait", 0.25, 1, 0.25)
+        );
+        Assert.Equal(
+            "step 0 'wait': its until was not met within its pace of 1 s, 0.5 s of load-adjusted time at time scale 2; give it a "
+                + "longer scratch.pace, or check the condition GetStepUntil gives",
+            ScratchRun.UntilNotMet(0, "wait", 1, 2, 0.5)
+        );
+    }
+
+    [Fact]
+    public void AnUnmetUntilEndedByItsReleaseWithGameTimePastItsPaceIsNotMet() =>
+        Assert.Equal(
+            ScratchRun.UntilNotMet(0, "wait", 0.5, 1, 0.5),
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 500, 510, 30), 0.5, 1, 0.5)
         );
 
     [Fact]
-    public void AnUnmetUntilIsNotMetWithinItsPaceOnceItsGameTimeReachedItElseTheGamesClockStoodStill()
-    {
-        Assert.Equal(ScratchRun.UntilNotMet(0, "wait", 0.5), ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 500, 510, 30), 0.5, 10.5));
+    public void AnUnmetUntilEndedByItsReleaseWithGameTimeBetweenHalfThePaceAndThePaceIsNotMet() =>
+        Assert.Equal(
+            ScratchRun.UntilNotMet(0, "wait", 0.5, 1, 0.5),
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 300, 1010, 60), 0.5, 1, 0.5)
+        );
+
+    [Fact]
+    public void AnUnmetUntilWhoseGamesClockStoodStillIsTheStoodStillText() =>
         Assert.Equal(
             "step 0 'wait': its until was not met within 10.5 s: the game's clock stood still (is it paused?)",
-            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 16, 10520, 600), 0.5, 10.5)
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 16, 10520, 600), 0.5, 1, 10.5)
         );
-    }
+
+    [Fact]
+    public void AnUnmetUntilEndedByItsGameTimeBackstopIsNotMet() =>
+        Assert.Equal(
+            ScratchRun.UntilNotMet(0, "wait", 0.5, 1, 0.5),
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 2500, 2600, 150), 0.5, 1, 0.5)
+        );
+
+    [Fact]
+    public void AnUnmetUntilAtTimeScaleTwoSaysItsReleaseSecondsAndTheTimeScale() =>
+        Assert.Equal(
+            "step 0 'wait': its until was not met within its pace of 1 s, 0.5 s of load-adjusted time at time scale 2; give it a "
+                + "longer scratch.pace, or check the condition GetStepUntil gives",
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 600, 1010, 60), 1, 2, 0.5)
+        );
 
     [Fact]
     public void ABridgeErrorThatTheStepsFeedAlsoLoggedReadsAsThatFeedEntryWithItsFileAndLine()
@@ -203,7 +236,11 @@ public sealed class ScratchUntilTests
     [Fact]
     public void AnUntilNotMetStopsTheSceneEvenWhenKeepingGoing()
     {
-        ScratchStep step = new(0, "wait", 1000) { CallError = ScratchRun.UntilNotMet(0, "wait", 1), Until = new ScratchUntil(false, 1000, 1004, 60) };
+        ScratchStep step = new(0, "wait", 1000)
+        {
+            CallError = ScratchRun.UntilNotMet(0, "wait", 1, 1, 1),
+            Until = new ScratchUntil(false, 1000, 1004, 60),
+        };
 
         Assert.True(ScratchRun.StopsAfter(step, ScratchProfile.DefaultPatterns, keepGoing: true));
     }
@@ -271,7 +308,7 @@ public sealed class ScratchUntilTests
     {
         ErrorEntry raised = Entry(ErrorFeed.ErrorType, "scratch until step threw");
         ScratchUntil unmet = new(false, 2000, 2004, 60);
-        string notMet = ScratchRun.UntilMissed(0, "throws", unmet, 2, 2);
+        string notMet = ScratchRun.UntilMissed(0, "throws", unmet, 2, 1, 2);
 
         (string? error, ErrorEntry? entry) = ScratchRun.UnmetFailure(unmet, notMet, [raised]);
 

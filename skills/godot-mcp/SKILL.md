@@ -86,7 +86,7 @@ A project whose scratch scenes implement `PlayStep(int)`, `GetStepCount()`, `Get
 
 A scene whose root also has a public `GetStepUntil(int)` returns, per step, a `wait_for` condition (an empty dictionary, or null, for a paced step): the step is then played inside one `wait_for` on it, `PlayStep` as its `options.call`, and ends when the condition holds instead of after the full pace.
 
-The pace is the most game time such a step may take: a condition not met in it is red and stops the scene, even with `options.keepGoing`, and the step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`.
+The pace is the most load-adjusted time such a step may take (at the scene's time scale, so a loaded machine that draws fewer frames gives it more time): a condition not met in it is red and stops the scene, even with `options.keepGoing`, and the step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`.
 
 A step whose work runs on after `PlayStep` returns (an awaited task, a tween) needs a `GetStepUntil` condition: a paced step's next `PlayStep` comes one pace later whether or not that work is done, `keepGoing` or not. Only errors (`push_error`, `GD.PushError`, a throw from `PlayStep`) and lines the scene's patterns match turn a step red; `GetStatus()` text and `printerr` never do.
 

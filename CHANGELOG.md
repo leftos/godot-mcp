@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- A `run_scratches` step's until now waits its pace in load-adjusted time, so a loaded machine drawing fewer frames no longer turns a frame-counting until red.
+
 ## 0.35.0 - 2026-11-04
 
 ### Added

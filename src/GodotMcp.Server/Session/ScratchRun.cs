@@ -167,9 +167,10 @@ internal sealed record ScratchCapture(IReadOnlyList<ScratchStepToken>? Steps);
 
 /// <summary>
 /// A scene's step paces by index, the steps a run plays of them, ascending, the time scale its game runs at and its exit hold:
-/// what its ceiling, its wait after the last step played and its kill reason count. A step's pace is game time, so at time
-/// scale N it takes pace / N of wall time; the wait after the last step played, the exit hold else that step's pace, counts in
-/// wall time above time scale 1 and in game time below it.
+/// what its ceiling, its wait after the last step played and its kill reason count. A paced step waits its pace in game time, so
+/// at time scale N it takes pace / N of wall time; an until step waits for its condition up to its pace in load-adjusted time at
+/// that time scale. The wait after the last step played, the exit hold else that step's pace, counts in wall time above time
+/// scale 1 and in game time below it.
 /// </summary>
 internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyList<int> Played, double TimeScale)
 {
@@ -247,7 +248,8 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
 
 /// <summary>
 /// The bounds a scene's walk holds its game to besides its ceiling, each the longer of its own value and <paramref name="Floor"/>
-/// (<see cref="SessionRegistry.ScratchBoundFloor"/>): a bridge call's timeout, a window's marker wait and a pace wait's release.
+/// (<see cref="SessionRegistry.ScratchBoundFloor"/>): a bridge call's timeout, a window's marker wait, a pace wait's release and
+/// an until wait's release.
 /// </summary>
 internal sealed record ScratchBounds(TimeSpan Floor)
 {
@@ -259,6 +261,12 @@ internal sealed record ScratchBounds(TimeSpan Floor)
 
     /// <summary>When a wait of <paramref name="gameMs"/> at <paramref name="timeScale"/> is released; see <see cref="ScratchRun.Release"/>.</summary>
     public TimeSpan Release(int gameMs, double timeScale) => Floored(ScratchRun.Release(gameMs, timeScale), Floor);
+
+    /// <summary>
+    /// When a step's until wait of <paramref name="gameMs"/> at <paramref name="timeScale"/> is released: its pace in load-adjusted
+    /// time, with no step allowance.
+    /// </summary>
+    public TimeSpan UntilRelease(int gameMs, double timeScale) => Floored(TimeSpan.FromMilliseconds(gameMs / timeScale), Floor);
 
     /// <summary>The longer of <paramref name="bound"/> and <paramref name="floor"/>.</summary>
     internal static TimeSpan Floored(TimeSpan bound, TimeSpan floor) => bound > floor ? bound : floor;
@@ -307,11 +315,11 @@ internal sealed class ScratchStepNames(IReadOnlyList<string> names, IReadOnlySet
 /// refuses the scene before any step plays; a step pace key naming no step is skipped and named in the scene's warnings. Then
 /// per step it plays (every step, or a partial run's selected steps with the setup steps its profile adds to them,
 /// in ascending order) it calls PlayStep, waits the step's pace in game time (for a root that has GetStepUntil and a step it gives
-/// a condition, plays the step inside one wait_for on that condition instead, PlayStep the wait's call, until it holds or the pace
-/// has passed in game time), reads GetStatus and takes the feed's entries since the last window, stopping at the first failed
-/// step, or with the plan's keep-going only at one whose call failed; after the last step played it waits that step's pace once
-/// more, the longer of its game time and its wall time, then stops the game gracefully and reads the lines it printed after the
-/// steps.
+/// a condition, plays the step inside one wait_for on that condition instead, PlayStep the wait's call, until it holds or its pace
+/// has passed in load-adjusted time, its game-time limit a backstop behind it), reads GetStatus and takes the feed's entries since
+/// the last window, stopping at the first failed step, or with the plan's keep-going only at one whose call failed; after the last
+/// step played it waits that step's pace once more, the longer of its game time and its wall time, then stops the game gracefully
+/// and reads the lines it printed after the steps.
 /// Each window of output (the launch, each step, the pace after the last) ends at a marker line the game prints to stdout
 /// and to stderr, since the two streams arrive apart. The session stays in the registry, stopped, so get_debug_output can
 /// read it.
@@ -755,8 +763,9 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The bridge's wait_for parameters for step <paramref name="index"/>'s GetStepUntil answer: its condition checked as wait_for
-    /// checks one, <paramref name="paceMs"/> its timeoutMs and its limitGameMs (the game time the bridge ends the wait at, not
-    /// met, a parameter only the runner sends), PlayStep(index) on <paramref name="play"/>'s root its call, and options.screenshot
+    /// checks one, <paramref name="paceMs"/> its timeoutMs and its limitGameMs, <see cref="LoadClock.BackstopFactor"/> times the
+    /// pace, the game time the bridge ends the wait at, not met, a backstop behind the caller's load-adjusted release (and a
+    /// parameter only the runner sends), PlayStep(index) on <paramref name="play"/>'s root its call, and options.screenshot
     /// when <paramref name="play"/> captures the step, so the met frame is shot. Neither parameters nor an error for null or an
     /// empty dictionary, a paced step; an error for any other answer, or a condition wait_for refuses.
     /// </summary>
@@ -779,7 +788,7 @@ internal sealed class ScratchRun
             WaitOptions options = new(Screenshot: play.Screenshot ? true : null, Call: call);
             JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, options);
             wait.Remove(PreviewMaxWidthField);
-            wait[LimitGameMsField] = paceMs;
+            wait[LimitGameMsField] = paceMs * LoadClock.BackstopFactor;
             return (wait, null);
         }
         catch (Exception e) when (e is McpException or JsonException)
@@ -895,20 +904,28 @@ internal sealed class ScratchRun
         );
     }
 
-    /// <summary>Why a step failed when its until was not met within its pace.</summary>
-    internal static string UntilNotMet(int index, string name, double pace) =>
-        $"step {index} '{name}': its until was not met within its pace of {pace.ToString(CultureInfo.InvariantCulture)} s; "
-        + $"give it a longer scratch.pace, or check the condition {UntilMethod} gives";
+    /// <summary>
+    /// Why a step failed when its until was not met within its pace of load-adjusted time, naming the release at a time scale
+    /// other than 1.
+    /// </summary>
+    internal static string UntilNotMet(int index, string name, double pace, double timeScale, double releaseSeconds) =>
+        timeScale == 1
+            ? $"step {index} '{name}': its until was not met within its pace of {pace.ToString(CultureInfo.InvariantCulture)} s of "
+                + $"load-adjusted time; give it a longer scratch.pace, or check the condition {UntilMethod} gives"
+            : $"step {index} '{name}': its until was not met within its pace of {pace.ToString(CultureInfo.InvariantCulture)} s, "
+                + $"{releaseSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s of load-adjusted time at time scale "
+                + $"{timeScale.ToString(CultureInfo.InvariantCulture)}; give it a longer scratch.pace, or check the condition "
+                + $"{UntilMethod} gives";
 
     /// <summary>
-    /// Why a step whose until's wait ended unmet failed: not met within its pace when the bridge counted the whole pace of game
-    /// time; else the release of <paramref name="releaseSeconds"/> real seconds ended the wait first, the game's clock stood still.
+    /// Why a step whose until's wait ended unmet failed: <see cref="UntilNotMet"/> when it ended at its pace's release or the
+    /// game-time backstop; else less than half the pace ran in game time, so the game's clock stood still.
     /// </summary>
-    internal static string UntilMissed(int index, string name, ScratchUntil until, double pace, double releaseSeconds) =>
-        until.GameMs >= GameMs(pace)
-            ? UntilNotMet(index, name, pace)
-            : $"step {index} '{name}': its until was not met within "
-                + $"{releaseSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s: the game's clock stood still (is it paused?)";
+    internal static string UntilMissed(int index, string name, ScratchUntil until, double pace, double timeScale, double releaseSeconds) =>
+        until.GameMs * 2 < GameMs(pace)
+            ? $"step {index} '{name}': its until was not met within "
+                + $"{releaseSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s: the game's clock stood still (is it paused?)"
+            : UntilNotMet(index, name, pace, timeScale, releaseSeconds);
 
     /// <summary>Why a step failed when its until was refused, by the server's checks or the bridge.</summary>
     internal static string UntilRefused(int index, string name, string refusal) => $"step {index} '{name}': its until was refused: {refusal}";
@@ -1657,18 +1674,20 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// One wait_for on the step's until, PlayStep its call, which the bridge ends at the step's pace in game time, released at
-    /// that pace at the scene's time scale plus the step allowance as a pace wait is: its figures and, when not met, why the
-    /// step fails (<see cref="UntilMissed"/>); the bridge's refusal, judged by the caller; or why the wait failed on the connection.
+    /// One wait_for on the step's until, PlayStep its call, released at the step's pace at the scene's time scale in
+    /// load-adjusted time, the bridge's game-time limit a backstop behind it: its figures and, when not met, why the step fails
+    /// (<see cref="UntilMissed"/>); the bridge's refusal, judged by the caller; or why the wait failed on the connection.
     /// </summary>
     private async Task<StepPlay> PlayInsideUntilAsync(GodotSession session, int index, JsonObject wait, int gameMs, CancellationToken limit)
     {
-        TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
+        TimeSpan release = _bounds.UntilRelease(gameMs, _scene.TimeScale);
         try
         {
             JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
             ScratchUntil until = UntilFigures(reply);
-            string? notMet = until.Met ? null : UntilMissed(index, _names[index], until, _walk.Paces[index].Seconds, release.TotalSeconds);
+            string? notMet = until.Met
+                ? null
+                : UntilMissed(index, _names[index], until, _walk.Paces[index].Seconds, _scene.TimeScale, release.TotalSeconds);
             return new StepPlay(notMet, null, until) { Reply = reply };
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
