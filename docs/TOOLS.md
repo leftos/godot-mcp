@@ -590,11 +590,17 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A whole result that cannot be written still comes back capped, without `full`, its `cut` ending `the whole result could not be written to {path}: {message}`.
 
-  **From a terminal:** `godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--user-arg <arg>]... [--engine-arg <arg>]... [--json] [--windowed] [--audible] [--steps <token>]... [--capture [--capture-step <token>]...]` runs the same runner on the same `godot-mcp.json`, headless unless `--windowed` is given, and a game repo calls it through the installed launcher as it does `--sweep-agents`.
+  **From a terminal:** `godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--user-arg <arg>]... [--engine-arg <arg>]... [--json] [--windowed] [--audible] [--steps <token>]... [--ceiling <scene>=<seconds>]... [--memory-ceiling <scene>=<megabytes>]... [--batch <scene>=<token>[,<token>]]... [--capture [--capture-step <token>]...]` runs the same runner on the same `godot-mcp.json`, headless unless `--windowed` is given, and a game repo calls it through the installed launcher as it does `--sweep-agents`.
 
   Each option is the `options` key of the same name, and a name the command does not take is refused; `background` and `watch` are the tool's only. The run's session is `cli-<pid>`.
 
-  `--windowed` and `--audible` set `options.windowed` and `options.audible` to true. Each `--steps` adds one token to `options.steps` in its list form, so the same steps play in every scene (the tool's map form, one list per scene, is the tool's only). `--capture` sets `options.capture` to `{screenshot: true}`, so every played step is shot, and each `--capture-step` adds one token to `capture.steps`, so only those are. `--capture-step` without `--capture` is refused with `--capture-step needs --capture`. The command holds no other check: the tool's own refusals, such as `audible` or `capture` without `windowed`, are what it prints.
+  `--windowed` and `--audible` set `options.windowed` and `options.audible` to true. Each `--steps` adds one token to `options.steps` in its list form, so the same steps play in every scene.
+
+  Each `--batch <scene>=<token>[,<token>]...` adds one batch to that scene in the map form of `options.steps`, so each batch plays in a fresh game, in the order given, and a scene no `--batch` names plays every step. The value splits at its first `=` and its tokens at `,`, so a step whose name holds a comma is named by its index. `--batch` with `--steps` is refused.
+
+  `--ceiling <scene>=<seconds>` and `--memory-ceiling <scene>=<megabytes>` set that scene's entry in `options.ceilings` and `options.memoryCeilings`, splitting at the last `=`; one scene given twice to either is refused. A value with no `=`, an empty scene, an amount that is no number or an empty token is refused with the form the option takes.
+
+  `--capture` sets `options.capture` to `{screenshot: true}`, so every played step is shot, and each `--capture-step` adds one token to `capture.steps`, so only those are. `--capture-step` without `--capture` is refused with `--capture-step needs --capture`. The command holds no other check: the tool's own refusals, such as `audible` or `capture` without `windowed`, a ceiling out of range or a scene not in the plan, are what it prints.
 
   Each `--user-arg` adds one element to `options.userArgs` and each `--engine-arg` one to `options.engineArgs`, in order. Their value is the next argument as it stands, even one that begins with `--` (`--user-arg --shadow-quality=Low`), and the tool's own checks refuse what they refuse.
 

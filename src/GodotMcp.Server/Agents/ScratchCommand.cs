@@ -56,8 +56,22 @@ internal static class ScratchCommand
             return null;
         }
 
+        if (Combined(flags) is string combined)
+        {
+            error = combined;
+            return null;
+        }
+
         return new ScratchArguments(flags.Project, scenes.Count == 0 ? null : [.. scenes], flags.Options, flags.Json);
     }
+
+    /// <summary>
+    /// The refusal for --steps given with --batch, the list form and the map form of one option: null when only one is given.
+    /// </summary>
+    private static string? Combined(Flags flags) =>
+        flags.Steps.Count > 0 && flags.Batches.Count > 0
+            ? "--steps and --batch cannot be combined: --steps gives every scene one list, --batch gives a scene its own batches."
+            : null;
 
     /// <summary>
     /// Runs <paramref name="arguments"/> through <paramref name="tools"/> and prints the result: the verdict lines, or with
@@ -266,10 +280,11 @@ internal static class ScratchCommand
     }
 
     /// <summary>
-    /// The options given more than once, each occurrence appending one value: --scene, --user-arg, --engine-arg, --steps and
-    /// --capture-step.
+    /// The options given more than once, each occurrence appending one value: --scene, --user-arg, --engine-arg, --steps,
+    /// --ceiling, --memory-ceiling, --batch and --capture-step.
     /// </summary>
-    private static bool Repeatable(string option) => option is "--scene" or "--user-arg" or "--engine-arg" or "--steps" or "--capture-step";
+    private static bool Repeatable(string option) =>
+        option is "--scene" or "--user-arg" or "--engine-arg" or "--steps" or "--ceiling" or "--memory-ceiling" or "--batch" or "--capture-step";
 
     /// <summary>
     /// Whether <paramref name="option"/> is the last argument or is followed by another option. --user-arg and --engine-arg take
@@ -296,9 +311,12 @@ internal static class ScratchCommand
                 or "--user-arg"
                 or "--engine-arg"
                 or "--steps"
+                or "--ceiling"
+                or "--memory-ceiling"
+                or "--batch"
                 or "--capture-step";
 
-    /// <summary>One known option's value, as the tool itself reads it: the command holds no check of its own.</summary>
+    /// <summary>One known option's value, as the tool itself reads it: the command holds no range or plan check of its own.</summary>
     private static string? Value(Flags flags, List<string> scenes, string option, string value)
     {
         if (option is "--scene")
@@ -325,8 +343,70 @@ internal static class ScratchCommand
             return null;
         }
 
+        if (option is "--ceiling" or "--memory-ceiling" or "--batch")
+        {
+            return SceneKeyed(flags, option, value);
+        }
+
         return option is "--prepare" or "--details" or "--only" ? Text(flags, option, value) : Amount(flags, option, value);
     }
+
+    /// <summary>One scene-keyed option's value: a ceiling's amount, or one of a batch's token lists.</summary>
+    private static string? SceneKeyed(Flags flags, string option, string value) =>
+        option is "--batch" ? Batch(flags, value) : Ceiling(flags, option, value);
+
+    /// <summary>
+    /// A --ceiling or --memory-ceiling value, split at its last = since the amount holds none: the scene's ceiling set, or the
+    /// refusal its form or its second appearance gives it.
+    /// </summary>
+    private static string? Ceiling(Flags flags, string option, string value)
+    {
+        int split = value.LastIndexOf('=');
+        if (split <= 0 || split == value.Length - 1)
+        {
+            return Form(option, value);
+        }
+
+        if (!double.TryParse(value[(split + 1)..], NumberStyles.Float, CultureInfo.InvariantCulture, out double amount))
+        {
+            return Form(option, value);
+        }
+
+        string scene = value[..split];
+        Dictionary<string, double> ceilings = option is "--ceiling" ? flags.Ceilings : flags.MemoryCeilings;
+        return ceilings.TryAdd(scene, amount) ? null : $"{option} gives '{scene}' twice; give it once.";
+    }
+
+    /// <summary>
+    /// A --batch value, split at its first = since a step name may hold one: one batch of comma-separated tokens appended to its
+    /// scene's list, or the refusal its form gives it.
+    /// </summary>
+    private static string? Batch(Flags flags, string value)
+    {
+        int split = value.IndexOf('=');
+        if (split <= 0 || split == value.Length - 1)
+        {
+            return Form("--batch", value);
+        }
+
+        string[] tokens = value[(split + 1)..].Split(',');
+        if (tokens.Any(token => token.Length == 0))
+        {
+            return Form("--batch", value);
+        }
+
+        flags.Batches.Add((value[..split], [.. tokens]));
+        return null;
+    }
+
+    /// <summary>The refusal naming the form <paramref name="option"/> takes, for the value it cannot read.</summary>
+    private static string Form(string option, string value) =>
+        option switch
+        {
+            "--ceiling" => $"--ceiling takes <scene>=<seconds>, not '{value}'.",
+            "--memory-ceiling" => $"--memory-ceiling takes <scene>=<megabytes>, not '{value}'.",
+            _ => $"--batch takes <scene>=<token>[,<token>]..., not '{value}'.",
+        };
 
     /// <summary>A number-taking option's value, refused when it is no number.</summary>
     private static string? Amount(Flags flags, string option, string value)
@@ -511,12 +591,21 @@ internal static class ScratchCommand
         /// <summary>The --steps values in the order given, which the tool reads as its list for every scene.</summary>
         public List<string> Steps { get; } = [];
 
+        /// <summary>Each --ceiling value by its scene, which the tool checks against its own range.</summary>
+        public Dictionary<string, double> Ceilings { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Each --memory-ceiling value by its scene, which the tool checks against its own range.</summary>
+        public Dictionary<string, double> MemoryCeilings { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>The --batch values in the order given: one scene's token list, one batch played in a fresh game.</summary>
+        public List<(string Scene, List<string> Tokens)> Batches { get; } = [];
+
         /// <summary>The --capture-step values in the order given, which the tool reads as the capture's own step list.</summary>
         public List<string> CaptureSteps { get; } = [];
 
         /// <summary>
         /// The options read so far, so a second one of them is refused; the repeatable ones (--scene, --user-arg, --engine-arg,
-        /// --steps and --capture-step) are not ones.
+        /// --steps, --ceiling, --memory-ceiling, --batch and --capture-step) are not ones.
         /// </summary>
         public HashSet<string> Given { get; } = new(StringComparer.Ordinal);
 
@@ -525,7 +614,7 @@ internal static class ScratchCommand
             new(
                 Pace: Pace,
                 TimeScale: TimeScale,
-                Steps: Tokens(Steps),
+                Steps: Batches.Count > 0 ? BatchSteps() : Tokens(Steps),
                 Prepare: Prepare,
                 Details: Details,
                 Parallel: Parallel,
@@ -533,6 +622,8 @@ internal static class ScratchCommand
                 Only: Only,
                 UserArgs: UserArgs.Count == 0 ? null : [.. UserArgs],
                 EngineArgs: EngineArgs.Count == 0 ? null : [.. EngineArgs],
+                Ceilings: GivenAmounts(Ceilings),
+                MemoryCeilings: GivenAmounts(MemoryCeilings),
                 Windowed: Windowed ? true : null,
                 Audible: Audible ? true : null,
                 Capture: CaptureOptions()
@@ -543,5 +634,28 @@ internal static class ScratchCommand
 
         /// <summary>The step tokens as the tool reads them, null when none is given.</summary>
         private static JsonElement? Tokens(List<string> tokens) => tokens.Count == 0 ? null : JsonSerializer.SerializeToElement(tokens);
+
+        /// <summary>The scene-keyed amounts as the tool reads them, null when none is given, so the tool's default holds.</summary>
+        private static Dictionary<string, double>? GivenAmounts(Dictionary<string, double> amounts) => amounts.Count == 0 ? null : amounts;
+
+        /// <summary>
+        /// The --batch values as the tool's map form: each scene's batches in first-appearance order, each its own array of the
+        /// tokens it plays in one fresh game.
+        /// </summary>
+        private JsonElement BatchSteps()
+        {
+            JsonObject steps = new();
+            foreach ((string scene, List<string> tokens) in Batches)
+            {
+                if (!steps.ContainsKey(scene))
+                {
+                    steps[scene] = new JsonArray();
+                }
+
+                steps[scene]!.AsArray().Add(JsonSerializer.SerializeToNode(tokens));
+            }
+
+            return JsonSerializer.SerializeToElement(steps);
+        }
     }
 }

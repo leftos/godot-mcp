@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `--run-scratches` takes `--ceiling`, `--memory-ceiling` and `--batch <scene>=<tokens>`, giving a terminal run the per-scene ceilings and fresh-game step batches `run_scratches` has.
+
 ## 0.36.1 - 2026-11-05
 
 ### Changed
