@@ -395,7 +395,9 @@ internal sealed partial class HeadlessTools
         ToResPath(projectDir, scriptPath, new PathRule("scriptPath", ScriptExtensions, "is not a script: attach_script takes .gd and .cs files."));
 
     /// <summary>The full path of a texture load_sprite takes.</summary>
-    /// <exception cref="McpException">The path is empty, outside the project, of another kind, or missing.</exception>
+    /// <exception cref="McpException">
+    /// The path is empty, outside the project, of another kind, or missing, or Godot's scan skips its folder or the file itself.
+    /// </exception>
     internal static string CheckTexturePath(string projectDir, string texturePath)
     {
         string full = ResolvePath(projectDir, texturePath, TextureRule);
@@ -406,11 +408,16 @@ internal sealed partial class HeadlessTools
 
         // An import never reaches a file in a folder the scan skips, so it would be due on every request.
         string? unscanned = PrepScan.UnscannedFolder(projectDir, full);
-        return unscanned is null
-            ? full
-            : throw new McpException(
+        if (unscanned is not null)
+        {
+            throw new McpException(
                 $"{ResOf(projectDir, full)} is in {ResOf(projectDir, unscanned)}, which Godot does not scan; move the asset out of it."
             );
+        }
+
+        return PrepScan.IsHidden(full)
+            ? throw new McpException($"{ResOf(projectDir, full)} has the hidden attribute, which Godot does not scan; clear it or move the asset.")
+            : full;
     }
 
     /// <summary>The node path duplicate_node copies, checked as <see cref="CheckNodePath"/> does.</summary>

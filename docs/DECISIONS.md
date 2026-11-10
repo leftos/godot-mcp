@@ -109,6 +109,16 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
       Scenes open with `GEN_EDIT_STATE_MAIN` and instanced children with `GEN_EDIT_STATE_INSTANCE` (the reference's DISABLED flattens inherited scenes and doubles inherited connections: `packed_scene.cpp` L233-236, L682).
 
       A save restores the header UID and every `ext_resource`'s `uid=` (a `--script` save writes neither: `resource_saver.cpp` L285-294). A new scene gets a fresh UID (`ResourceUID.create_id`). `duplicate_node` copies by packing the source under a bare holder and instantiating with MAIN (`Node.duplicate()` bakes instances: `node.cpp` L2789-2798); a name collision is refused. A second identical `connect_signal` is refused as already connected; an inherited connection cannot be disconnected.
+    - **Prep imports a source with no `.import` file.** Prep, before `run_project` and every headless tool, runs Godot's import when a scanned source with an extension Godot 4.7.2's importers recognise has no `.import` file on disk, not only when an existing one is stale; the result's `prep.note` names the first source.
+
+      Only a `.blend` an import still leaves without a sidecar is recorded by path and md5 in `import-fingerprints.json`, so a `.blend` Godot cannot import without Blender does not import on every launch until its bytes change.
+
+      Any other such source is not recorded and stays due, with a note naming it: when Blender's path is not set, Godot 4.7.2 drops the whole import batch (`editor_file_system.cpp` L1049-1054), so recording every source would hide new assets for good.
+
+      The prep adds a note on setting `[filesystem] import/blender/enabled=false` when the import's output says Blender's path is invalid or not set; with that setting `.blend` is not importable for the project.
+
+      Sources are listed from git, so a gitignored source is never due, and a file with the hidden attribute or under a hidden folder is not scanned, as Godot skips them. A missing `.godot/` alone is still no reason.
+
     - **Imports.** An importable file a request names that has no `.import` sidecar is imported first through prep's import.
     - **Shapes.** `add_node(projectPath, scenePath, nodeType, nodeName, options {parent, properties})`, the reference's top-level position/rotation/scale/visible/modulate moving into `properties`. Write tools always prepare; read tools keep `options.prepare`. `create_scene`'s root is named after the file in PascalCase unless `rootName` is given.
 

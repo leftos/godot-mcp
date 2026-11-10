@@ -303,6 +303,20 @@ public sealed class HeadlessSceneValidationTests : IDisposable
     }
 
     [Fact]
+    public void LoadSpriteRefusesAHiddenTexture()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The hidden attribute is a Windows file attribute.");
+        Directory.CreateDirectory(Path.Combine(_project, "art"));
+        string texture = Path.Combine(_project, "art", "t.png");
+        File.WriteAllText(texture, string.Empty);
+        File.SetAttributes(texture, File.GetAttributes(texture) | FileAttributes.Hidden);
+
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTexturePath(_project, "art/t.png"));
+
+        Assert.Equal("res://art/t.png has the hidden attribute, which Godot does not scan; clear it or move the asset.", refused.Message);
+    }
+
+    [Fact]
     public void LoadSpriteRefusesATextureInANestedProjectFolder()
     {
         Directory.CreateDirectory(Path.Combine(_project, "nested", "art"));
@@ -454,6 +468,19 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "s.tscn"), string.Empty);
 
         AssertNamedFolderRefused(project, "nested", "a nested project.godot");
+    }
+
+    [Fact]
+    public void StampUidsRefusesANamedFolderGodotDoesNotScanByHiddenAttribute()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The hidden attribute is a Windows file attribute.");
+        string project = ProjectFolder("named-hidden-attribute");
+        string folder = Path.Combine(project, "secret");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "s.tscn"), string.Empty);
+        File.SetAttributes(folder, File.GetAttributes(folder) | FileAttributes.Hidden);
+
+        AssertNamedFolderRefused(project, "secret", "the hidden attribute");
     }
 
     /// <summary>A project folder of its own under the temporary folder, with its project.godot.</summary>

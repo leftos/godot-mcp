@@ -8,8 +8,9 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// What a save refuses on a scene that lost something while it loaded, on InputProbe copies answered by a warm host: a load
-/// that lost an instance, a texture or a script is refused every time, however the script caches stand, and a scene that
-/// loaded whole is saved whatever its own scripts log once they run.
+/// that lost an instance, a script, or a texture in a folder Godot's scan skips is refused every time, however the script
+/// caches stand; a texture with no import is imported first and then saved; and a scene that loaded whole is saved whatever
+/// its own scripts log once they run.
 /// </summary>
 public sealed class HeadlessLoadErrorTests : IAsyncDisposable
 {
@@ -135,7 +136,7 @@ public sealed class HeadlessLoadErrorTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task ATextureWithNoImportIsRefused()
+    public async Task ATextureWithNoImportIsImportedBeforeTheSave()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string project = NewProject();
@@ -147,10 +148,35 @@ public sealed class HeadlessLoadErrorTests : IAsyncDisposable
                 + "[node name=\"Root\" type=\"Node2D\"]\n\n[node name=\"Spr\" type=\"Sprite2D\" parent=\".\"]\ntexture = ExtResource(\"1\")\n\n"
                 + SibNode
         );
+
+        await EditAsync(project, cancellation);
+
+        Assert.True(File.Exists(Path.Combine(project, "pic.svg.import")), "the prep wrote no pic.svg.import before the save");
+        string saved = File.ReadAllText(Path.Combine(project, "scene.tscn"));
+        Assert.Contains("path=\"res://pic.svg\"", saved, StringComparison.Ordinal);
+        Assert.Contains(Moved, saved, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ATextureInAFolderTheScanSkipsIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = NewProject();
+        Directory.CreateDirectory(Path.Combine(project, "ignored"));
+        WriteFile(project, Path.Combine("ignored", ".gdignore"), string.Empty);
+        WriteFile(project, Path.Combine("ignored", "pic.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"2\" height=\"2\"/>\n");
+        WriteFile(
+            project,
+            "scene.tscn",
+            "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Texture2D\" path=\"res://ignored/pic.svg\" id=\"1\"]\n\n"
+                + "[node name=\"Root\" type=\"Node2D\"]\n\n[node name=\"Spr\" type=\"Sprite2D\" parent=\".\"]\ntexture = ExtResource(\"1\")\n\n"
+                + SibNode
+        );
         byte[] before = SceneBytes(project);
 
         await AssertRefusedAsync(project, Refusal, cancellation);
 
+        Assert.False(File.Exists(Path.Combine(project, "ignored", "pic.svg.import")), "something imported ignored/pic.svg");
         Assert.Equal(before, SceneBytes(project));
     }
 

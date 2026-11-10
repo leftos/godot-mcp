@@ -7,11 +7,27 @@ using Microsoft.Extensions.Logging;
 namespace GodotMcp.Server.Session;
 
 /// <summary>
+/// What a finished import leaves for the record: the project's sidecars as they are now, and the scanned sources that still
+/// have none, of which the record keeps only the <c>.blend</c> ones (<see cref="ImportFingerprints.RecordsSource"/>).
+/// </summary>
+internal sealed record ImportPass(IReadOnlyList<string> Sidecars, IReadOnlyList<string> UnimportedSources)
+{
+    /// <summary>
+    /// Whether Godot dropped the import's batch because Blender's path is not set, before it imported anything (4.7.2
+    /// <c>editor/file_system/editor_file_system.cpp</c> L1049-1054), so no sidecar's settings were imported.
+    /// </summary>
+    public bool Dropped { get; init; }
+}
+
+/// <summary>
 /// The prep's own record of every import sidecar's settings, in <c>.godot/godot-mcp/import-fingerprints.json</c>: the md5 of each
 /// <c>.import</c> file's bytes, by the sidecar's path relative to the project. Godot reimports a sidecar whose recorded md5 in the
 /// editor's file cache differs from the file's own md5 (4.7.2 <c>editor/file_system/editor_file_system.cpp</c> L673-760), and a
 /// run outside the editor cannot read that cache, so the prep keeps its own: a pull that changed only an asset's import settings
-/// would otherwise get no reimport.
+/// would otherwise get no reimport. The record also holds each <c>.blend</c> an import left without a sidecar, by its path and
+/// the md5 of its bytes, so it does not import on every run: with Blender's path not set, Godot drops the whole import batch
+/// (4.7.2 <c>editor/file_system/editor_file_system.cpp</c> L1049-1054, <c>modules/gltf/editor/editor_scene_importer_blend.cpp</c>
+/// L432-441). Any other source an import left without one is not recorded, so it stays due.
 /// </summary>
 internal static partial class ImportFingerprints
 {
@@ -34,7 +50,32 @@ internal static partial class ImportFingerprints
         "CA5351:Do not use broken cryptographic algorithms",
         Justification = "The md5 of a .import file is what Godot itself records for one; nothing here is a security use."
     )]
-    public static string Md5Of(string file) => Convert.ToHexStringLower(MD5.HashData(File.ReadAllBytes(file)));
+    public static string Md5Of(string file)
+    {
+        using FileStream stream = File.OpenRead(file);
+        return Convert.ToHexStringLower(MD5.HashData(stream));
+    }
+
+    /// <summary>The md5 of a file's bytes (<see cref="Md5Of"/>), or null when it is gone or cannot be read.</summary>
+    public static string? TryMd5Of(string file)
+    {
+        try
+        {
+            return Md5Of(file);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // FileNotFoundException and DirectoryNotFoundException are IOExceptions.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether the record keeps a source an import left without a sidecar: a <c>.blend</c>, which Godot leaves so whenever
+    /// Blender's path is not set. Any other such source stays due.
+    /// </summary>
+    public static bool RecordsSource(string source) =>
+        string.Equals(Path.GetExtension(source), PrepScan.BlendExtension, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The md5 recorded for each sidecar, by its project-relative path with forward slashes; empty when there is no record, and
@@ -61,23 +102,21 @@ internal static partial class ImportFingerprints
 
     /// <summary>
     /// Saves the record a finished prep leaves, and writes nothing when it would come out the same: after an import the prep ran
-    /// (<paramref name="state"/> "done") the md5 of every current sidecar, and after a prep that found none due ("not-needed") the
-    /// sidecars <paramref name="record"/> has no md5 for, keeping the ones it has, so a later settings change is caught; a sidecar
-    /// that is gone loses its entry either way. Any other state, a failed or skipped import, writes nothing.
+    /// (<paramref name="state"/> "done") the md5 of every current sidecar and of every <c>.blend</c> the import left without one,
+    /// or, when Godot dropped the import's batch (<see cref="ImportPass.Dropped"/>), the record as it was with those
+    /// <c>.blend</c> entries added, and after a prep that found none due ("not-needed") the sidecars <paramref name="record"/>
+    /// has no md5 for, keeping the ones it
+    /// has, so a later settings change is caught; a sidecar, or a source, that is gone loses its entry either way. Any other
+    /// state, a failed or skipped import, writes nothing.
     /// </summary>
+    /// <param name="pass">What the finished prep left: its sidecars, and the sources that still have none.</param>
     /// <param name="record">What <see cref="Read"/> gave the prep, rather than read again.</param>
-    public static void Save(
-        string projectDir,
-        IReadOnlyList<string> sidecars,
-        string state,
-        IReadOnlyDictionary<string, string> record,
-        ILogger logger
-    )
+    public static void Save(string projectDir, ImportPass pass, string state, IReadOnlyDictionary<string, string> record, ILogger logger)
     {
         IReadOnlyDictionary<string, string>? next = state switch
         {
-            "done" => Of(projectDir, sidecars),
-            "not-needed" => Baseline(projectDir, record, sidecars),
+            "done" => Of(projectDir, pass, record),
+            "not-needed" => Baseline(projectDir, record, pass.Sidecars),
             _ => null,
         };
         if (next is null || Same(record, next))
@@ -108,29 +147,64 @@ internal static partial class ImportFingerprints
         return md5s;
     }
 
-    /// <summary>The md5 of every sidecar that is there.</summary>
-    private static Dictionary<string, string> Of(string projectDir, IReadOnlyList<string> sidecars)
+    /// <summary>
+    /// The md5 of every sidecar that is there, and of every <c>.blend</c> the import left without one (<see cref="RecordsSource"/>);
+    /// a file gone or unreadable by the time it is hashed is left out. When Godot dropped the batch, no sidecar was imported,
+    /// so <paramref name="record"/>'s entries stand as they were and only the <c>.blend</c> entries are added.
+    /// </summary>
+    private static Dictionary<string, string> Of(string projectDir, ImportPass pass, IReadOnlyDictionary<string, string> record)
     {
-        Dictionary<string, string> md5s = [];
-        foreach (string sidecar in sidecars.Where(File.Exists))
+        Dictionary<string, string> md5s = pass.Dropped ? new(record) : [];
+        IEnumerable<string> blends = pass.UnimportedSources.Where(RecordsSource);
+        foreach (string file in pass.Dropped ? blends : pass.Sidecars.Concat(blends))
         {
-            md5s[KeyFor(projectDir, sidecar)] = Md5Of(sidecar);
+            if (TryMd5Of(file) is { } md5)
+            {
+                md5s[KeyFor(projectDir, file)] = md5;
+            }
         }
 
         return md5s;
     }
 
-    /// <summary>The record with an entry for every sidecar it has none for, and without the entries of sidecars that are gone.</summary>
+    /// <summary>
+    /// The record with an entry for every sidecar it has none for, without the entries of sidecars that are gone or cannot be
+    /// read, and with the entries of <c>.blend</c> sources (<see cref="RecordsSource"/>) an earlier import found no sidecar for
+    /// while those sources are still there and still have none.
+    /// </summary>
     private static Dictionary<string, string> Baseline(string projectDir, IReadOnlyDictionary<string, string> record, IReadOnlyList<string> sidecars)
     {
         Dictionary<string, string> next = [];
         foreach (string sidecar in sidecars.Where(File.Exists))
         {
             string key = KeyFor(projectDir, sidecar);
-            next[key] = record.GetValueOrDefault(key) ?? Md5Of(sidecar);
+            if ((record.GetValueOrDefault(key) ?? TryMd5Of(sidecar)) is { } md5)
+            {
+                next[key] = md5;
+            }
+        }
+
+        foreach ((string key, string md5) in record.Where(entry => RecordsSource(entry.Key) && StillUnimported(projectDir, entry.Key)))
+        {
+            next[key] = md5;
         }
 
         return next;
+    }
+
+    /// <summary>
+    /// Whether an import already ran for this source and found no sidecar for it, with the bytes it has now: such a source does
+    /// not make a later import due until its bytes change. Only a source the record keeps (<see cref="RecordsSource"/>) is taken
+    /// as recorded, and not one that is gone or cannot be read.
+    /// </summary>
+    public static bool RecordedWithoutSidecar(string projectDir, string source, IReadOnlyDictionary<string, string> record) =>
+        RecordsSource(source) && record.TryGetValue(KeyFor(projectDir, source), out string? md5) && TryMd5Of(source) is { } current && md5 == current;
+
+    /// <summary>Whether a recorded source is still there with no sidecar, so what it was recorded for still holds.</summary>
+    private static bool StillUnimported(string projectDir, string key)
+    {
+        string source = Path.Combine(projectDir, key.Replace('/', Path.DirectorySeparatorChar));
+        return File.Exists(source) && !File.Exists(source + PrepScan.ImportSuffix);
     }
 
     /// <summary>Whether two records hold the same md5s, whatever their order.</summary>

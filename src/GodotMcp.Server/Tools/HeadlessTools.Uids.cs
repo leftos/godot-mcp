@@ -134,8 +134,8 @@ internal sealed partial class HeadlessTools
 
     /// <summary>
     /// The reason Godot's scan skips folder, by what <see cref="PrepScan.UnscannedFolder"/> names for a file directly inside it (4.7.2
-    /// <c>editor/file_system/editor_file_system.cpp</c> L1179-1185, L3494-3505): a name starting with ".", a <c>.gdignore</c>, or a
-    /// nested <c>project.godot</c>, on it or on a folder above it. Null when the scan reaches it.
+    /// <c>editor/file_system/editor_file_system.cpp</c> L1174-1176, L1179-1185, L3494-3505): a name starting with ".", the hidden
+    /// attribute, a <c>.gdignore</c>, or a nested <c>project.godot</c>, on it or on a folder above it. Null when the scan reaches it.
     /// </summary>
     private static string? UnscannedReason(string projectDir, string folder)
     {
@@ -148,6 +148,11 @@ internal sealed partial class HeadlessTools
         if (Path.GetFileName(skipped).StartsWith('.'))
         {
             return "a name starting with \".\"";
+        }
+
+        if (PrepScan.IsHidden(skipped))
+        {
+            return "the hidden attribute";
         }
 
         return File.Exists(Path.Combine(skipped, ".gdignore")) ? "a .gdignore" : "a nested project.godot";

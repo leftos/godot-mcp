@@ -90,11 +90,25 @@ For an agent driving a Godot project through this server: which tool fits a job,
   Every tool that names a node refuses this way, the input tools' `{element}`, `wait_for`'s signal wait, `watch`'s tracks and a `{"$node": path}` argument to the C# tools included; the closing hint points to `get_ui_elements` for an input target and to `get_scene_tree` elsewhere.
 - **C# projects.**
 
-  A launch, a restart and every headless tool run the prep first: a stale C# assembly is built and missing or outdated imports are run (an asset whose source bytes changed since its import, read from Godot's `.godot/imported/*.md5` only when the source is newer, or whose `.import` settings changed since the server last saw them, recorded in `.godot/godot-mcp/import-fingerprints.json`; a settings change made before the server first prepped the folder needs the editor opened once); the result's `prep` says what was done, and `buildLog` / `importLog` name the full log of a build or import that ran (the next one overwrites it). A headless tool's result carries `prep` only when the prep ran a step (a build built, failed or stopped, or an import done); a call whose prep found nothing to do has none, and `validate` always carries it. When the project's `prepWrapper` is a gate, `buildGate` / `importGate` hold its closing verdict line (see the prepWrapper section).
+  A launch, a restart and every headless tool run the prep first: a stale C# assembly is built and missing or outdated imports are run. An import is due for an importable source with no `.import` file on disk, named in `prep.note` as `imported because res://<path> had no .import file`, plus ` (and <n> more)` and a full stop.
+
+  Only extensions Godot's importers recognise count (`.mp3` but not `.mp1` or `.mp2`), a file with the Windows hidden attribute or under a hidden folder is not scanned, and `.blend` counts only while project.godot does not set `[filesystem] import/blender/enabled` to a value Godot reads as false (`false`, `0`, `null` or `""`; a quoted `"false"` is true).
+
+  Sources come from git, so a gitignored source without a sidecar makes no import due, and the sidecar is looked for on disk, so a gitignored one counts. A `.blend` the import still left without a sidecar, as with no Blender path set, is recorded in `.godot/godot-mcp/import-fingerprints.json` by path and md5 and imports again only when its bytes change.
+
+  Any other source left without a sidecar is not recorded and stays due on the next prep, with the note `res://<path> still has no .import file after the import (and <n> more); see <import log path>.`.
+
+  When the import's output holds Godot's `Blender path is invalid or not set`, the note adds `Godot dropped the import because Blender's path is not set: set [filesystem] import/blender/enabled=false in project.godot, or set Blender's path in the editor settings and then open the project in the editor once, or delete <project>/.godot/godot-mcp/import-fingerprints.json so the next run imports it.`
+
+  Its `.blend` sources then leave the `imported because` note, and an import whose only errors are that line runs once, not twice.
+
+  An import is also due for an asset whose source bytes changed since its import (read from Godot's `.godot/imported/*.md5` only when the source is newer), or whose `.import` settings changed since the server last saw them (recorded in `.godot/godot-mcp/import-fingerprints.json`; a settings change made before the server first prepped the folder needs the editor opened once).
+
+  The result's `prep` says what was done, and `buildLog` / `importLog` name the full log of a build or import that ran (the next one overwrites it). A headless tool's result carries `prep` only when the prep ran a step (a build built, failed or stopped, or an import done); a call whose prep found nothing to do has none, and `validate` always carries it. When the project's `prepWrapper` is a gate, `buildGate` / `importGate` hold its closing verdict line (see the prepWrapper section).
 
   When an import ran, `prep` also lists `filesWritten` and `filesRemoved`: the `.uid` and `.import` files that were created or changed (new, or a different size or last-write time) and deleted, as sorted `res://` paths, in the folders Godot's scan visits, git-ignored ones included. Both are left out when empty or when no import ran. They are what changed in the tree while the import ran, so a write by another process in that time (an editor open on the project) can appear in them. A failed or stopped import's refusal ends with `Before it stopped, the import wrote <paths>; removed <paths>.` when it changed any. Every result that carries `prep` shows them.
 
-  An import that is due while another session's game runs on the folder is refused, not run under the live game: stop those sessions, or pass `options.prepare: "never"` to go on without it.
+  An import that is due while another session's game runs on the folder is refused, not run under the live game: stop those sessions, or pass `options.prepare: "never"` to go on without it. The refusal reads `the project at <dir> needs a Godot import (res://<path> has no .import file), but session(s) <names> are running on it; …`, the bracket only when a missing sidecar is a reason.
 
   A headless write is refused while an editor session is open on the folder, since the editor's own copy of a scene and the file would race: `create_scene`, `save_scene`, `delete_nodes`, `attach_script`, `duplicate_node`, `move_node`, `add_node`, `set_node_properties`, `connect_signal`, `disconnect_signal`, `export_mesh_library`, `batch_scene_operations`, `load_sprite` and `stamp_uids`. The refusal names the session: `the editor session '<name>' is open on <dir>, so headless writes there are refused: they would race the editor's own copy of the scene. Make the change in the editor and save it with editor {action: save}, or stop the editor session with stop_project first; reads stay allowed.`
 
@@ -147,7 +161,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
   A `.xscn` is always saved whole through its addon's saver, which keeps its comments and keys: no text splice, no layout warning, in either direction. `save_scene` between `.xscn` files keeps the source's comments and keys (the source is copied to the target first; a failed save restores or removes the target), and an unreadable source or existing target answers that read error and leaves the target alone. A save from `.xscn` to `.tscn` writes Godot's plain form, with no comments carried. A `.xscn` holds no uid inside: it is in a `.uid` file beside it, and `uidFilesWritten` lists one a save created.
 
   A scene or resource of a format no loader reads fails to load with `no loader reads .xscn files in this project: build the C# project first, then run godot --headless --path <project> --import once so Godot registers the addon's loader classes. A project without the addon cannot read this format.`, on `get_scene_file_tree`, every edit tool, `validate` and a failed save.
-- **A scene that loaded with errors is not saved.** `save_scene`, every scene edit tool and `batch_scene_operations`, for any scene format, refuse with `<scene> loaded with errors, so it was not saved: saving it now would drop whatever failed to load, such as an instance whose file was not found. Fix what engineErrors names first.` when the text loader reports a resource it could not fetch while the scene loads (a missing instance or a missing texture import, a ` - Parse Error: ` line from `scene/resources/resource_format_text.cpp`).
+- **A scene that loaded with errors is not saved.** `save_scene`, every scene edit tool and `batch_scene_operations`, for any scene format, refuse with `<scene> loaded with errors, so it was not saved: saving it now would drop whatever failed to load, such as an instance whose file was not found. Fix what engineErrors names first.`
+
+  That happens when the text loader reports a resource it could not fetch while the scene loads (a missing instance or a texture the prep's import could not produce, a ` - Parse Error: ` line from `scene/resources/resource_format_text.cpp`).
 
   A script the scene file itself references that does not load or cannot be instantiated, such as one with a parse error, refuses on every repeat too, with `<scene> was not saved: its script <script> does not load, so saving it now would drop the script and its values. Fix the script first.`
 
@@ -1708,9 +1724,9 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 - **Does:** gives every `.tscn`, `.tres`, `.xscn` and `.xres` with no uid yet the uid the editor would give it, in a headless Godot without running the game: `{checked, stamped: [{path, uid}], alreadyHad, uidFilesWritten?, failed?: [{path, error}], errors?}`. A `.tscn` or `.tres` gets it in its header; a `.xscn` or `.xres`, whose format has no header, gets the `<file>.uid` beside it, written by its format's saver as the editor's scan would.
 
   `stamped` lists the files given a uid and `uidFilesWritten` the `.uid` files written: commit them. `alreadyHad` counts the files that had a uid already, a `.xscn` or `.xres` whose `.uid` file exists among them (left alone).
-- **Use:** after hand-writing scenes or resources. `projectPath`, `paths` (`.tscn`, `.tres`, `.xscn` and `.xres` files and folders, `res://` or relative to the project folder; a folder is walked deeply); left out, the whole project is walked, skipping what Godot's scan skips (a folder whose name starts with `.`, a `.gdignore`, a nested `project.godot`).
+- **Use:** after hand-writing scenes or resources. `projectPath`, `paths` (`.tscn`, `.tres`, `.xscn` and `.xres` files and folders, `res://` or relative to the project folder; a folder is walked deeply); left out, the whole project is walked, skipping what Godot's scan skips (a folder whose name starts with `.`, a `.gdignore`, a nested `project.godot`, the Windows hidden attribute on a file or folder).
 
-  A folder named in `paths` that Godot's scan skips is refused whole: `paths '<path>' is a folder Godot's scan skips (<reason>), so its files get no uid from the editor either; name scanned files or folders.` A header that already holds a uid is left alone whatever the uid cache says; a file the cache lists with a header that lost its uid gets the cached uid back, so references to it keep resolving.
+  A folder named in `paths` that Godot's scan skips is refused whole: `paths '<path>' is a folder Godot's scan skips (<reason>), so its files get no uid from the editor either; name scanned files or folders.` The reason is `(the hidden attribute)` for a hidden folder. A header that already holds a uid is left alone whatever the uid cache says; a file the cache lists with a header that lost its uid gets the cached uid back, so references to it keep resolving.
 - **Edges:** in a `.tscn` or `.tres` only the first line changes: a hand-written header's other attributes (`load_steps`) are dropped, the rest of the file is kept byte for byte; a `.xscn`'s or `.xres`'s own text never changes.
 
   The uid is also added to `.godot/uid_cache.bin` when the project has one. `.scn` and `.res` are not taken (`is not a scene or resource: stamp_uids takes .tscn, .tres, .xscn and .xres files and folders.`). An empty `paths`, a missing path and more than 500 files found at once are refused (pass `paths`); a file that fails is listed in `failed` while the others are still stamped.
@@ -1762,8 +1778,13 @@ A script that does not compile or does not extend a Node class is refused, and a
 ### `load_sprite`
 
 - **Does:** sets the `texture` of `nodePath` (Sprite2D, Sprite3D, TextureRect, NinePatchRect, Polygon2D, or any node with a Texture2D `texture`) to `texturePath` and saves: `{path, texture}`.
-- **Edges:** `texturePath` is an image, a `.tres`, `.res` or `.xres` (any other is refused: `… and .tres, .res or .xres textures.`). An image never imported is imported first by the editor's full scan, which writes `.import` and `.uid` files across the project: expect those in the diff. An image in a folder Godot does not scan (a name starting with `.`, or holding `.gdignore` or a nested project's own `project.godot`) is refused.
+- **Edges:** `texturePath` is an image, a `.tres`, `.res` or `.xres` (any other is refused: `… and .tres, .res or .xres textures.`).
 
+  An image never imported is imported first by the editor's full scan, which writes `.import` and `.uid` files across the project: expect those in the diff.
+
+  An image in a folder Godot does not scan (a name starting with `.`, the Windows hidden attribute, or holding `.gdignore` or a nested project's own `project.godot`) is refused: `… is in res://<folder>, which Godot does not scan; move the asset out of it.`.
+
+  A hidden image file is refused with `res://<path> has the hidden attribute, which Godot does not scan; clear it or move the asset.`.
 ### `set_node_properties`
 
 - **Does:** sets 1 to 100 `updates` `{nodePath, property, value}`, reads each back (floats compared as `set_property` compares them), and saves: `{results: [{nodePath, property, before, after}]}`.

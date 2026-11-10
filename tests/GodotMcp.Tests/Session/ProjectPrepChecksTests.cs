@@ -42,7 +42,7 @@ public sealed class ProjectPrepChecksTests : IDisposable
         ProjectPrepFixtures.WriteFile(PrepScan.ClassCachePath(game), text, written);
 
     private static bool IsStale(string game, params string[] extraInputs) =>
-        PrepScan.IsFormatClassStale(game, new ProjectFiles([Path.Combine(game, "Loader.cs"), .. extraInputs], [], [], [], []));
+        PrepScan.IsFormatClassStale(game, new ProjectFiles([Path.Combine(game, "Loader.cs"), .. extraInputs], [], [], [], [], []));
 
     [Fact]
     public void AGlobalClassWithNoClassCacheIsStale() => Assert.True(IsStale(GlobalClassGame(ProjectPrepFixtures.Built)));
@@ -130,7 +130,7 @@ public sealed class ProjectPrepChecksTests : IDisposable
     public void AnImportThatRegistersAGlobalClassRunsTwice()
     {
         string game = GlobalClassGame(ProjectPrepFixtures.Later);
-        ProjectFiles files = new([Path.Combine(game, "Loader.cs")], [], [], [], []);
+        ProjectFiles files = new([Path.Combine(game, "Loader.cs")], [], [], [], [], []);
         WriteClassCache(game, "list=[]\n", ProjectPrepFixtures.Old);
         IReadOnlySet<string> before = PrepScan.CachedFormatClasses(game, files);
         WriteClassCache(game, GlobalLoaderCache, ProjectPrepFixtures.Latest);
@@ -440,6 +440,24 @@ public sealed class ProjectPrepChecksTests : IDisposable
 
         Assert.Contains("session(s) game are running on it", refused.Message, StringComparison.Ordinal);
         Assert.False(hooked);
+    }
+
+    [Fact]
+    public async Task TheRefusalWhileSessionsRunNamesASourceWithNoImportFile()
+    {
+        string game = ProjectPrepFixtures.CreateGame(_temp, null);
+        File.WriteAllText(Path.Combine(game, "block.glb"), "glb");
+        PrepContext context = new(game, NullLogger.Instance, () => ["game"], () => { });
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            ProjectPrep.RunAsync(context, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(
+            $"the project at {game} needs a Godot import (res://block.glb has no .import file), but session(s) game are running on it; "
+                + "stop them first, or pass options.prepare: \"never\" to launch without importing.",
+            refused.Message
+        );
     }
 
     [Fact]

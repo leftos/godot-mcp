@@ -155,6 +155,35 @@ public sealed partial class PrepTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ASourceWithNoImportFileIsImported()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        string source = Path.Combine(probe.Directory, "fresh.png");
+        File.WriteAllBytes(source, Convert.FromBase64String(OnePixelPng));
+
+        LaunchResult launched = await LaunchAsync(probe.Directory, prepare: true, cancellation);
+
+        Assert.Equal("done", launched.Prep.Import);
+        Assert.Contains("imported because res://fresh.png had no .import file", launched.Prep.Note, StringComparison.Ordinal);
+        Assert.True(File.Exists(source + ".import"), "the import wrote no fresh.png.import");
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ABlendIsNotImportedWhenBlenderImportIsDisabled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.AppendAllText(Path.Combine(probe.Directory, "project.godot"), "\n[filesystem]\n\nimport/blender/enabled=false\n");
+        File.WriteAllText(Path.Combine(probe.Directory, "block.blend"), "not a real blend file");
+
+        LaunchResult launched = await LaunchAsync(probe.Directory, prepare: true, cancellation);
+
+        Assert.Equal("not-needed", launched.Prep.Import);
+        Assert.DoesNotContain("block.blend", launched.Prep.Note ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAssetChangedSinceItsImportIsImportedAgain()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

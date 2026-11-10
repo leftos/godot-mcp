@@ -109,10 +109,10 @@ internal static partial class ProjectPrep
             // Read only when a step runs a process, so a prep that runs none never reads godot-mcp.json.
             Lazy<PrepWrapper?> wrapper = new(() => PrepWrapper.Read(context.ProjectDir));
             ProjectFiles files = PrepScan.Scan(context.ProjectDir, context.Logger);
-            IReadOnlyDictionary<string, string> fingerprints = ImportFingerprints.Read(context.ProjectDir, context.Logger);
+            var basis = ImportBasis.Of(context.ProjectDir, files, context.Logger);
             PrepStep build = await BuildAsync(context, files, wrapper, reportRedBuild, cancellationToken);
-            PrepStep import = await ImportAsync(context, files, fingerprints, wrapper, cancellationToken);
-            ImportFingerprints.Save(context.ProjectDir, SidecarsFor(import, context, files), import.State, fingerprints, context.Logger);
+            PrepStep import = await ImportAsync(context, files, basis, wrapper, cancellationToken);
+            ImportFingerprints.Save(context.ProjectDir, PassFor(import, context, files, basis), import.State, basis.Fingerprints, context.Logger);
             string? wrapperNote = wrapper.IsValueCreated ? wrapper.Value?.Note : null;
             string[] notes = [.. new[] { build.Note, import.Note, wrapperNote }.OfType<string>()];
             PrepResult result = new()
@@ -475,24 +475,26 @@ internal static partial class ProjectPrep
     private static async Task<PrepStep> ImportAsync(
         PrepContext context,
         ProjectFiles files,
-        IReadOnlyDictionary<string, string> fingerprints,
+        ImportBasis basis,
         Lazy<PrepWrapper?> wrapper,
         CancellationToken cancellationToken
     )
     {
         if (
-            !PrepScan.ImportNeeded(context.ProjectDir, files, fingerprints, context.Logger)
-            && !context.ImportAssets.Any(asset => PrepScan.AssetNeedsImport(context.ProjectDir, asset, fingerprints))
+            !PrepScan.ImportNeeded(context.ProjectDir, files, basis.MissingSidecars, basis.Fingerprints, context.Logger)
+            && !context.ImportAssets.Any(asset => PrepScan.AssetNeedsImport(context.ProjectDir, asset, basis.Fingerprints))
         )
         {
             return new PrepStep("not-needed", null, null);
         }
 
+        IReadOnlyList<string> missingSidecars = basis.MissingSidecars;
         IReadOnlyList<string> others = context.RunningSessions();
         if (others.Count > 0)
         {
+            string why = missingSidecars.Count > 0 ? $" ({PrepScan.ResourcePathOf(context.ProjectDir, missingSidecars[0])} has no .import file)" : "";
             throw new SessionException(
-                $"the project at {context.ProjectDir} needs a Godot import, but session(s) {string.Join(", ", others)} are running on it; "
+                $"the project at {context.ProjectDir} needs a Godot import{why}, but session(s) {string.Join(", ", others)} are running on it; "
                     + $"stop them first{context.ImportSkipHint}."
             );
         }
@@ -517,7 +519,7 @@ internal static partial class ProjectPrep
             PrepStep step = reason is null
                 ? new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log, Gate = GateVerdictOf(wrap, log, context.Logger) }
                 : await SecondImportAsync(godot, context, wrap, first, reason, cancellationToken);
-            return WithSidecarChanges(step, context.ProjectDir, before);
+            return WithMissingSidecarNotes(WithSidecarChanges(step, context.ProjectDir, before), context.ProjectDir, missingSidecars);
         }
         catch (SessionException e)
         {
@@ -530,6 +532,80 @@ internal static partial class ProjectPrep
             throw new SessionException(e.Message + " " + stopped, e);
         }
     }
+
+    /// <summary>
+    /// The step, with its notes on the sources that made the import run for having no <c>.import</c> file appended to any note
+    /// it already has: the ones it imported, or a <c>.blend</c> it left without one, which the record keeps
+    /// (<see cref="MissingSidecarNote"/>); every other one still without one (<see cref="StillMissingNote"/>); and why Godot
+    /// dropped the import when Blender's path is not set (<see cref="BlenderPathNote"/>).
+    /// </summary>
+    private static PrepStep WithMissingSidecarNotes(PrepStep step, string projectDir, IReadOnlyList<string> sources)
+    {
+        string[] notes = [.. new[] { step.Note, MissingSidecarNotes(projectDir, sources, step.Log) }.OfType<string>()];
+        return step with { Note = notes.Length == 0 ? null : string.Join(' ', notes) };
+    }
+
+    /// <summary>
+    /// The notes on the sources that made a finished import run for having no <c>.import</c> file, joined, or null when there are
+    /// none: the ones it imported, or a <c>.blend</c> it left without one, which the record keeps (<see cref="MissingSidecarNote"/>),
+    /// without the <c>.blend</c> ones when Godot dropped the import for Blender's path, which <see cref="BlenderPathNote"/> covers;
+    /// every other one still without one (<see cref="StillMissingNote"/>); and that note.
+    /// </summary>
+    /// <param name="log">The import's log, which <see cref="StillMissingNote"/> points to and the Blender line is looked for in.</param>
+    internal static string? MissingSidecarNotes(string projectDir, IReadOnlyList<string> sources, string? log)
+    {
+        List<string> left = [.. sources.Where(source => !ImportFingerprints.RecordsSource(source) && !File.Exists(source + PrepScan.ImportSuffix))];
+        string? blender = BlenderPathNote(projectDir, log);
+        IEnumerable<string> imported = sources.Except(left).Where(source => blender is null || !ImportFingerprints.RecordsSource(source));
+        string[] notes =
+        [
+            .. new[] { MissingSidecarNote(projectDir, [.. imported]), StillMissingNote(projectDir, left, log), blender }.OfType<string>(),
+        ];
+        return notes.Length == 0 ? null : string.Join(' ', notes);
+    }
+
+    /// <summary>
+    /// The note naming the first source that made an import run for having no <c>.import</c> file, and how many others did:
+    /// <c>imported because res://block.glb had no .import file (and 2 more).</c>, without the count when it was the only one;
+    /// null when no source did.
+    /// </summary>
+    internal static string? MissingSidecarNote(string projectDir, IReadOnlyList<string> sources) =>
+        sources.Count == 0 ? null : $"imported because {PrepScan.ResourcePathOf(projectDir, sources[0])} had no .import file{More(sources)}.";
+
+    /// <summary>
+    /// The note naming the first source the import left without an <c>.import</c> file that the record does not keep, so it
+    /// stays due, and how many others: <c>res://fresh.png still has no .import file after the import (and 1 more); see
+    /// &lt;log&gt;.</c>; null when there is none.
+    /// </summary>
+    internal static string? StillMissingNote(string projectDir, IReadOnlyList<string> sources, string? log) =>
+        sources.Count == 0
+            ? null
+            : $"{PrepScan.ResourcePathOf(projectDir, sources[0])} still has no .import file after the import{More(sources)}; see {log}.";
+
+    /// <summary>" (and n more)" for the sources after the first, or "" when there is only one.</summary>
+    private static string More(IReadOnlyList<string> sources) => sources.Count > 1 ? $" (and {sources.Count - 1} more)" : string.Empty;
+
+    /// <summary>
+    /// The note saying Godot dropped the import because Blender's path is not set, when the import's log holds Godot's line for
+    /// it (4.7.2 <c>modules/gltf/editor/editor_scene_importer_blend.cpp</c> L552): with a <c>.blend</c> to import and no
+    /// Blender, Godot drops the whole batch (<c>editor/file_system/editor_file_system.cpp</c> L1049-1054). It names the record
+    /// (<see cref="ImportFingerprints.PathIn"/>), whose <c>.blend</c> entries keep such a file from making the next run import.
+    /// Null otherwise.
+    /// </summary>
+    internal static string? BlenderPathNote(string projectDir, string? log) =>
+        BlenderDropped(log)
+            ? "Godot dropped the import because Blender's path is not set: set [filesystem] import/blender/enabled=false in project.godot, "
+                + "or set Blender's path in the editor settings and then open the project in the editor once, "
+                + $"or delete {ImportFingerprints.PathIn(projectDir)} so the next run imports it."
+            : null;
+
+    /// <summary>
+    /// Whether the import's log holds Godot's line for a batch it dropped because Blender's path is not set (<see cref="BlenderPathNote"/>).
+    /// </summary>
+    internal static bool BlenderDropped(string? log) => log is not null && File.Exists(log) && File.ReadLines(log).Any(IsBlenderLine);
+
+    /// <summary>Whether a line of the import's log is Godot's line for Blender's path not being set.</summary>
+    private static bool IsBlenderLine(string line) => line.Contains("Blender path is invalid or not set", StringComparison.Ordinal);
 
     /// <summary>The step, with the .uid and .import files the import it ran created, changed or deleted.</summary>
     private static PrepStep WithSidecarChanges(
@@ -564,14 +640,15 @@ internal static partial class ProjectPrep
     }
 
     /// <summary>
-    /// Why the import must run once more, or null: its first pass logged errors (<c>ERROR:</c> lines, bare or after a gate's stamp),
+    /// Why the import must run once more, or null: its first pass logged errors (<c>ERROR:</c> lines, bare or after a gate's stamp)
+    /// other than Godot's line for Blender's path not being set (<see cref="BlenderPathNote"/>), which no second pass gets past,
     /// or it registered a <c>[GlobalClass]</c> loader or saver the class cache did not name before it
     /// (<paramref name="classesBefore"/>, null when no class was due), whose loader the pass's own scan ran without, so the
     /// files it reads were left out of the uid cache.
     /// </summary>
     internal static string? SecondPassReason(string log, IReadOnlySet<string>? classesBefore, string projectDir, ProjectFiles files)
     {
-        if (File.Exists(log) && File.ReadLines(log).Any(IsImportError))
+        if (File.Exists(log) && File.ReadLines(log).Any(line => IsImportError(line) && !IsBlenderLine(line)))
         {
             return "its first pass logged errors";
         }
@@ -594,11 +671,41 @@ internal static partial class ProjectPrep
     internal static bool RegisteredNewClasses(IReadOnlySet<string> before, IReadOnlySet<string> after) => !after.IsSubsetOf(before);
 
     /// <summary>
-    /// The sidecars the record is written from: the scan's, or, after an import the prep ran, the project's sidecars as they
-    /// are now, since that import writes a sidecar for every asset it imports, including one the scan before it never saw.
+    /// What the record is written from: after an import the prep ran, the project's sidecars as they are now, since that import
+    /// writes a sidecar for every asset it imports, including one the scan before it never saw, and the prep's sources without
+    /// a sidecar that still have none, marked when Godot dropped the batch for Blender's path (<see cref="BlenderDropped"/>);
+    /// otherwise the scan's sidecars alone.
     /// </summary>
-    private static IReadOnlyList<string> SidecarsFor(PrepStep import, PrepContext context, ProjectFiles files) =>
-        import.State == "done" ? PrepScan.ImportFiles(context.ProjectDir, context.Logger) : files.ImportFiles;
+    private static ImportPass PassFor(PrepStep import, PrepContext context, ProjectFiles files, ImportBasis basis) =>
+        import.State == "done"
+            ? new ImportPass(
+                PrepScan.ImportFiles(context.ProjectDir, context.Logger),
+                [.. basis.WithoutSidecars.Where(source => !File.Exists(source + PrepScan.ImportSuffix))]
+            )
+            {
+                Dropped = BlenderDropped(import.Log),
+            }
+            : new ImportPass(files.ImportFiles, []);
+
+    /// <summary>
+    /// What the prep's import decision rests on, read once per prep: the record (<see cref="ImportFingerprints"/>), the
+    /// scanned sources with no sidecar (<see cref="PrepScan.SourcesWithoutSidecars"/>), and of those the ones that make an
+    /// import due (<see cref="PrepScan.MissingSidecarSources"/>), so each recorded <c>.blend</c> is hashed once.
+    /// </summary>
+    private sealed record ImportBasis(
+        IReadOnlyDictionary<string, string> Fingerprints,
+        IReadOnlyList<string> WithoutSidecars,
+        IReadOnlyList<string> MissingSidecars
+    )
+    {
+        /// <summary>The basis of a prep of <paramref name="projectDir"/>, from its scan.</summary>
+        public static ImportBasis Of(string projectDir, ProjectFiles files, ILogger logger)
+        {
+            IReadOnlyDictionary<string, string> fingerprints = ImportFingerprints.Read(projectDir, logger);
+            IReadOnlyList<string> withoutSidecars = PrepScan.SourcesWithoutSidecars(projectDir, files);
+            return new ImportBasis(fingerprints, withoutSidecars, PrepScan.MissingSidecarSources(projectDir, withoutSidecars, fingerprints));
+        }
+    }
 
     /// <summary>
     /// Runs the import again, for <paramref name="reason"/> (<see cref="SecondPassReason"/>): a cold first pass logs errors

@@ -22,12 +22,13 @@ internal sealed record CsprojLookup(CsprojKind Kind, string? ProjectFile, string
 
 /// <summary>
 /// The files the prep looks at, as full paths: the C# build's inputs from the whole git top level (or the project folder
-/// outside git), and the project folder's <c>.import</c> sidecars, <c>.uid</c> files, GDScript files and text scenes and
-/// resources (<c>.tscn</c>, <c>.tres</c>).
+/// outside git), and the project folder's <c>.import</c> sidecars, files an importer can import, <c>.uid</c> files, GDScript
+/// files and text scenes and resources (<c>.tscn</c>, <c>.tres</c>).
 /// </summary>
 internal sealed record ProjectFiles(
     IReadOnlyList<string> BuildInputs,
     IReadOnlyList<string> ImportFiles,
+    IReadOnlyList<string> ImportSources,
     IReadOnlyList<string> UidFiles,
     IReadOnlyList<string> Scripts,
     IReadOnlyList<string> TextResources
@@ -41,17 +42,60 @@ internal static partial class PrepScan
         StringComparer.OrdinalIgnoreCase
     );
 
-    // The files a load reads without an import: Godot's own resources, an addon's .xres, and the textures modules/dds and
-    // modules/ktx register a loader for (4.7.2 register_types.cpp of each).
-    private static readonly HashSet<string> LoadsWithoutImportExtensions = new(
-        [".tres", ".res", ".xres", ".dds", ".ktx"],
+    // The extensions Godot 4.7.2's built-in importers recognise, which its editor scan therefore imports: ImageLoader's image
+    // formats (the texture importers import whatever ImageLoader reads), the scene and model importers' formats, and the
+    // audio, font, csv and shader importers' (editor/import/*, modules/*/resource_importer_*). An addon's EditorImportPlugin
+    // extensions and scene importers are not listed. .dds and .ktx are left out: 4.7.2 has no image loader for them, so no
+    // texture importer takes them, and modules/dds and modules/ktx register resource loaders that read them without an import.
+    // .blend is importable only while project.godot's [filesystem] import/blender/enabled is not false (BlenderEnabled).
+    private static readonly HashSet<string> ImportableExtensions = new(
+        [
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".bmp",
+            ".tga",
+            ".exr",
+            ".hdr",
+            ".svg",
+            ".gltf",
+            ".glb",
+            ".fbx",
+            ".blend",
+            ".dae",
+            ".escn",
+            ".obj",
+            ".wav",
+            ".mp3",
+            ".ogg",
+            ".ttf",
+            ".ttc",
+            ".otf",
+            ".otc",
+            ".woff",
+            ".woff2",
+            ".pfb",
+            ".pfm",
+            ".font",
+            ".fnt",
+            ".csv",
+            ".glsl",
+        ],
         StringComparer.OrdinalIgnoreCase
     );
 
     private const string UidPrefix = "uid://";
 
     /// <summary>What every import sidecar of a source is named: the source's own path plus this.</summary>
-    private const string ImportSuffix = ".import";
+    internal const string ImportSuffix = ".import";
+
+    /// <summary>The extension of a Blender file, which Godot imports only while Blender import is on (<see cref="BlenderEnabled"/>).</summary>
+    internal const string BlendExtension = ".blend";
+
+    // The project.godot values Godot reads as false for a bool setting: the Variant they parse to converts to false
+    // (4.7.2 core/variant/variant.cpp L879-895: nil, false, 0, 0.0 and the empty string).
+    private static readonly HashSet<string> FalseSettingValues = new(["false", "0", "0.0", "null", "nil", "\"\""], StringComparer.Ordinal);
 
     // ResourceUID's char_count ('z' - 'a', 25) and base (char_count + ('9' - '0'), 34): 4.7.2 core/io/resource_uid.cpp L44-45.
     private const ulong UidCharCount = 'z' - 'a';
@@ -71,7 +115,7 @@ internal static partial class PrepScan
     /// </summary>
     public static CsprojLookup FindCsproj(string projectDir)
     {
-        if (ReadAssemblyName(Path.Combine(projectDir, "project.godot")) is { } named)
+        if (ReadSetting(Path.Combine(projectDir, "project.godot"), "[dotnet]", "project/assembly_name") is { } named)
         {
             string path = Path.Combine(projectDir, named + ".csproj");
             return File.Exists(path)
@@ -118,9 +162,11 @@ internal static partial class PrepScan
         (List<string> TopFiles, List<string> ProjectOnly)? listed = ListWithGit(projectDir, logger);
         List<string> topFiles = listed?.TopFiles ?? WalkFolder(projectDir);
         List<string> projectFiles = listed?.ProjectOnly ?? topFiles;
+        bool blenderEnabled = BlenderEnabled(projectDir);
         return new ProjectFiles(
             [.. topFiles.Where(IsBuildInput)],
-            [.. projectFiles.Where(file => HasExtension(file, ImportSuffix))],
+            [.. projectFiles.Where(file => HasExtension(file, ImportSuffix) && BlenderAllows(file[..^ImportSuffix.Length], blenderEnabled))],
+            [.. projectFiles.Where(file => ImportableExtensions.Contains(Path.GetExtension(file)) && BlenderAllows(file, blenderEnabled))],
             [.. projectFiles.Where(file => HasExtension(file, ".uid"))],
             [.. projectFiles.Where(file => HasExtension(file, ".gd"))],
             [.. projectFiles.Where(file => HasExtension(file, ".tscn") || HasExtension(file, ".tres"))]
@@ -191,13 +237,15 @@ internal static partial class PrepScan
         return (written.Count == 0 ? null : written, removed.Count == 0 ? null : removed);
     }
 
-    private static string ResourcePathOf(string projectDir, string file) => "res://" + Path.GetRelativePath(projectDir, file).Replace('\\', '/');
+    /// <summary>A file's <c>res://</c> path in the project, with forward slashes.</summary>
+    internal static string ResourcePathOf(string projectDir, string file) => "res://" + Path.GetRelativePath(projectDir, file).Replace('\\', '/');
 
     private static bool IsSidecar(string file) => HasExtension(file, ".uid") || HasExtension(file, ImportSuffix);
 
     private static bool IsVisitedFolder(string folder) =>
         !SkippedFolders.Contains(Path.GetFileName(folder))
         && !Path.GetFileName(folder).StartsWith('.')
+        && !IsHidden(folder)
         && !File.Exists(Path.Combine(folder, ".gdignore"))
         && !File.Exists(Path.Combine(folder, "project.godot"));
 
@@ -302,17 +350,77 @@ internal static partial class PrepScan
 
     /// <summary>
     /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, whose source is
-    /// not the one it imported or whose settings changed since the prep last saw them (<see cref="ImportOutdated"/>), or a uid
-    /// <c>.godot/uid_cache.bin</c> does not hold (<see cref="IsUidCacheStale"/>), or a script declaring <c>class_name</c> that
-    /// the class cache may not hold yet, or a <c>[GlobalClass]</c> loader or saver it lacks (<see cref="IsFormatClassStale"/>). A missing
-    /// <c>.godot/</c> alone is not a reason.
+    /// not the one it imported or whose settings changed since the prep last saw them (<see cref="ImportOutdated"/>), or an
+    /// importable source the scan reaches that has no sidecar (<see cref="SourcesWithoutSidecars"/>) and no earlier import
+    /// recorded for it, or a uid <c>.godot/uid_cache.bin</c> does not hold (<see cref="IsUidCacheStale"/>), or a script
+    /// declaring <c>class_name</c> that the class cache may not hold yet, or a <c>[GlobalClass]</c> loader or saver it lacks
+    /// (<see cref="IsFormatClassStale"/>). A missing <c>.godot/</c> alone is not a reason.
     /// </summary>
+    /// <param name="missingSidecars">
+    /// The prep's <see cref="MissingSidecarSources"/>, computed once for the whole prep, so no recorded source is hashed twice.
+    /// </param>
     /// <param name="fingerprints">The md5 the prep last saw for each sidecar (<see cref="ImportFingerprints"/>).</param>
-    public static bool ImportNeeded(string projectDir, ProjectFiles files, IReadOnlyDictionary<string, string> fingerprints, ILogger logger) =>
+    public static bool ImportNeeded(
+        string projectDir,
+        ProjectFiles files,
+        IReadOnlyList<string> missingSidecars,
+        IReadOnlyDictionary<string, string> fingerprints,
+        ILogger logger
+    ) =>
         IsUidCacheStale(projectDir, files, logger)
         || files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar) || ImportOutdated(projectDir, sidecar, fingerprints))
+        || missingSidecars.Count > 0
         || IsClassCacheStale(projectDir, files.Scripts)
         || IsFormatClassStale(projectDir, files);
+
+    /// <summary>
+    /// The scanned importable sources that have no <c>.import</c> sidecar on disk: a source git lists but the working tree
+    /// lacks is skipped, and so is one Godot's scan never reaches (<see cref="IsScanned"/>). The sidecar is looked for on disk,
+    /// not in <see cref="ProjectFiles.ImportFiles"/>, which omits a gitignored one. Such a source makes an import due
+    /// (<see cref="ImportNeeded"/>), and an import writes its sidecar. A <c>.blend</c> it writes none for, with Blender's path
+    /// not set, is what the record keeps a source's md5 for (<see cref="ImportFingerprints"/>); any other source still without
+    /// one stays due.
+    /// </summary>
+    public static IReadOnlyList<string> SourcesWithoutSidecars(string projectDir, ProjectFiles files) =>
+        [.. files.ImportSources.Where(source => File.Exists(source) && !File.Exists(source + ImportSuffix) && IsScanned(projectDir, source))];
+
+    /// <summary>
+    /// The sources that make an import due for having no sidecar, in scan order, the first the one the prep's note names:
+    /// <paramref name="withoutSidecars"/> (<see cref="SourcesWithoutSidecars"/>) less the ones an import already found so, with
+    /// the bytes they have now. Each recorded source is hashed once here, and <see cref="ImportNeeded"/> takes the result.
+    /// </summary>
+    public static IReadOnlyList<string> MissingSidecarSources(
+        string projectDir,
+        IReadOnlyList<string> withoutSidecars,
+        IReadOnlyDictionary<string, string> fingerprints
+    ) => [.. withoutSidecars.Where(source => !ImportFingerprints.RecordedWithoutSidecar(projectDir, source, fingerprints))];
+
+    /// <summary>
+    /// Whether project.godot leaves Godot's Blender import on, absent meaning true (4.7.2 <c>modules/gltf/register_types.cpp</c>
+    /// L154); with it off, no importer takes a <c>.blend</c> (L91-100). It is off only when <c>[filesystem]</c>'s
+    /// <c>import/blender/enabled</c> holds a value Godot reads as false (<see cref="FalseSettingValues"/>): its own key, not a
+    /// feature override such as <c>.windows</c>, spaces around <c>=</c> and a trailing <c>; comment</c> ignored, a quoted
+    /// value kept quoted, since a non-empty string is true.
+    /// </summary>
+    internal static bool BlenderEnabled(string projectDir)
+    {
+        string projectFile = Path.Combine(projectDir, "project.godot");
+        if (!File.Exists(projectFile) || RawSetting(projectFile, "[filesystem]", "import/blender/enabled") is not { } value)
+        {
+            return true;
+        }
+
+        int comment = value.IndexOf(';', StringComparison.Ordinal);
+        return !FalseSettingValues.Contains(comment < 0 ? value : value[..comment].TrimEnd());
+    }
+
+    private static bool IsBlend(string file) => HasExtension(file, BlendExtension);
+
+    /// <summary>
+    /// Whether Godot imports a source of this kind, as far as Blender import decides it: a <c>.blend</c> only while it is on
+    /// (<see cref="BlenderEnabled"/>), so a <c>.blend</c>'s sidecar is left out too while it is off.
+    /// </summary>
+    private static bool BlenderAllows(string source, bool blenderEnabled) => blenderEnabled || !IsBlend(source);
 
     /// <summary>
     /// Whether <c>.godot/uid_cache.bin</c> lacks a uid the project's files record: with no cache, whether any <c>.uid</c>
@@ -345,23 +453,37 @@ internal static partial class PrepScan
 
     /// <summary>
     /// The full path of the outermost folder between <paramref name="projectDir"/> and <paramref name="file"/> that Godot's
-    /// scan skips for its name starting with "." or for holding a <c>.gdignore</c> (4.7.2
-    /// <c>editor/file_system/editor_file_system.cpp</c> L1179-1185 and L3502-3505) or for holding a
-    /// <c>project.godot</c> of its own, a nested project (L3494-3500), or null.
+    /// scan skips for its name starting with ".", for its hidden attribute (4.7.2 <c>editor/file_system/editor_file_system.cpp</c>
+    /// L1174-1176), for holding a <c>.gdignore</c> (L1179-1185 and L3502-3505) or for holding a <c>project.godot</c> of its
+    /// own, a nested project (L3494-3500), or null.
     /// </summary>
     internal static string? UnscannedFolder(string projectDir, string file) =>
         FoldersBetween(projectDir, file)
             .FirstOrDefault(folder =>
                 Path.GetFileName(folder).StartsWith('.')
+                || IsHidden(folder)
                 || File.Exists(Path.Combine(folder, ".gdignore"))
                 || File.Exists(Path.Combine(folder, "project.godot"))
             );
 
     /// <summary>
-    /// Whether Godot's scan, and so an import, reaches <paramref name="file"/>: no folder on its way skips it
-    /// (<see cref="UnscannedFolder"/>).
+    /// Whether Godot's scan, and so an import, reaches <paramref name="file"/>: the file is not hidden and no folder on its way
+    /// skips it (<see cref="UnscannedFolder"/>; 4.7.2 <c>editor/file_system/editor_file_system.cpp</c> L1174-1176).
     /// </summary>
-    private static bool IsScanned(string projectDir, string file) => UnscannedFolder(projectDir, file) is null;
+    private static bool IsScanned(string projectDir, string file) => !IsHidden(file) && UnscannedFolder(projectDir, file) is null;
+
+    /// <summary>Whether a file or folder has the hidden attribute; false when it cannot be read, a missing one included.</summary>
+    internal static bool IsHidden(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.Hidden) != 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>The folders from <paramref name="projectDir"/>'s child down to the one holding <paramref name="file"/>, outermost first.</summary>
     private static IEnumerable<string> FoldersBetween(string projectDir, string file)
@@ -469,16 +591,16 @@ internal static partial class PrepScan
     }
 
     /// <summary>
-    /// Whether a file a request loads must be imported first: it is not one that loads without an import (<c>.tres</c>,
-    /// <c>.res</c>, <c>.xres</c>, <c>.dds</c>, <c>.ktx</c>), and it has no <c>.import</c> sidecar, or one whose <c>dest_files</c> are not
-    /// all present or whose source is not the one it imported (<see cref="ImportOutdated"/>) (an ignored sidecar is not in
-    /// <see cref="ProjectFiles.ImportFiles"/>). A never-imported image fails to load with "No loader found" (4.7.2
-    /// <c>core/io/resource_loader.cpp</c> L332).
+    /// Whether a file a request loads must be imported first: it is one an importer recognises (<see cref="ImportableExtensions"/>),
+    /// and it has no <c>.import</c> sidecar, or one whose <c>dest_files</c> are not all present or whose source is not the one it
+    /// imported (<see cref="ImportOutdated"/>) (an ignored sidecar is not in <see cref="ProjectFiles.ImportFiles"/>). A
+    /// never-imported image fails to load with "No loader found" (4.7.2 <c>core/io/resource_loader.cpp</c> L332).
     /// </summary>
     public static bool AssetNeedsImport(string projectDir, string assetPath, IReadOnlyDictionary<string, string> fingerprints)
     {
         string sidecar = assetPath + ImportSuffix;
-        return !LoadsWithoutImportExtensions.Contains(Path.GetExtension(assetPath))
+        return ImportableExtensions.Contains(Path.GetExtension(assetPath))
+            && (!IsBlend(assetPath) || BlenderEnabled(projectDir))
             && (!File.Exists(sidecar) || HasMissingTarget(projectDir, sidecar) || ImportOutdated(projectDir, sidecar, fingerprints));
     }
 
@@ -490,7 +612,8 @@ internal static partial class PrepScan
     /// import recorded (<see cref="SourceChanged"/>) (4.7.2 <c>editor/file_system/editor_file_system.cpp</c> L673-760). The
     /// sidecar is hashed only when the record holds one for it, since the editor's own cache of import parameters cannot be read
     /// outside the editor. A sidecar the editor never imports, its <c>importer</c> "keep" or "skip" or its <c>valid=false</c>
-    /// (L673, L643), is never due, and a sidecar missing from the working tree names nothing to import.
+    /// (L673, L643), is never due, and a sidecar missing from the working tree is not due here: its source, when there, has no
+    /// sidecar, so <see cref="SourcesWithoutSidecars"/> makes it due.
     /// </summary>
     public static bool ImportOutdated(string projectDir, string sidecar, IReadOnlyDictionary<string, string> fingerprints)
     {
@@ -538,10 +661,11 @@ internal static partial class PrepScan
 
     /// <summary>
     /// Whether a sidecar's own import settings changed since the prep recorded them: it has a recorded md5 and it differs from
-    /// the sidecar's. A sidecar with no record is not due on this ground, since there is nothing to compare yet.
+    /// the sidecar's. A sidecar with no record is not due on this ground, since there is nothing to compare yet; a recorded one
+    /// that cannot be read is taken as changed, so the import becomes due.
     /// </summary>
-    private static bool SettingsChanged(string projectDir, string sidecar, IReadOnlyDictionary<string, string> fingerprints) =>
-        fingerprints.TryGetValue(ImportFingerprints.KeyFor(projectDir, sidecar), out string? seen) && seen != ImportFingerprints.Md5Of(sidecar);
+    internal static bool SettingsChanged(string projectDir, string sidecar, IReadOnlyDictionary<string, string> fingerprints) =>
+        fingerprints.TryGetValue(ImportFingerprints.KeyFor(projectDir, sidecar), out string? seen) && seen != ImportFingerprints.TryMd5Of(sidecar);
 
     /// <summary>The <c>.md5</c> an import writes for a source: <c>.godot/imported/&lt;source file name&gt;-&lt;md5 of the
     /// res:// path&gt;.md5</c> (4.7.2 <c>core/io/resource_importer.cpp</c> L541-543), the path hashed as UTF-8 with forward
@@ -697,20 +821,31 @@ internal static partial class PrepScan
         return ResourcePath().Matches(destLine).Select(match => Path.Combine(projectDir, match.Groups[1].Value)).Any(target => !File.Exists(target));
     }
 
-    private static string? ReadAssemblyName(string projectFile)
+    /// <summary>
+    /// A project.godot setting's value, unquoted, from the <paramref name="section"/> header (with its brackets) and the
+    /// <paramref name="key"/> under it; null when it is absent or empty.
+    /// </summary>
+    private static string? ReadSetting(string projectFile, string section, string key) =>
+        RawSetting(projectFile, section, key)?.Trim('"') is { Length: > 0 } value ? value : null;
+
+    /// <summary>
+    /// A project.godot setting's text after its <c>=</c>, trimmed and otherwise as written, from the <paramref name="section"/>
+    /// header (with its brackets) and the <paramref name="key"/> under it, spaces around the <c>=</c> allowed; null when absent.
+    /// </summary>
+    private static string? RawSetting(string projectFile, string section, string key)
     {
-        string section = string.Empty;
+        string current = string.Empty;
         foreach (string raw in File.ReadLines(projectFile))
         {
             string line = raw.Trim();
+            int equals = line.IndexOf('=', StringComparison.Ordinal);
             if (line.StartsWith('['))
             {
-                section = line;
+                current = line;
             }
-            else if (section == "[dotnet]" && line.StartsWith("project/assembly_name=", StringComparison.Ordinal))
+            else if (current == section && equals > 0 && line[..equals].TrimEnd() == key)
             {
-                string value = line["project/assembly_name=".Length..].Trim().Trim('"');
-                return value.Length > 0 ? value : null;
+                return line[(equals + 1)..].Trim();
             }
         }
 
