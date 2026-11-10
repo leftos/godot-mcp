@@ -480,7 +480,7 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
-    public void TheProfilesStepPacesRideOnThePlanAndOptionsPaceDropsThem()
+    public void TheProfilesStepPacesRideOnThePlanAndOptionsPaceKeepsOnlyTheirGuards()
     {
         WriteProfile(
             """
@@ -504,6 +504,41 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Equal(new Dictionary<string, ScratchPace> { ["2"] = new(30, null), ["fight"] = new(20, "the batch") }, beta.StepPaces);
         Assert.Equal(1.5, given.Pace);
         Assert.Empty(given.StepPaces);
+    }
+
+    // options.pace paces every step but changes no guard: the scene's guard stays on the plan, and of the step entries only the
+    // guarded one stays, at options.pace and optional.
+    [Fact]
+    public void UnderOptionsPaceTheScenesGuardAndAGuardedStepEntryStayAndAnUnguardedOneIsDropped()
+    {
+        WriteProfile(
+            """
+            {
+              "scratch": {
+                "folder": "Scratch",
+                "pace": {
+                  "Beta": {
+                    "seconds": 0.5,
+                    "reason": "quick",
+                    "guard": 30,
+                    "steps": { "2": 30, "fight": { "seconds": 20, "reason": "the batch", "guard": 40 } }
+                  }
+                }
+              }
+            }
+            """
+        );
+
+        ScratchScenePlan given = Plan(["Beta"], new ScratchOptions(Pace: 1.5)).Scenes[0];
+
+        Assert.Equal(30, given.Guard);
+        Assert.Equal(
+            new Dictionary<string, ScratchPace>
+            {
+                ["fight"] = new(1.5, null) { Guard = 40, Optional = true },
+            },
+            given.StepPaces
+        );
     }
 
     [Fact]

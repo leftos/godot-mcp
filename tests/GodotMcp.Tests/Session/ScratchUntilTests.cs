@@ -106,8 +106,14 @@ public sealed class ScratchUntilTests
     [Fact]
     public void AnUntilsReleaseIsItsHangGuardNotItsPaceFlooredOnlyOnTheServer()
     {
-        Assert.Equal(ScratchRun.UntilHangGuard, new ScratchBounds(TimeSpan.Zero, ScratchRun.UntilHangGuard).UntilRelease);
-        Assert.Equal(TimeSpan.FromMinutes(10), new ScratchBounds(TimeSpan.FromMinutes(10), ScratchRun.UntilHangGuard).UntilRelease);
+        Assert.Equal(
+            ScratchRun.UntilHangGuard,
+            new ScratchBounds(TimeSpan.Zero, ScratchRun.UntilHangGuard).UntilReleaseOf(ScratchRun.UntilHangGuard)
+        );
+        Assert.Equal(
+            TimeSpan.FromMinutes(10),
+            new ScratchBounds(TimeSpan.FromMinutes(10), ScratchRun.UntilHangGuard).UntilReleaseOf(ScratchRun.UntilHangGuard)
+        );
         Assert.Equal(ScratchRun.UntilHangGuard, new ScratchBounds(TimeSpan.FromMinutes(10), ScratchRun.UntilHangGuard).UntilGuard);
     }
 
@@ -132,6 +138,33 @@ public sealed class ScratchUntilTests
         Assert.Null(error);
         Assert.Equal(limitGameMs, wait!["limitGameMs"]!.GetValue<int>());
         Assert.Equal(500, wait["timeoutMs"]!.GetValue<int>());
+    }
+
+    // Step 0's profile guard is 40 s, step 1 has none: step 0's bridge limit is 5 times 40 s and its release 40 s, unfloored at a
+    // floor of 0, and its not-met text names 40 s; step 1 keeps the default guard of 15 s.
+    [Fact]
+    public void AStepsOwnGuardSetsItsGameLimitReleaseAndNotMetTextAndAStepWithoutOneKeepsTheDefault()
+    {
+        ScratchWalk walk = new([new(0.5, null) { Guard = 40 }, new(0.5, null)], [0, 1], 1)
+        {
+            UntilSteps = new HashSet<int> { 0, 1 },
+            UntilGuard = ScratchRun.UntilHangGuard,
+        };
+        ScratchBounds bounds = new(TimeSpan.Zero, ScratchRun.UntilHangGuard);
+        JsonNode condition = JsonNode.Parse("{\"node\": \"Dice\", \"signal\": \"Settled\"}")!;
+
+        (JsonObject? guarded, _) = ScratchRun.UntilWait(condition, 0, "batch", 500, Play with { Guard = walk.GuardOf(0) });
+        (JsonObject? plain, _) = ScratchRun.UntilWait(condition, 1, "roll", 500, Play with { Guard = walk.GuardOf(1) });
+
+        Assert.Equal(200000, guarded!["limitGameMs"]!.GetValue<int>());
+        Assert.Equal(75000, plain!["limitGameMs"]!.GetValue<int>());
+        Assert.Equal(TimeSpan.FromSeconds(40), bounds.UntilReleaseOf(walk.GuardOf(0)));
+        Assert.Equal(ScratchRun.UntilHangGuard, bounds.UntilReleaseOf(walk.GuardOf(1)));
+        Assert.Equal(
+            "step 0 'batch': its until hung at its guard of 40 s of load-adjusted time (its condition never held); check the condition "
+                + "GetStepUntil gives",
+            ScratchRun.UntilMissed(0, "batch", new ScratchUntil(false, 40000, 40010, 900), walk.GuardOf(0).TotalSeconds, 1)
+        );
     }
 
     [Fact]

@@ -162,7 +162,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         [Description(
             "{pace, timeScale, userArgs, engineArgs, ceilings, memoryCeilings, prepare, details, parallel, session, keepGoing, "
                 + "steps, listSteps, background, only, watch, windowed, audible, userData}: pace in seconds for every "
-                + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
+                + "step (else scratch.pace's for the step, else for the scene, else 0.5); an until step's hang guard is 15 s of "
+                + "load-adjusted time unless its scratch.pace step entry, else its scene entry, sets a guard (above 15 s, at most "
+                + "120 s), which options.pace leaves as it is; timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
                 + "seconds and does not; the wait after the last step lasting p s of wall time above 1, p being the scene's "
@@ -922,6 +924,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             PaceReason = options.Pace is null ? entry?.Reason : null,
             StepPaces = StepPaces(entry, options),
             ExitHold = entry?.ExitHold,
+            Guard = entry?.Guard,
             TimeScale = TimeScaleFor(entry, options),
             EngineArgs = engineArgs,
             Ceiling = CeilingFor(name, scratch, options),
@@ -1038,9 +1041,20 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         }
     }
 
-    /// <summary>The profile's step paces for the scene, none when options.pace paces every step.</summary>
+    /// <summary>
+    /// The profile's step paces for the scene; when options.pace paces every step, only those that set a guard, each at that pace
+    /// and optional, since options.pace does not change a step's guard.
+    /// </summary>
     private static IReadOnlyDictionary<string, ScratchPace> StepPaces(ScratchPace? entry, ScratchOptions options) =>
-        options.Pace is null && entry is not null ? entry.Steps : ReadOnlyDictionary<string, ScratchPace>.Empty;
+        (entry, options.Pace) switch
+        {
+            (null, _) => ReadOnlyDictionary<string, ScratchPace>.Empty,
+            (_, null) => entry.Steps,
+            (_, double pace) => entry
+                .Steps.Where(step => step.Value.Guard is not null)
+                // Optional: under options.pace a guarded key sets no step's pace, so the "sets no step's pace" warning would be wrong.
+                .ToDictionary(step => step.Key, step => new ScratchPace(pace, null) { Guard = step.Value.Guard, Optional = true }),
+        };
 
     /// <summary>The scenes as res:// paths: those given, each checked, or every scene file (.tscn, .scn, .xscn) directly in
     /// scratch.folder by ordinal name.</summary>

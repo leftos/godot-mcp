@@ -114,6 +114,30 @@ public sealed class ScratchUntilRunTests : IAsyncDisposable
         }
     }
 
+    // ScratchUntilGuarded's until holds 5 s of game time after its step starts, on a harness of the test's own whose guard is
+    // 0.5 s: without its step entry's "guard": 30 the bridge would end the wait at 2.5 s of game time, 5 times that guard, and
+    // the step would hang; with it the limit is 150 s of game time and the step is met.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnUntilStepsProfileGuardLengthensItsHangGuardPastTheDefault()
+    {
+        await using SessionHarness harness = new(launchesUnfocused: false, productionGraces: false, TimeSpan.FromSeconds(0.5));
+        ScratchTools scratch = new(harness.Sessions, TestCSharp.Unused());
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(
+                scratch,
+                ["ScratchUntilGuarded"],
+                new ScratchOptions(Details: ScratchRunnerTests.FullDetails),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
+        JsonNode step = Assert.Single(scene["details"]!.AsArray())!;
+        Assert.Equal("batch done", ScratchRunnerTests.Status(step));
+        Assert.True(step["until"]!["met"]!.GetValue<bool>(), step.ToJsonString());
+        Assert.InRange(step["until"]!["gameMs"]!.GetValue<int>(), 5000, int.MaxValue);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AnUntilTheBridgeRefusesOrAnAnswerThatIsNoConditionIsRedAtThatStep()
     {

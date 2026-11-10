@@ -149,9 +149,18 @@ internal sealed partial class ProjectProfile
     private const string TimeScaleKey = "timeScale";
     private static readonly string[] StepPaceKeys = ["seconds", "reason"];
     private const string OptionalKey = "optional";
-    private static readonly string[] StepPaceObjectKeys = [.. StepPaceKeys, OptionalKey];
+    private const string GuardKey = "guard";
+    private static readonly string[] StepPaceObjectKeys = [.. StepPaceKeys, OptionalKey, GuardKey];
     private const string ExitHoldKey = "exitHold";
-    private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey, ExitHoldKey];
+    private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey, ExitHoldKey, GuardKey];
+
+    /// <summary>
+    /// The seconds a pace's "guard" must be above: the default hang guard of an until step (<see cref="ScratchRun.UntilHangGuard"/>).
+    /// </summary>
+    private static readonly int MinGuardSeconds = (int)ScratchRun.UntilHangGuard.TotalSeconds;
+
+    /// <summary>The most seconds a pace's "guard" may be.</summary>
+    private const int MaxGuardSeconds = 120;
     private static readonly string[] PatternKeys = ["pattern", "reason"];
     private const string AlwaysKey = "always";
     private static readonly string[] SetupObjectKeys = [AlwaysKey, StepsKey];
@@ -1023,7 +1032,8 @@ internal sealed partial class ProjectProfile
     /// <summary>
     /// A scene's object pace: "seconds" and "reason", in either order, the reason why the scene needs it, the optional
     /// "steps", the paces of single steps, the optional "timeScale", which can only be 1 and keeps the scene at normal speed, and
-    /// the optional "exitHold", the seconds waited after the last played step in place of that step's pace.
+    /// the optional "exitHold", the seconds waited after the last played step in place of that step's pace, and the optional
+    /// "guard", the hang guard of each of its until steps that sets none of its own.
     /// </summary>
     private static ScratchPace ReadObjectPace(string scene, JsonElement value, Place place)
     {
@@ -1036,7 +1046,7 @@ internal sealed partial class ProjectProfile
         }
 
         double? exitHold = keys.TryGetValue(ExitHoldKey, out JsonElement hold) ? Seconds(hold, pace, $"\"{ExitHoldKey}\"") : null;
-        ScratchPace read = ReadSecondsAndReason(keys, pace) with { NormalSpeed = normalSpeed, ExitHold = exitHold };
+        ScratchPace read = ReadSecondsAndReason(keys, pace) with { NormalSpeed = normalSpeed, ExitHold = exitHold, Guard = ReadGuard(keys, pace) };
         return keys.TryGetValue(StepsKey, out JsonElement steps) ? read with { Steps = ReadStepPaces(scene, steps, pace) } : read;
     }
 
@@ -1079,12 +1089,28 @@ internal sealed partial class ProjectProfile
         return steps;
     }
 
-    /// <summary>A step's object pace: "seconds" and "reason", and the optional "optional", which lets its key match no step.</summary>
+    /// <summary>
+    /// A step's object pace: "seconds" and "reason", the optional "optional", which lets its key match no step, and the optional
+    /// "guard", the step's hang guard when it has an until.
+    /// </summary>
     private static ScratchPace ReadStepPace(JsonElement value, Place step)
     {
         Dictionary<string, JsonElement> keys = Keys(value, StepPaceObjectKeys, step);
-        return ReadSecondsAndReason(keys, step) with { Optional = ReadBool(keys, OptionalKey, step) ?? false };
+        return ReadSecondsAndReason(keys, step) with { Optional = ReadBool(keys, OptionalKey, step) ?? false, Guard = ReadGuard(keys, step) };
     }
+
+    /// <summary>An object pace's optional "guard": seconds above the default hang guard and at most the longest; null when unset.</summary>
+    private static double? ReadGuard(Dictionary<string, JsonElement> keys, Place place) =>
+        keys.TryGetValue(GuardKey, out JsonElement value) ? Guard(value, place) : null;
+
+    private static double Guard(JsonElement value, Place place) =>
+        value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double seconds) && seconds > MinGuardSeconds && seconds <= MaxGuardSeconds
+            ? seconds
+            : throw Refused(
+                place,
+                $"\"{GuardKey}\" must be a number of seconds above {MinGuardSeconds} and at most {MaxGuardSeconds}, not {Shown(value)}; "
+                    + $"it bounds an until step whose condition never holds, and the default is {MinGuardSeconds}"
+            );
 
     /// <summary>An object pace's "seconds" and "reason", both required.</summary>
     private static ScratchPace ReadSecondsAndReason(Dictionary<string, JsonElement> keys, Place pace)
@@ -1104,7 +1130,7 @@ internal sealed partial class ProjectProfile
 
     private static string MissingPaceKey(string key) =>
         $"\"{key}\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or write the pace as a bare number of "
-        + "seconds, which cannot carry a timeScale or exitHold";
+        + "seconds, which cannot carry a timeScale, exitHold or guard";
 
     private static string ReadPaceReason(JsonElement value, Place place) =>
         value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } reason
@@ -1526,6 +1552,12 @@ internal sealed record ScratchPace(double Seconds, string? Reason)
     /// the last step is; null when the profile sets none, which waits that step's pace.
     /// </summary>
     public double? ExitHold { get; init; }
+
+    /// <summary>
+    /// A scene's or a step's "guard": the seconds of load-adjusted time an until step whose condition never holds is failed at, in
+    /// place of the default hang guard; a step's replaces its scene's. Null when the profile sets none.
+    /// </summary>
+    public double? Guard { get; init; }
 }
 
 /// <summary>

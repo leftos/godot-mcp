@@ -40,6 +40,17 @@
           "scaled": { "seconds": 1, "reason": "its until holds at 0.6 s of game time, 1.2 s of real time at time_scale 0.5" }
         }
       },
+      "ScratchUntilGuarded": {
+        "seconds": 0.1,
+        "reason": "its until holds 5 s of game time after its step starts; the pace is only its default wait and exit hold",
+        "steps": {
+          "batch": {
+            "seconds": 0.1,
+            "reason": "its batch lands 5 s after the step, past the test's short harness guard",
+            "guard": 30
+          }
+        }
+      },
       "ScratchUntilNever": 1,
       "ScratchUntilRaises": 2,
       "ScratchUntilReadRaises": 0.1,

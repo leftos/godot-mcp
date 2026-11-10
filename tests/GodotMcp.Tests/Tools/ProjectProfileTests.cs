@@ -768,6 +768,31 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void AnObjectPacesGuardIsReadOnTheSceneAndOnAStepAndAPaceWithoutOneHasNone()
+    {
+        Write(
+            """
+            { "scratch": { "pace": {
+              "A": { "seconds": 1, "reason": "x", "guard": 40, "steps": {
+                "batch": { "seconds": 2, "reason": "y", "guard": 30 },
+                "1": { "seconds": 2, "reason": "z" }
+              } },
+              "B": { "seconds": 2, "reason": "why" },
+              "C": 2
+            } } }
+            """
+        );
+
+        ScratchProfile scratch = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal(40, scratch.Pace["A"].Guard);
+        Assert.Equal(30, scratch.Pace["A"].Steps["batch"].Guard);
+        Assert.Null(scratch.Pace["A"].Steps["1"].Guard);
+        Assert.Null(scratch.Pace["B"].Guard);
+        Assert.Null(scratch.Pace["C"].Guard);
+    }
+
+    [Fact]
     public void APaceWithoutStepsHasNone()
     {
         Write("""{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "why" }, "B": 2 } } }""");
@@ -862,17 +887,17 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3 } } } }""",
         "(scratch, pace of \"A\"): \"reason\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds, which cannot carry a timeScale or exitHold."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale, exitHold or guard."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "reason": "x" } } } }""",
         "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds, which cannot carry a timeScale or exitHold."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale, exitHold or guard."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": {} } } }""",
         "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds, which cannot carry a timeScale or exitHold."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale, exitHold or guard."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 0, "reason": "x" } } } }""",
@@ -892,7 +917,7 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "why": "y" } } } }""",
-        "(scratch, pace of \"A\"): unknown key \"why\"; the allowed keys are seconds, reason, steps, timeScale, exitHold. Remove or rename it."
+        "(scratch, pace of \"A\"): unknown key \"why\"; the allowed keys are seconds, reason, steps, timeScale, exitHold, guard. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "exitHold": 0 } } } }""",
@@ -911,8 +936,33 @@ public sealed class ProjectProfileTests : IDisposable
         "(scratch, pace of \"A\"): \"exitHold\" must be a number of seconds above 0 and at most 120, not a string."
     )]
     [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "guard": 15 } } } }""",
+        "(scratch, pace of \"A\"): \"guard\" must be a number of seconds above 15 and at most 120, not 15; it bounds an until step whose "
+            + "condition never holds, and the default is 15."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "guard": 121 } } } }""",
+        "(scratch, pace of \"A\"): \"guard\" must be a number of seconds above 15 and at most 120, not 121; it bounds an until step whose "
+            + "condition never holds, and the default is 15."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "guard": "40" } } } }""",
+        "(scratch, pace of \"A\"): \"guard\" must be a number of seconds above 15 and at most 120, not a string; it bounds an until step "
+            + "whose condition never holds, and the default is 15."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "guard": 15 } } } } } }""",
+        "(scratch, pace of \"A\", step \"2\"): \"guard\" must be a number of seconds above 15 and at most 120, not 15; it bounds an until "
+            + "step whose condition never holds, and the default is 15."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "guard": 121 } } } } } }""",
+        "(scratch, pace of \"A\", step \"2\"): \"guard\" must be a number of seconds above 15 and at most 120, not 121; it bounds an until "
+            + "step whose condition never holds, and the default is 15."
+    )]
+    [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "exitHold": 1 } } } } } }""",
-        "(scratch, pace of \"A\", step \"2\"): unknown key \"exitHold\"; the allowed keys are seconds, reason, optional. Remove or rename it."
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"exitHold\"; the allowed keys are seconds, reason, optional, guard. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "timeScale": 2 } } } }""",
@@ -926,11 +976,11 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "timeScale": 1 } } } } } }""",
-        "(scratch, pace of \"A\", step \"2\"): unknown key \"timeScale\"; the allowed keys are seconds, reason, optional. Remove or rename it."
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"timeScale\"; the allowed keys are seconds, reason, optional, guard. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "steps": {} } } } } } }""",
-        "(scratch, pace of \"A\", step \"2\"): unknown key \"steps\"; the allowed keys are seconds, reason, optional. Remove or rename it."
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"steps\"; the allowed keys are seconds, reason, optional, guard. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "optional": 1 } } } } } }""",
@@ -938,7 +988,8 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "optional": true } } } }""",
-        "(scratch, pace of \"A\"): unknown key \"optional\"; the allowed keys are seconds, reason, steps, timeScale, exitHold. Remove or rename it."
+        "(scratch, pace of \"A\"): unknown key \"optional\"; the allowed keys are seconds, reason, steps, timeScale, exitHold, guard. "
+            + "Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": 0 } } } } }""",
@@ -951,7 +1002,7 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "Fight": { "seconds": 3 } } } } } }""",
         "(scratch, pace of \"A\", step \"Fight\"): \"reason\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds, which cannot carry a timeScale or exitHold."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale, exitHold or guard."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": "3" } } } } }""",
@@ -969,7 +1020,7 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "pace": { "A": { "reason": "x", "steps": { "2": 1 } } } } }""",
         "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds, which cannot carry a timeScale or exitHold."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale, exitHold or guard."
     )]
     [InlineData("""{ "scratch": { "pace": { "A": 1, "A": 2 } } }""", "(scratch): the scene \"A\" appears twice in \"pace\"; keep one.")]
     [InlineData(

@@ -1,5 +1,6 @@
 using System.Globalization;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Tests.Session;
 
@@ -22,7 +23,7 @@ public sealed class ScratchBoundsTests
         Assert.True(bounds.Call >= Floor, $"the call timeout is {bounds.Call}");
         Assert.True(bounds.Markers >= Floor, $"the marker wait is {bounds.Markers}");
         Assert.True(bounds.Release(5000, 1) >= Floor, $"the pace release is {bounds.Release(5000, 1)}");
-        Assert.True(bounds.UntilRelease >= Floor, $"the until release is {bounds.UntilRelease}");
+        Assert.True(bounds.UntilReleaseOf(bounds.UntilGuard) >= Floor, $"the until release is {bounds.UntilReleaseOf(bounds.UntilGuard)}");
         Assert.Equal(ScratchRun.UntilHangGuard, bounds.UntilGuard);
         Assert.True(bounds.Release(20000, 0.5) >= Floor, $"the scaled pace release is {bounds.Release(20000, 0.5)}");
         Assert.True((Walk with { Floor = Floor }).Ceiling >= Floor, $"the walk's ceiling is {(Walk with { Floor = Floor }).Ceiling}");
@@ -55,9 +56,9 @@ public sealed class ScratchBoundsTests
         Assert.Equal(TimeSpan.FromSeconds(10), bounds.Markers);
         Assert.Equal(TimeSpan.FromSeconds(15), bounds.Release(5000, 1));
         Assert.Equal(TimeSpan.FromSeconds(50), bounds.Release(20000, 0.5));
-        Assert.Equal(ScratchRun.Ceiling([0.5, 2], [false, false], TimeSpan.Zero, 1, null), (Walk with { Floor = floor }).Ceiling);
+        Assert.Equal(ScratchRun.Ceiling([0.5, 2], [null, null], 1, null), (Walk with { Floor = floor }).Ceiling);
         Assert.Equal(ScratchRun.UntilHangGuard, harness.Sessions.ScratchUntilGuard);
-        Assert.Equal(ScratchRun.UntilHangGuard, bounds.UntilRelease);
+        Assert.Equal(ScratchRun.UntilHangGuard, bounds.UntilReleaseOf(bounds.UntilGuard));
     }
 
     [Fact]
@@ -74,7 +75,7 @@ public sealed class ScratchBoundsTests
         double guard = ScratchRun.UntilHangGuard.TotalSeconds;
         var ceiling = TimeSpan.FromSeconds(47.5);
         Assert.Equal(ceiling, until.Ceiling);
-        Assert.Equal(ceiling, ScratchRun.Ceiling([0.5, 2], [false, true], ScratchRun.UntilHangGuard, 1, null));
+        Assert.Equal(ceiling, ScratchRun.Ceiling([0.5, 2], [null, ScratchRun.UntilHangGuard], 1, null));
         Assert.Equal(
             $"the scene passed its ceiling of {Seconds(ceiling.TotalSeconds)} s of load-adjusted time (each of its 2 steps' pace + 10 s, "
                 + $"an until step's guard of {Seconds(guard)} s in place of its pace, the last step's pace once more, and 10 s for the "
@@ -83,6 +84,56 @@ public sealed class ScratchBoundsTests
         );
         Assert.Equal(0.5 + guard + 2, until.RemainingSecondsAtMost(0));
         Assert.Equal(guard + 2, until.RemainingSecondsAtMost(1));
+    }
+
+    // Step 1's until has a profile guard of 40 s, step 2's none, so it keeps the default.
+    [Fact]
+    public void EachUntilStepCountsItsOwnGuardInTheCeilingAndTheRemainingTimeAndOneWithoutAGuardTheDefault()
+    {
+        var guarded = new ScratchWalk([new(0.5, null), new(2, null) { Guard = 40 }, new(1, null)], [0, 1, 2], 1)
+        {
+            UntilSteps = new HashSet<int> { 1, 2 },
+            UntilGuard = ScratchRun.UntilHangGuard,
+        };
+
+        Assert.Equal((TimeSpan.FromSeconds(40), ScratchRun.UntilHangGuard), (guarded.GuardOf(1), guarded.GuardOf(2)));
+        // 0.5 s + 10 s for the paced step, 40 s + 10 s and 15 s + 10 s for the until steps, 1 s for the last step's pace once more
+        // and 10 s for the markers.
+        var ceiling = TimeSpan.FromSeconds(96.5);
+        Assert.Equal(ceiling, guarded.Ceiling);
+        Assert.Equal(ceiling, ScratchRun.Ceiling([0.5, 2, 1], [null, TimeSpan.FromSeconds(40), ScratchRun.UntilHangGuard], 1, null));
+        Assert.Equal(TimeSpan.FromSeconds(50 + 25 + 10), ScratchRun.Ceiling([2, 1], [TimeSpan.FromSeconds(40), ScratchRun.UntilHangGuard], 1, 0));
+        Assert.Equal(0.5 + 40 + 15 + 1, guarded.RemainingSecondsAtMost(0));
+        Assert.Equal(40 + 15 + 1, guarded.RemainingSecondsAtMost(1));
+        Assert.Equal(15 + 1, guarded.RemainingSecondsAtMost(2));
+        Assert.Equal(
+            "the scene passed its ceiling of 96.5 s of load-adjusted time (each of its 3 steps' pace + 10 s, an until step's guard of 40 s "
+                + "in place of its pace, the last step's pace once more, and 10 s for the markers), so its game was stopped",
+            guarded.CeilingReason(string.Empty)
+        );
+    }
+
+    // The case table of a step's guard: its own, else its scene's, else none, which the walk takes as the default guard.
+    [Theory]
+    [InlineData(40.0, 30.0, 40.0)]
+    [InlineData(null, 30.0, 30.0)]
+    [InlineData(40.0, null, 40.0)]
+    [InlineData(null, null, null)]
+    public void AStepsGuardIsItsOwnElseItsScenesElseNone(double? stepGuard, double? sceneGuard, double? guard)
+    {
+        ScratchScenePlan scene = new("Guarded", "res://scratch/Guarded.tscn", 0.5, [])
+        {
+            Guard = sceneGuard,
+            StepPaces = new Dictionary<string, ScratchPace> { ["batch"] = new(2, "the batch lands late") { Guard = stepGuard } },
+            TimeScale = 1,
+            EngineArgs = [],
+        };
+
+        (ScratchPace[] paces, string? error, _) = ScratchRun.StepPaces(scene, ["open", "batch"]);
+
+        Assert.Null(error);
+        Assert.Equal((sceneGuard, guard), (paces[0].Guard, paces[1].Guard));
+        Assert.Equal(2, paces[1].Seconds);
     }
 
     [Fact]
