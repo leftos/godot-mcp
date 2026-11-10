@@ -20,6 +20,14 @@ const EXPRESSION_INPUTS: PackedStringArray = ["root", "tree", "Input", "Engine"]
 # gdformat joins any split of this text back into one line past gdlint's 100 characters.
 # gdlint: ignore=max-line-length
 const NOT_GDSCRIPT_HINT := "Godot's Expression is not GDScript: it has no lambdas (func), no if/else, no is or as, no not in (write not (a in b)), and no statements; it has calls, indexing, literals and operators such as and, or, not, in, ==, !=, <, <=, >, >=, +, -, *, / and %."
+## The refusal of an expression naming a member of node its script does not have: the member, the
+## run-time failure, the node argument as the call gave it, and the member again.
+const NO_MEMBER := "the expression can never succeed: node.%s: %s. '%s' has no property '%s'."
+## The same refusal for a C# node, whose plain members Godot's Expression cannot read: the member,
+## the failure, and the node argument.
+# gdformat joins any split of this text back into one line past gdlint's 100 characters.
+# gdlint: ignore=max-line-length
+const NO_MEMBER_CSHARP := "the expression can never succeed: node.%s: %s. '%s' is a C# node, and Godot's Expression reads only members Godot can marshal (a field or property of a Variant-compatible type, not a static member or a List<T>, record or other plain C# type). Read it with cs_get or run_csharp, or wait on a value the node gives in _McpState() with {node, state, equals}."
 const NO_UI_BASELINE := (
 	"uiChanged has no baseline: no input gesture has started since launch or since the last "
 	+ 'uiChanged wait was met; send the input first, or wait for {uiChanged: "now"} '
@@ -36,6 +44,15 @@ const NO_STATE := "'%s' has no state: %s"
 const WHOLE_STATE := "$"
 ## The most digits a state path's list index has: int.MaxValue's 10, the server's limit.
 const MAX_INDEX_DIGITS := 10
+
+## A string literal in an expression's source, double- or single-quoted, with escapes.
+static var _literal_pattern: RegEx = _compiled("\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")
+## A run-time failure naming a member an Object does not have, the member in group 1.
+# gdlint: ignore=max-line-length
+static var _failure_pattern: RegEx = _compiled("^Invalid named index '(.+)' for base type Object$")
+## A member access on the node input itself, the member in group 1; (*UCP) makes \w and the
+## lookbehind follow Unicode identifiers, which Godot's RegEx does not by default.
+static var _access_pattern: RegEx = _compiled("(*UCP)(?<![\\w.])node\\.(\\w+)")
 
 ## The bridge these conditions belong to, for its node lookup, JSON conversion and input module.
 var bridge: Node
@@ -488,7 +505,7 @@ func parse_expression(source: String, node_name: String, failures: Dictionary) -
 	var parsed: Variant = parse_condition(source, names)
 	if parsed is String:
 		return "the expression does not parse: %s" % parsed
-	return _run_expression.bind(parsed, node_name, failures)
+	return _run_expression.bind(parsed, node_name, failures, source)
 
 
 ## Parses source with names as a condition Expression: the parsed Expression, or a String saying why
@@ -520,17 +537,18 @@ static func _condition_reason(reason: String, source: String, whole_source: bool
 ## Whether source names GDScript syntax Expression has no operator for (func, if, else, is, as,
 ## return, var, await, or 'not in'), read with string literals removed so a quoted 'else' is out.
 static func _names_non_expression_syntax(source: String) -> bool:
-	var literal := RegEx.new()
-	literal.compile("\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")
 	var word := RegEx.new()
 	word.compile("(?<![\\w.])(func|if|else|is|as|return|var|await)\\b|\\bnot\\s+in\\b")
-	return word.search(literal.sub(source, "", true)) != null
+	return word.search(_literal_pattern.sub(source, "", true)) != null
 
 
 ## Met when the expression returns true; not run while its node is missing. A failed run counts as
 ## not met in failures, its distinct texts going to the error feed once each (L1494-1508), outside
-## the mute window _execute runs it in.
-func _run_expression(expression: Expression, node_name: String, failures: Dictionary) -> Array:
+## the mute window _execute runs it in; a failure that can never change ends the check with its
+## refusal instead.
+func _run_expression(
+	expression: Expression, node_name: String, failures: Dictionary, source: String
+) -> Array:
 	var tree := Engine.get_main_loop() as SceneTree
 	var inputs: Array = [tree.root, tree, Input, Engine]
 	var node: Node = null
@@ -543,10 +561,52 @@ func _run_expression(expression: Expression, node_name: String, failures: Dictio
 	var value: Variant = _execute(expression, inputs, node, failures)
 	if expression.has_execute_failed():
 		var failure: String = expression.get_error_text()
+		var permanent: String = _permanent_failure(source, failure, node, node_name)
+		if not permanent.is_empty():
+			return [false, null, permanent]
 		if note_failure(failures, failure):
 			push_error("godot-mcp wait_for: the expression failed: %s" % failure)
 		return [false, null]
 	return [value is bool and value == true, bridge._json.to_json(value)]
+
+
+## The refusal for a failure that cannot change, or "" when it can: the failure is a named index on
+## an Object whose name the source, outside its string literals, reads as node.<name>, the node has
+## a script without _get, and it has no property, method or signal of that name. A C# member Godot
+## cannot marshal and a typo both end here (core/math/expression.cpp L1323 in 4.7.2).
+func _permanent_failure(source: String, failure: String, node: Node, node_name: String) -> String:
+	if node == null or node.get_script() == null or node.has_method("_get"):
+		return ""
+	var found: RegExMatch = _failure_pattern.search(failure)
+	if found == null:
+		return ""
+	var name: String = found.get_string(1)
+	if not _reads_node_member(source, name) or _has_member(node, name):
+		return ""
+	if bridge._state.is_csharp.call(node):
+		return NO_MEMBER_CSHARP % [name, failure, node_name]
+	return NO_MEMBER % [name, failure, node_name, name]
+
+
+## Whether source, its string literals removed, reads name as a member of the node input itself.
+static func _reads_node_member(source: String, name: String) -> bool:
+	for access: RegExMatch in _access_pattern.search_all(_literal_pattern.sub(source, "", true)):
+		if access.get_string(1) == name:
+			return true
+	return false
+
+
+## Whether node has a property, method or signal named name; a method and a signal are not a named
+## index Expression can read.
+func _has_member(node: Node, name: String) -> bool:
+	return bridge._json.has_property(node, name) or node.has_method(name) or node.has_signal(name)
+
+
+## pattern compiled, for the static patterns compiled once when the script loads.
+static func _compiled(pattern: String) -> RegEx:
+	var regex := RegEx.new()
+	regex.compile(pattern)
+	return regex
 
 
 ## Runs expression with a mute window for this script open on the bridge's logger, as the watch

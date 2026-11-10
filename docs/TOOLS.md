@@ -1327,6 +1327,10 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   An expression that fails while it runs (an index past an empty array) counts as not met for that check, and its error is in `errors`; a result that follows failed checks adds `failedChecks {count, error}` (the last failure's text), so a `met: true` after them shows the expression did not hold all along. `Expression` evaluates both sides of `and` and `or`, so `a.size() > 0 and a[0] == x` fails, rather than short-circuits, on an empty `a`.
 
+  Every other run-time failure counts as not met and the wait runs on, except one that can never change: `node.<name>` (outside string literals) failing with `Invalid named index '<name>' for base type Object` on a node with a script, no `_get`, and no such property, method or signal ends the wait at once with an error (`… the expression can never succeed: node.<name>: Invalid named index '<name>' for base type Object. '<node>' has no property '<name>'.`), which is not listed in `failedChecks`.
+
+  The same holds for a `frame_control` `until`, a `capture_frames` `options.start` and a `batch_drive` wait. On a C# node the refusal says Godot's `Expression` reads only members Godot can marshal (a field or property of a Variant-compatible type, not a static member or a `List<T>`, record or other plain C# type), and to read it with `cs_get` or `run_csharp`, or to wait on a value the node gives in `_McpState()` with `{node, state, equals}`; a direct wait on a C# member is not offered.
+
   An engine error a native method the expression calls raises on the main thread (`get_child(0)` on a node with no children, which the `and` guard does not prevent) is kept out of `errors` and counted in `mutedErrors {count, error}` (`error` the first one's text), met or not; the same holds for a `frame_control` step's expression `until` and a `capture_frames` expression `start`.
 
   The game's own errors (a `push_error` in a game method the expression calls) and other threads' errors still land in `errors`, as does the once-per-text `godot-mcp wait_for: the expression failed: …` report.

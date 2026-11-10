@@ -1158,6 +1158,22 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         }
     }
 
+    // Numbers is a List<int>, a type Godot cannot marshal, so Expression cannot read it and the wait ends with the
+    // refusal naming the C# helper rather than running to its timeout.
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task AWaitOnAnUnregisteredCSharpPropertyFailsNamingCsGet()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Node: TargetsPath, Expression: "node.Numbers.size() > 0"), 120_000, cancellationToken: cancellation)
+        );
+
+        Assert.Contains("is a C# node", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("cs_get", refused.Message, StringComparison.Ordinal);
+    }
+
     private async Task<JsonObject> RunCSharpAsync(string code, RunCSharpOptions? options, CancellationToken cancellation)
     {
         string json = await _tools.RunCSharpAsync(code, options, cancellationToken: cancellation);

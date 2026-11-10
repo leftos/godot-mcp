@@ -209,6 +209,8 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
   An element that is hidden, being freed, named by several nodes, covered at its centre by another Control, or with its centre outside the viewport is refused with nothing pressed: the error names the cover (or the viewport) and the rects, so click by `{x, y}` in the visible part, bring it into view, or wait until it clears.
 - **A condition `expression` is Godot's `Expression`, not GDScript**: no lambdas, `if`/`else`, `is`, `as` or `not in` (write `not (a in b)`), and both sides of `and` are evaluated, so guard an index with a separate wait or a method of the game's (the engine error such an index raises is kept out of `errors` and counted in `mutedErrors`).
 
+  An expression on a member its node's script lacks (a C# property Godot cannot marshal, or a typo) fails the call at once, so read a C# value with `cs_get` or `_McpState`.
+
   A wait that is met after checks that errored says so in `failedChecks`: a condition that holds too early (a label's placeholder text) reads as met, so wait on the value you need, not on "not empty".
 - **A misnamed or mistyped argument is refused by name**, with the keys the tool takes or the kind the value needs: read the refusal and fix the call, since nothing ran.
 - **One input at a time per session**, each answering once its gesture has ended and two frames have run.

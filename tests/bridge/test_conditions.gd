@@ -20,6 +20,13 @@ const FAILURE_PREFIX := "godot-mcp wait_for: the expression failed: "
 # gdformat joins one string split over lines back into one line past gdlint's 100 characters.
 # gdlint: ignore=max-line-length
 const HOLDER_SOURCE := "extends Node\n\n\nfunc shout() -> bool:\n\tpush_error('holder shout')\n\treturn true\n"
+## The script the scripted expression rig's Holder carries for the member checks: a variable and a
+## Dictionary, and no Orbit.
+const SCRIPTED_HOLDER_SOURCE := "extends Node\n\nvar present := 1\nvar d := {}\n"
+## A Holder script whose kid, a plain Node, is the base of a failing member read.
+const KID_HOLDER_SOURCE := "extends Node\n\nvar kid := Node.new()\n"
+## A Holder script whose _get can serve any name.
+const GET_HOLDER_SOURCE := "extends Node\n\n\nfunc _get(_p):\n\treturn null\n"
 
 var _conditions_script: GDScript = load_bridge_script("godot_mcp_conditions.gd")
 
@@ -267,7 +274,7 @@ func test_an_engine_error_a_called_method_raises_stays_out_of_the_feed() -> void
 
 
 func test_an_error_game_code_an_expression_calls_raises_still_reaches_the_feed() -> void:
-	var rig: Dictionary = _expression_rig()
+	var rig: Dictionary = _scripted_expression_rig(HOLDER_SOURCE)
 	var probe: Callable = rig["conditions"].parse_expression("node.shout()", "Holder", {})
 	var logger: Logger = rig["bridge"]._logger
 	OS.add_logger(logger)
@@ -306,6 +313,114 @@ func test_an_expression_failure_still_reaches_the_feed_once() -> void:
 	assert_true(outcome["result"].has("failedChecks"), "the failed checks: %s" % [outcome])
 	assert_true(not outcome["result"].has("mutedErrors"), "and nothing muted: %s" % [outcome])
 	_free_expression_rig(rig)
+
+
+func test_an_expression_naming_a_member_the_script_lacks_ends_the_wait_with_the_failure() -> void:
+	var rig: Dictionary = _scripted_expression_rig(SCRIPTED_HOLDER_SOURCE)
+	var failures: Dictionary = {}
+	var probe: Callable = rig["conditions"].parse_expression(
+		"node.Orbit.Height > 1", "Holder", failures
+	)
+	var answer: Array = probe.call()
+	_free_expression_rig(rig)
+	assert_eq(answer.size(), 3, "the wait ends: %s" % [answer])
+	var refusal: String = str(answer[2])
+	var start: String = (
+		"the expression can never succeed: node.Orbit: "
+		+ "Invalid named index 'Orbit' for base type Object."
+	)
+	assert_true(refusal.begins_with(start), refusal)
+	assert_true(refusal.ends_with("has no property 'Orbit'."), refusal)
+
+
+func test_a_csharp_node_refusal_points_to_cs_get() -> void:
+	var rig: Dictionary = _scripted_expression_rig(SCRIPTED_HOLDER_SOURCE)
+	rig["bridge"]._state.is_csharp = func(_node: Node) -> bool: return true
+	var probe: Callable = rig["conditions"].parse_expression("node.Orbit.Height > 1", "Holder", {})
+	var answer: Array = probe.call()
+	rig["bridge"]._state.is_csharp = func(_node: Node) -> bool: return false
+	_free_expression_rig(rig)
+	assert_eq(answer.size(), 3, "the wait ends: %s" % [answer])
+	var refusal: String = str(answer[2])
+	assert_true(refusal.contains("cs_get"), refusal)
+	assert_true(refusal.contains("_McpState()"), refusal)
+
+
+func test_a_member_the_script_has_runs_as_before() -> void:
+	var rig: Dictionary = _scripted_expression_rig(SCRIPTED_HOLDER_SOURCE)
+	var probe: Callable = rig["conditions"].parse_expression("node.present == 1", "Holder", {})
+	var answer: Array = probe.call()
+	_free_expression_rig(rig)
+	assert_eq(answer[0], true, "met: %s" % [answer])
+
+
+func test_a_null_base_failure_stays_not_met() -> void:
+	var rig: Dictionary = _scripted_expression_rig(SCRIPTED_HOLDER_SOURCE)
+	var failures: Dictionary = {}
+	var probe: Callable = rig["conditions"].parse_expression(
+		'node.get_child(0).name == "x"', "Holder", failures
+	)
+	var answer: Array = probe.call()
+	# get_child's index error reaches the runner, which fails a test on it; it is expected.
+	Engine.get_main_loop().get("_recorder").take()
+	_free_expression_rig(rig)
+	assert_eq(answer, [false, null], "a child can appear: %s" % [answer])
+	assert_eq(failures["count"], 1, "counted as a failed check: %s" % [failures])
+
+
+func test_a_dictionary_base_failure_stays_not_met() -> void:
+	var rig: Dictionary = _scripted_expression_rig(SCRIPTED_HOLDER_SOURCE)
+	var probe: Callable = rig["conditions"].parse_expression("node.d.missing == 1", "Holder", {})
+	var answer: Array = probe.call()
+	# The failure's push reaches the runner, which fails a test on it; it is expected.
+	Engine.get_main_loop().get("_recorder").take()
+	_free_expression_rig(rig)
+	assert_eq(answer.size(), 2, "a dictionary can gain the key: %s" % [answer])
+
+
+func test_a_failure_on_a_base_other_than_node_stays_not_met() -> void:
+	assert_eq(_kid_answer("node.kid.Orbit > 1").size(), 2, "the base is kid, not node")
+
+
+func test_a_node_member_inside_a_string_literal_does_not_count() -> void:
+	var answer: Array = _kid_answer('node.kid.Orbit == "node.Orbit"')
+	assert_eq(answer.size(), 2, "the quoted node.Orbit is no access: %s" % [answer])
+
+
+func test_a_longer_unicode_name_is_not_the_failing_member() -> void:
+	var rig: Dictionary = _scripted_expression_rig(SCRIPTED_HOLDER_SOURCE)
+	var failure: String = "Invalid named index 'Orbit' for base type Object"
+	var refusal: String = rig["conditions"]._permanent_failure(
+		"node.Orbitä > 1", failure, rig["holder"], "Holder"
+	)
+	var plain: String = rig["conditions"]._permanent_failure(
+		"node.Orbit > 1", failure, rig["holder"], "Holder"
+	)
+	_free_expression_rig(rig)
+	assert_eq(refusal, "", "node.Orbitä does not read Orbit")
+	assert_true(not plain.is_empty(), "while node.Orbit does: " + plain)
+
+
+func test_a_script_with_get_stays_not_met() -> void:
+	var rig: Dictionary = _scripted_expression_rig(GET_HOLDER_SOURCE)
+	var probe: Callable = rig["conditions"].parse_expression("node.Orbit.Height > 1", "Holder", {})
+	var answer: Array = probe.call()
+	# The failure's push reaches the runner, which fails a test on it; it is expected.
+	Engine.get_main_loop().get("_recorder").take()
+	_free_expression_rig(rig)
+	assert_eq(answer.size(), 2, "_get can serve Orbit later: %s" % [answer])
+
+
+## The answer of one check of source on a Holder carrying KID_HOLDER_SOURCE, its kid freed after.
+func _kid_answer(source: String) -> Array:
+	var rig: Dictionary = _scripted_expression_rig(KID_HOLDER_SOURCE)
+	var probe: Callable = rig["conditions"].parse_expression(source, "Holder", {})
+	var answer: Array = probe.call()
+	# The failure's push reaches the runner, which fails a test on it; it is expected.
+	Engine.get_main_loop().get("_recorder").take()
+	rig["holder"].kid.free()
+	_free_expression_rig(rig)
+	return answer
 
 
 func test_a_met_result_carries_its_failed_checks_and_a_clean_one_carries_none() -> void:
@@ -354,9 +469,24 @@ func _free_edge_rig(rig: Dictionary) -> void:
 	rig["bridge"].free()
 
 
-## Conditions whose bridge is a stand-in holding the JSON module and an unregistered logger, and
-## finding Holder, a node outside any tree with no children and HOLDER_SOURCE's script.
+## Conditions whose bridge is a stand-in holding the JSON module, the state seam and an
+## unregistered logger, and finding Holder, a node outside any tree with no children and no script.
 func _expression_rig() -> Dictionary:
+	var holder := Node.new()
+	holder.name = "Holder"
+	return _expression_rig_with(holder)
+
+
+## _expression_rig with source's script on its Holder, for the member and game-code checks.
+func _scripted_expression_rig(source: String) -> Dictionary:
+	var holder: Node = _compile(source)
+	holder.name = "Holder"
+	return _expression_rig_with(holder)
+
+
+## The rig whose bridge holds the JSON module, the state seam and an unregistered logger, and finds
+## holder, a node outside any tree.
+func _expression_rig_with(holder: Node) -> Dictionary:
 	var bridge: Node = _compile(
 		(
 			"\n"
@@ -366,6 +496,7 @@ func _expression_rig() -> Dictionary:
 					"",
 					"var _json: GDScript",
 					"var _logger: Logger",
+					"var _state: Node",
 					"var holder: Node",
 					"",
 					"",
@@ -375,17 +506,19 @@ func _expression_rig() -> Dictionary:
 			)
 		)
 	)
-	var holder: Node = _compile(HOLDER_SOURCE)
-	holder.name = "Holder"
 	bridge.holder = holder
 	bridge._json = load_bridge_script("godot_mcp_json.gd")
 	bridge._logger = load_bridge_script("godot_mcp_logger.gd").new()
+	bridge._state = _compile(
+		"extends Node\n\nvar is_csharp: Callable = func(_node: Node) -> bool: return false\n"
+	)
 	var conditions: Node = _conditions_script.new()
 	conditions.bridge = bridge
 	return {"conditions": conditions, "bridge": bridge, "holder": holder}
 
 
 func _free_expression_rig(rig: Dictionary) -> void:
+	rig["bridge"]._state.free()
 	rig["conditions"].free()
 	rig["holder"].free()
 	rig["bridge"].free()

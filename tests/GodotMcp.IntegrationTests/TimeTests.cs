@@ -698,6 +698,25 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Contains("the expression does not parse: ", refused.Message, StringComparison.Ordinal);
     }
 
+    // The probe's script has no Orbit, so the named-index failure cannot change: the wait ends at once with the refusal
+    // rather than running to its timeout.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitOnAMemberTheScriptLacksFailsInsteadOfWaitingOut()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            WaitAsync(new WaitCondition(Node: "TimeProbe", Expression: "node.Orbit.Height > 1"), 120_000)
+        );
+
+        Assert.StartsWith("wait_for failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "the expression can never succeed: node.Orbit: Invalid named index 'Orbit' for base type Object.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AWaitForTextIsMetOnceACaptionAppears()
     {

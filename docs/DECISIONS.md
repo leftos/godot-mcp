@@ -432,6 +432,14 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
       A call's checks read `take_muted` and report `mutedErrors {count, error}` (the count of engine errors kept out of `errors`, and the first one's text) on a `wait_for` result, a step-until result and a `capture_frames` `start`, met or not, so a dropped error is still visible to the agent.
 
       Ruled out for the conditions: `Engine.print_error_messages = false` (a global that also mutes the bridge's own logger, `core/io/logger.cpp` L258-265, losing real game errors in the same frame); splitting `and`/`or` in the bridge (`Expression` exposes no tree); and a null-safe helper input (new API surface).
+
+    - **A run-time failure that can never change ends the condition at once** (GMCP-502; an orchestrator decision): an expression whose failure is `Invalid named index '<name>' for base type Object` on the `node` input itself (`node.<name>` in the source), where that node has a script, no `_get`, and no such property, method or signal, ends the wait with an error, for every condition sharing the expression (`frame_control` `until`, `capture_frames` `options.start`, `batch_drive` waits, a scratch scene's until).
+
+      Only `node.<name>` on an Object base counts, since the failure is then fixed by the node's script alone; a failure on any other base (a null, a Dictionary, a child) can change with the game, and stays not met. The base is read from the source text, because `Expression` exposes no tree to say which sub-expression failed, and text inside string literals is ignored. A C# node's refusal points to `cs_get`, `run_csharp` or a `_McpState` state wait, since Godot's `Expression` reads only members Godot can marshal.
+
+      A permanent missing member ends an edge wait as a missing property already does; the edge rule "a check whose expression fails to run is no fall" still holds for every transient failure.
+
+      Ruled out: stopping on any repeated failure (a node can come back, or a value can become valid) and a C# member reader inside `Expression` (GMCP-514 tracks a direct C# member wait).
     - **Audio is two track kinds of the watch** (GMCP-46; each the recommended option, the first and third ruled by the owner; the design and its spike are archived in [plans/archive/audio-observation.md](./plans/archive/audio-observation.md)): `tracks.audio {players?: {under?}, buses?: [names] | ["*"], thresholdDb?}`, at least one of `players` and `buses`.
 
       The start reply is the "what plays now" snapshot (`audio: {driver, mixRate, bridgeMuted, players?, buses?}`), and `watch run` with a one-frame window is the one-call read.
