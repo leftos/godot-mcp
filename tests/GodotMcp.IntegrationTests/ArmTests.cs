@@ -17,7 +17,7 @@ public sealed class ArmTests : IAsyncDisposable
     private static readonly TimeSpan DormantWait = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan FileWait = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AbsenceWait = TimeSpan.FromSeconds(4);
-    private static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan GameExitHangGuard = TimeSpan.FromMinutes(2);
     private static readonly string[] GodotMcpVariables =
     [
         GodotCommandLine.PortVariable,
@@ -359,20 +359,14 @@ public sealed class ArmTests : IAsyncDisposable
         return bannered.Task;
     }
 
-    // Dormant and idle games never exit on their own, so each is killed with its tree and waited for until gone: Windows sets
+    // Dormant and idle games never exit on their own, so each is killed with its whole tree and every process in it waited for
+    // until gone: the console wrapper's exit does not mean its Godot.exe child has let go of the probe folder, and Windows sets
     // a process's exit code before it closes the process's handles, its current directory among them.
     private async Task StopGamesAsync()
     {
         foreach (Process game in _games)
         {
-            game.Kill(entireProcessTree: true);
-            if (!await ProcessExit.WaitUntilGoneAsync(game, ExitWait))
-            {
-                throw new InvalidOperationException(
-                    $"the game (pid {game.Id}) still holds its project folder {ExitWait.TotalSeconds:0} s after it was killed"
-                );
-            }
-
+            await ProcessTree.KillAndWaitAsync(game, GameExitHangGuard);
             game.Dispose();
         }
     }

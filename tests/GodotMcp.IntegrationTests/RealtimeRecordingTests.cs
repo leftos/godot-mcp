@@ -34,6 +34,9 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
 
     private const double LengthTolerance = 0.2;
 
+    /// <summary>The hang guard of the wait on a by-hand game's stop: a passing run never reaches it.</summary>
+    private static readonly TimeSpan GameExitHangGuard = TimeSpan.FromMinutes(2);
+
     /// <summary>The capture helper's line when the window's closing ended its capture.</summary>
     private const string WindowClosedLine = "the window closed, so the capture ended";
 
@@ -463,9 +466,9 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         }
         finally
         {
-            // A detached game keeps running, so it is ended here, before the probe's folder goes.
-            game.Kill(entireProcessTree: true);
-            await ProcessExit.WaitUntilGoneAsync(game, TimeSpan.FromSeconds(10));
+            // A detached game keeps running, so it is ended here with its whole tree, each process waited for until gone,
+            // before the probe's folder goes.
+            await ProcessTree.KillAndWaitAsync(game, GameExitHangGuard);
         }
     }
 

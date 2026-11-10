@@ -14,7 +14,7 @@ public sealed class AttachTests : IAsyncDisposable
     private const int TestTimeoutMs = 60_000;
     private const int AttachWaitSeconds = 30;
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan GameExitHangGuard = TimeSpan.FromMinutes(2);
     private static readonly string[] GodotMcpVariables =
     [
         GodotCommandLine.PortVariable,
@@ -231,20 +231,14 @@ public sealed class AttachTests : IAsyncDisposable
 
     // The harness kills and waits for the games its registry still knows, but detaching drops the session from it and these
     // games keep running after the detach, never exiting on their own, so each is killed with its tree at once and waited
-    // for until gone: Windows sets a process's exit code before it closes the process's handles, its current directory among
-    // them, so the probe folder stays held a few tens of ms past the exit.
+    // for until gone, every process in its tree: the console wrapper's exit does not mean its Godot.exe child has let go of
+    // the probe folder, and Windows sets a process's exit code before it closes the process's handles, its current directory
+    // among them, so the folder stays held a few tens of ms past the exit.
     private async Task StopGamesAsync()
     {
         foreach (Process game in _games)
         {
-            game.Kill(entireProcessTree: true);
-            if (!await ProcessExit.WaitUntilGoneAsync(game, ExitWait))
-            {
-                throw new InvalidOperationException(
-                    $"the game (pid {game.Id}) still holds its project folder {ExitWait.TotalSeconds:0} s after it was killed"
-                );
-            }
-
+            await ProcessTree.KillAndWaitAsync(game, GameExitHangGuard);
             game.Dispose();
         }
     }

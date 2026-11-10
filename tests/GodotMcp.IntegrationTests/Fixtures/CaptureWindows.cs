@@ -274,7 +274,7 @@ internal static class CaptureWindows
     }
 
     /// <summary>Every process Toolhelp lists, oldest first.</summary>
-    private static List<ProcessRow> Processes()
+    internal static List<ProcessRow> Processes()
     {
         nint snapshot = NativeMethods.CreateToolhelp32Snapshot(SnapshotProcesses, 0);
         if (snapshot == -1)
@@ -299,7 +299,7 @@ internal static class CaptureWindows
         }
     }
 
-    private sealed record ProcessRow(int Id, int ParentId, string Image);
+    internal sealed record ProcessRow(int Id, int ParentId, string Image);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
