@@ -879,6 +879,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
             Listed = true,
             SessionPrefix = "p",
             KeepGoing = false,
+            WarningsRed = false,
             Steps = null,
             TimeScale = 1,
         };

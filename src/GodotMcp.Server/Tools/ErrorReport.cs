@@ -149,14 +149,17 @@ internal static class ErrorReport
         return entry.Function.Length > 0 ? $"{place} in {entry.Function}" : place;
     }
 
-    /// <summary>The errors grouped by message, file and line, in the order each first appeared.</summary>
+    /// <summary>
+    /// The entries grouped by type, message, file and line, in the order each first appeared, so a warning and an error with the
+    /// same text and site stay apart.
+    /// </summary>
     internal static List<Collapsed> Collapse(IReadOnlyList<ErrorEntry> errors)
     {
-        Dictionary<(string Message, string File, int Line), int> positions = [];
+        Dictionary<(string Type, string Message, string File, int Line), int> positions = [];
         List<Collapsed> collapsed = [];
         foreach (ErrorEntry error in errors)
         {
-            (string, string, int) key = (error.Message, error.File, error.Line);
+            (string, string, string, int) key = (error.Type, error.Message, error.File, error.Line);
             if (positions.TryGetValue(key, out int position))
             {
                 collapsed[position] = collapsed[position] with { Count = collapsed[position].Count + 1 };

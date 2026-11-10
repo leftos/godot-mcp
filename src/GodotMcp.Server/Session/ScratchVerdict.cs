@@ -56,7 +56,7 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
 /// the first step, both judged at the boot; the steps it played, and at most one of: a refusal before any step (the scene did
 /// not start, has no current scene, its root lacks the scratch protocol, a pace.steps key names two steps or two name one, or an
 /// options.steps token names no step), or the step in flight when it was killed (-1
-/// outside a step) with the reason; then why the pace after the last step failed (an error in the feed, or a wait not met),
+/// outside a step) with the reason; then why the pace after the last step failed (an entry the feed logged, or a wait not met),
 /// the game's exit code, the stop's kill and warning, and the lines printed after the last step's window, the stop included.
 /// </summary>
 internal sealed record ScratchObservation(string Scene, string Session, double Pace, int Total)
@@ -65,7 +65,10 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 
     public IReadOnlyList<string> LaunchLines { get; init; } = [];
 
-    /// <summary>The error feed's entries from the launch to the first step; an error among them fails the scene at the boot.</summary>
+    /// <summary>
+    /// The error feed's entries from the launch to the first step that the run judges (its errors, and its warnings when
+    /// scratch.warnings is "red"); any of them fails the scene at the boot.
+    /// </summary>
     public IReadOnlyList<ErrorEntry> BootErrors { get; init; } = [];
 
     public IReadOnlyList<ScratchStep> Steps { get; init; } = [];
@@ -505,8 +508,12 @@ internal static partial class ScratchVerdict
 
     private const string ScratchNotePrefix = "[scratch]";
 
+    /// <summary>What a warning's text starts with wherever a step, the boot or the exit reports it (scratch.warnings "red").</summary>
+    private const string WarningPrefix = "warning: ";
+
     /// <summary>
-    /// Why a step failed: its call's error, else the feed's first error, else its first line a pattern matches, cut to
+    /// Why a step failed: its call's error, else the first entry its window took from the feed (an error, or a warning when
+    /// scratch.warnings is "red"), else its first line a pattern matches, cut to
     /// <see cref="MaxCopyChars"/>; null if it passed.
     /// </summary>
     public static string? StepError(ScratchStep step, IReadOnlyList<ScratchPattern> patterns) => StepError(step, patterns, MaxCopyChars);
@@ -528,18 +535,22 @@ internal static partial class ScratchVerdict
     }
 
     /// <summary>
-    /// The feed's first error (not warning) as a step or the exit reports it, its message cut to <see cref="MaxCopyChars"/>, with
-    /// its file and line; null when none.
+    /// The first of the entries a window took from the feed as a step or the exit reports it, its message cut to
+    /// <see cref="MaxCopyChars"/>, with its file and line, and prefixed "warning: " when it is a warning (taken only when the
+    /// profile's scratch.warnings is "red"); null when none.
     /// </summary>
     public static string? FeedError(IEnumerable<ErrorEntry> entries) => FeedError(entries, MaxCopyChars);
 
     /// <summary>As <see cref="FeedError(IEnumerable{ErrorEntry})"/>, the message cut to <paramref name="max"/> characters.</summary>
     private static string? FeedError(IEnumerable<ErrorEntry> entries, int max) =>
-        entries.FirstOrDefault(entry => entry.IsError) is { } error
-            ? error.File.Length > 0
-                ? $"{OutputBuffer.Cut(error.Message, max)} ({error.File}:{error.Line})"
-                : OutputBuffer.Cut(error.Message, max)
-            : null;
+        entries.FirstOrDefault() is { } error ? Labelled(error) + Located(error, max) : null;
+
+    /// <summary>What a feed entry's text starts with: <see cref="WarningPrefix"/> for a warning, nothing for an error.</summary>
+    private static string Labelled(ErrorEntry entry) => entry.IsError ? string.Empty : WarningPrefix;
+
+    /// <summary>A feed entry's message cut to <paramref name="max"/> characters, with its file and line when it has a file.</summary>
+    private static string Located(ErrorEntry entry, int max) =>
+        entry.File.Length > 0 ? $"{OutputBuffer.Cut(entry.Message, max)} ({entry.File}:{entry.Line})" : OutputBuffer.Cut(entry.Message, max);
 
     /// <summary>The scene's verdict and result.</summary>
     public static ScratchSceneResult Judge(ScratchObservation seen, ScratchRules rules)
@@ -743,8 +754,9 @@ internal static partial class ScratchVerdict
     }
 
     /// <summary>
-    /// The verdict a scene gets before its steps count, in this order: killed, refused, or red at the boot with the feed's first
-    /// error, else with the first launch line a pattern matches; null when none applies.
+    /// The verdict a scene gets before its steps count, in this order: killed, refused, or red at the boot with the first entry
+    /// the boot took from the feed (an error, or a warning when scratch.warnings is "red"), else with the first launch line a
+    /// pattern matches; null when none applies.
     /// </summary>
     private static (string Verdict, ScratchFailure? FailedAt)? BeforeAnyStep(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
     {
@@ -769,7 +781,8 @@ internal static partial class ScratchVerdict
     }
 
     /// <summary>
-    /// Whether the boot fails the scene before any step: an error in the feed, or a launch line a pattern matches.
+    /// Whether the boot fails the scene before any step: an entry the boot took from the feed (an error, or a warning when
+    /// scratch.warnings is "red"), or a launch line a pattern matches.
     /// </summary>
     public static bool RedAtBoot(IReadOnlyList<ErrorEntry> bootErrors, IReadOnlyList<string> launchLines, IReadOnlyList<ScratchPattern> patterns) =>
         FeedError(bootErrors) is not null || BootLineError(launchLines, patterns) is not null;
@@ -846,9 +859,9 @@ internal static partial class ScratchVerdict
         + "the scene is judged by its steps";
 
     /// <summary>
-    /// Whether the exit turns a scene with every step green red: an error in the pace after the last step (except the game closing
-    /// the connection and exiting 0), a kill by the stop, a non-zero code other than a late .NET finalizer crash, a leak, a matching
-    /// line after the steps, or an expected line its output never held.
+    /// Whether the exit turns a scene with every step green red: an error (or a warning when scratch.warnings is "red") in the
+    /// pace after the last step (except the game closing the connection and exiting 0), a kill by the stop, a non-zero code other
+    /// than a late .NET finalizer crash, a leak, a matching line after the steps, or an expected line its output never held.
     /// </summary>
     private static bool ExitFails(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns, List<string>? missing) =>
         (seen.AfterError is not null && !ClosedCleanly(seen))
@@ -969,7 +982,7 @@ internal static partial class ScratchVerdict
 
         DetailLimits chosen = rules.Details == ScratchDetails.Full ? Full : Compact;
         DetailLimits limits = chosen with { Chars = chosen.Chars + Math.Max(0, rules.DetailChars - DefaultDetailChars) };
-        List<ErrorReport.Collapsed> folded = ErrorReport.Collapse([.. step.Errors.Where(entry => entry.IsError)]);
+        List<ErrorReport.Collapsed> folded = ErrorReport.Collapse([.. step.Errors]);
         return WithinBudget(
             listed with
             {
@@ -1023,7 +1036,10 @@ internal static partial class ScratchVerdict
     }
 
     private static ScratchError Folded(ErrorReport.Collapsed error, int messageChars) =>
-        new(OutputBuffer.Cut(error.First.Message, messageChars), error.First.File, error.First.Line) { Count = error.Count > 1 ? error.Count : null };
+        new(Labelled(error.First) + OutputBuffer.Cut(error.First.Message, messageChars), error.First.File, error.First.Line)
+        {
+            Count = error.Count > 1 ? error.Count : null,
+        };
 
     /// <summary>A step's matching lines and [scratch] notes, each cut to <paramref name="detailChars"/>, after a note of the lines it lost.</summary>
     private static List<string> StepLines(ScratchStep step, IReadOnlyList<ScratchPattern> patterns, int detailChars)

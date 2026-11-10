@@ -847,6 +847,23 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void ScratchWarningsRedIsRead()
+    {
+        Write("""{ "scratch": { "warnings": "red" } }""");
+
+        Assert.True(ProjectProfile.Load(_temp.Path).Scratch!.WarningsRed);
+    }
+
+    [Fact]
+    public void ScratchWarningsAreOffWhenLeftOut()
+    {
+        Write("""{ "scratch": {} }""");
+
+        Assert.False(ProjectProfile.Load(_temp.Path).Scratch!.WarningsRed);
+        Assert.False(ScratchProfile.None.WarningsRed);
+    }
+
+    [Fact]
     public void ScratchParallelDefaultsToOne()
     {
         Write("""{ "scratch": {} }""");
@@ -859,7 +876,23 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "threads": 2 } }""",
         "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, memoryCeilings, "
-            + "setup, known, patterns, expect, expectFor, parallel, userData. Remove or rename it."
+            + "setup, known, patterns, warnings, expect, expectFor, parallel, userData. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "warnings": "yes" } }""",
+        "(scratch): scratch.warnings is \"yes\"; it takes \"red\", which judges a warning as an error, or is left out."
+    )]
+    [InlineData(
+        """{ "scratch": { "warnings": true } }""",
+        "(scratch): scratch.warnings is true; it takes \"red\", which judges a warning as an error, or is left out."
+    )]
+    [InlineData(
+        """{ "scratch": { "warnings": 1 } }""",
+        "(scratch): scratch.warnings is 1; it takes \"red\", which judges a warning as an error, or is left out."
+    )]
+    [InlineData(
+        """{ "scratch": { "warnings": {"a": 1} } }""",
+        "(scratch): scratch.warnings is an object; it takes \"red\", which judges a warning as an error, or is left out."
     )]
     [InlineData("""{ "scratch": { "parallel": 0 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 0.")]
     [InlineData("""{ "scratch": { "parallel": 5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 5.")]

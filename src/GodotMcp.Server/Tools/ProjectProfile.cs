@@ -136,6 +136,7 @@ internal sealed partial class ProjectProfile
         "setup",
         "known",
         "patterns",
+        WarningsKey,
         ExpectKey,
         ExpectForKey,
         "parallel",
@@ -143,6 +144,8 @@ internal sealed partial class ProjectProfile
     ];
     private const string ExpectKey = "expect";
     private const string ExpectForKey = "expectFor";
+    private const string WarningsKey = "warnings";
+    private const string WarningsRed = "red";
     private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description", PrepKey];
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
@@ -721,6 +724,7 @@ internal sealed partial class ProjectProfile
         )
         {
             Parallel = ReadParallel(scratch, place),
+            WarningsRed = ReadWarnings(scratch, place),
             MemoryCeilings = ReadMap(scratch, "memoryCeilings", place, (scene, ceiling) => ReadMemoryCeiling(scene, ceiling, place)),
             UserData = scratch.TryGetValue(UserDataKey, out JsonElement userData)
                 ? UserDataChoice.Parse(userData, problem => Refused(place, problem))
@@ -734,6 +738,23 @@ internal sealed partial class ProjectProfile
                 (scene, list) => ReadPatterns(list, PatternList.ExpectFor(scene), place)
             ),
         };
+    }
+
+    /// <summary>Whether the section's <c>warnings</c> is "red", which judges a warning as an error; false when the key is absent.</summary>
+    private static bool ReadWarnings(Dictionary<string, JsonElement> keys, Place place)
+    {
+        if (!keys.TryGetValue(WarningsKey, out JsonElement value))
+        {
+            return false;
+        }
+
+        if (value.ValueKind == JsonValueKind.String && value.GetString() == WarningsRed)
+        {
+            return true;
+        }
+
+        string said = value.ValueKind is JsonValueKind.Object or JsonValueKind.Array ? Describe(value.ValueKind) : value.GetRawText();
+        throw Refused(place, $"scratch.{WarningsKey} is {said}; it takes \"{WarningsRed}\", which judges a warning as an error, or is left out");
     }
 
     /// <summary>The section's <c>parallel</c>, a whole number of scenes at once from 1 to 4; 1 when the key is absent.</summary>
@@ -1463,6 +1484,12 @@ internal sealed record ScratchProfile(
 
     /// <summary>How many scenes play at once, from 1 to <see cref="MaxParallel"/>.</summary>
     public int Parallel { get; init; } = DefaultParallel;
+
+    /// <summary>
+    /// The section's warnings "red": a warning the game logs (push_warning, an engine warning) fails the boot, a step or the exit
+    /// as an error does; false when the section leaves the key out.
+    /// </summary>
+    public bool WarningsRed { get; init; }
 
     /// <summary>
     /// The section's userData, the scratch <c>user://</c> each scene's game gets; null when the section sets none.

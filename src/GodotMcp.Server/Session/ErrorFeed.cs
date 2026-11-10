@@ -114,6 +114,18 @@ internal sealed class ErrorFeed
         }
     }
 
+    /// <summary>
+    /// Every kept entry a scratch window judges numbered after <paramref name="seq"/>, oldest first: the errors, and the warnings
+    /// too when <paramref name="warnings"/> (the profile's scratch.warnings "red").
+    /// </summary>
+    public IReadOnlyList<ErrorEntry> JudgedSince(long seq, bool warnings)
+    {
+        lock (_lock)
+        {
+            return [.. _entries.Where(entry => entry.Seq > seq && (warnings || entry.IsError))];
+        }
+    }
+
     private static ErrorEntry Parse(JsonObject item)
     {
         List<string> stack = item["stack"] is JsonArray frames ? [.. frames.OfType<JsonValue>().Select(frame => frame.ToString())] : [];

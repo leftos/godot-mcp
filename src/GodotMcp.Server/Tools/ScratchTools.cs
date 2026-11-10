@@ -97,8 +97,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "scene red. An error logged, or a line matching scratch.patterns printed, between the launch and the first step turns "
             + "the scene red at the boot (failedAt index -1, name \"boot\", with pattern for a line) and plays no step. "
             + "Settings live in godot-mcp.json's scratch section "
-            + "{folder, userArgs, engineArgs, pace, ceilings, memoryCeilings, setup, known, patterns, expect, expectFor, parallel, "
-            + "userData}, where setup "
+            + "{folder, userArgs, engineArgs, pace, ceilings, memoryCeilings, setup, known, patterns, warnings, expect, expectFor, "
+            + "parallel, userData}, where warnings \"red\" fails the boot, a step or the exit on a warning the game logs (push_warning, "
+            + "an engine warning) as on an error, its failedAt.error, failures[].error, details[].error and errors[].message, and "
+            + "exit.error, prefixed \"warning: \", and setup "
             + "{<scene>: [step, ...]} "
             + "names a scene's declared setup steps, which a run given options.steps adds to the selection; an entry may instead be "
             + "{always?: [step, ...], steps?: {\"<step>\": [step, ...]}}: every partial run adds the always list, and a step's own list "
@@ -502,6 +504,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             Steps = steps,
             StepsByScene = stepsByScene,
             TimeScale = options.TimeScale ?? 1,
+            WarningsRed = scratch.WarningsRed,
             Watch = options.Watch,
             Windowed = options.Windowed ?? false,
             Audible = PlanAudible(options),

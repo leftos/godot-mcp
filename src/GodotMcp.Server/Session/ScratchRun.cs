@@ -184,6 +184,12 @@ internal sealed record ScratchPlan(
     /// <summary>options.timeScale, the time scale the scenes' games run at unless a scene's profile pace opts out; 1 by default.</summary>
     public required double TimeScale { get; init; }
 
+    /// <summary>
+    /// The profile's scratch.warnings "red": every window takes the feed's warnings as well as its errors, so a warning fails
+    /// the boot, a step or the exit as an error does; false when the key is left out.
+    /// </summary>
+    public required bool WarningsRed { get; init; }
+
     /// <summary>options.watch, checked: the watch armed on every scene's session before its first step; null arms none.</summary>
     public ScratchWatchOptions? Watch { get; init; }
 
@@ -472,14 +478,20 @@ internal sealed class ScratchRun
     /// </summary>
     internal static readonly TimeSpan UntilHangGuard = TimeSpan.FromSeconds(15);
 
-    /// <summary>An error the feed logged across a step's GetStepUntil read before the walk, which no step's window takes.</summary>
-    private static readonly Action<ILogger, int, string, Exception?> EarlyUntilReadLogged = LoggerMessage.Define<int, string>(
+    /// <summary>
+    /// A judged entry (an error, or a warning when scratch.warnings is "red") the feed logged across a step's GetStepUntil read
+    /// before the walk, which no step's window takes; Kind is "an error" or "a warning".
+    /// </summary>
+    private static readonly Action<ILogger, int, string, string, Exception?> EarlyUntilReadLogged = LoggerMessage.Define<int, string, string>(
         LogLevel.Warning,
         default,
-        "Scratch step {Index}'s GetStepUntil read before the walk logged an error, passed over there: {Message}; the step re-reads its until at play."
+        "Scratch step {Index}'s GetStepUntil read before the walk logged {Kind}, passed over there: {Message}; the step re-reads its until at play."
     );
 
-    /// <summary>A line the game printed across the GetStepUntil reads before the walk, one of which logged an error.</summary>
+    /// <summary>
+    /// A line the game printed across the GetStepUntil reads before the walk, one of which logged a judged entry (an error, or a
+    /// warning when scratch.warnings is "red").
+    /// </summary>
     private static readonly Action<ILogger, string, Exception?> EarlyUntilLinePassedOver = LoggerMessage.Define<string>(
         LogLevel.Warning,
         default,
@@ -1192,13 +1204,11 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// A step's failure and the feed entry it was read from, for a play the bridge did not refuse: when its until's wait ran and
-    /// was not met and the step's feed logged an error that kept it from meeting the until (a PlayStep that threw), that feed entry
-    /// as a paced step's thrown PlayStep reads; else the play's own error and no entry.
+    /// was not met and the step's window took an entry from the feed, the first entry the window took (an error, or a warning when
+    /// scratch.warnings is "red"), as a paced step's thrown PlayStep reads; else the play's own error and no entry.
     /// </summary>
     internal static (string? Error, ErrorEntry? Raised) UnmetFailure(ScratchUntil? until, string? error, IReadOnlyList<ErrorEntry> errors) =>
-        until is { Met: false } && errors.FirstOrDefault(entry => entry.IsError) is { } raised
-            ? (ScratchVerdict.FeedError([raised]), raised)
-            : (error, null);
+        until is { Met: false } && errors.Count > 0 ? (ScratchVerdict.FeedError([errors[0]]), errors[0]) : (error, null);
 
     /// <summary>
     /// An exception from the until's wait as the step's play takes it: a connection or session failure (a disposed connection
@@ -1266,12 +1276,13 @@ internal sealed class ScratchRun
         DroppedFrom(stdout, after.Stdout, before.Stdout) + DroppedFrom(stderr, after.Stderr, before.Stderr);
 
     /// <summary>
-    /// The feed's errors after <paramref name="mark"/>, which the window takes, moving the mark past the last of them, so every
-    /// error lands in exactly one window however late the bridge flushes it.
+    /// The feed's errors after <paramref name="mark"/>, and its warnings too when <paramref name="warnings"/> (the profile's
+    /// scratch.warnings "red"), which the window takes, moving the mark past the last of them, so every entry it judges lands in
+    /// exactly one window however late the bridge flushes it.
     /// </summary>
-    internal static IReadOnlyList<ErrorEntry> TakeErrors(ErrorFeed feed, ref long mark)
+    internal static IReadOnlyList<ErrorEntry> TakeErrors(ErrorFeed feed, ref long mark, bool warnings)
     {
-        IReadOnlyList<ErrorEntry> errors = feed.ErrorsSince(mark);
+        IReadOnlyList<ErrorEntry> errors = feed.JudgedSince(mark, warnings);
         mark = errors.Count == 0 ? mark : Math.Max(mark, errors.Max(entry => entry.Seq));
         return errors;
     }
@@ -1658,7 +1669,7 @@ internal sealed class ScratchRun
         }
 
         (_launchLines, _, error) = await CloseWindowAsync(session, "launch", cancellationToken);
-        _bootErrors = TakeErrors(session.Errors, ref _feedMark);
+        _bootErrors = TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed);
         return error;
     }
 
@@ -1880,7 +1891,7 @@ internal sealed class ScratchRun
         StepShot shot = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
-        IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
+        IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed);
         (string? error, ErrorEntry? raised) =
             played.BridgeError is not { } bridgeError ? UnmetFailure(played.Until, played.Error, errors)
             : played.ShotWaited ? ShotWaitFailure(index, _names[index], bridgeError, errors)
@@ -2119,8 +2130,9 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Closes an output window over the reads before the walk, one of which logged an error, and passes its lines over, each
-    /// logged to stderr, so the engine's own line for that error never lands in the first step's window.
+    /// Closes an output window over the reads before the walk, one of which logged a judged entry (an error, or a warning when
+    /// scratch.warnings is "red"), and passes its lines over, each logged to stderr, so the engine's own line for that entry never
+    /// lands in the first step's window.
     /// </summary>
     private async Task PassOverReadLinesAsync(GodotSession session, CancellationToken cancellationToken)
     {
@@ -2138,22 +2150,22 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Reads step <paramref name="index"/>'s GetStepUntil before the walk and keeps its answer, unless the read failed on the
-    /// bridge or the feed logged an error across it (a script error inside the call): such a read keeps nothing, so the step
-    /// reads it again at its play, where its error lands in its own window; the entries it logged are passed over here, so the
-    /// first step's window never takes them, and each is logged to stderr. Whether the ceiling counts the step at the guard (a
-    /// condition, or a failed read), and whether the read logged an error.
+    /// bridge or the feed logged a judged entry across it (a script error inside the call, or a warning when scratch.warnings is
+    /// "red"): such a read keeps nothing, so the step reads it again at its play, where that entry lands in its own window; the
+    /// entries it logged are passed over here, so the first step's window never takes them, and each is logged to stderr. Whether
+    /// the ceiling counts the step at the guard (a condition, or a failed read), and whether the read logged a judged entry.
     /// </summary>
     private async Task<(bool Until, bool Logged)> ReadUntilEarlyAsync(GodotSession session, int index, CancellationToken cancellationToken)
     {
         long mark = _feedMark;
         (JsonNode? answer, string? error) = await CallAsync(session, UntilMethod, [index], cancellationToken);
-        IReadOnlyList<ErrorEntry> logged = session.Errors.ErrorsSince(mark);
+        IReadOnlyList<ErrorEntry> logged = session.Errors.JudgedSince(mark, _plan.WarningsRed);
         if (logged.Count > 0)
         {
             _feedMark = Math.Max(_feedMark, logged.Max(entry => entry.Seq));
             foreach (ErrorEntry entry in logged)
             {
-                EarlyUntilReadLogged(_registry.Logger, index, entry.Message, null);
+                EarlyUntilReadLogged(_registry.Logger, index, entry.IsError ? "an error" : "a warning", entry.Message, null);
             }
 
             return (true, true);
@@ -2208,13 +2220,13 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The wait after the last step, the exit hold else that step's pace, the longer of its game time and its wall time: an
-    /// error in the feed during it, or a wait not met, fails the scene's exit.
+    /// error in the feed during it (or a warning when scratch.warnings is "red"), or a wait not met, fails the scene's exit.
     /// </summary>
     private async Task PaceAfterAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
         (string? waitError, bool closed) = await WaitAsync(session, gameMs, limit);
         (_paceLines, _, string? markerError) = await CloseWindowAsync(session, "pace", limit);
-        string? feedError = ScratchVerdict.FeedError(TakeErrors(session.Errors, ref _feedMark));
+        string? feedError = ScratchVerdict.FeedError(TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed));
         _afterClosed = closed && feedError is null;
         // A closed connection's wait error comes before the marker's, which then fails only because the game is gone.
         _afterError = feedError ?? waitError ?? markerError;

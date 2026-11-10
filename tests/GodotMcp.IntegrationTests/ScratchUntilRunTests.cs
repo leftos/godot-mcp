@@ -9,7 +9,10 @@ namespace GodotMcp.IntegrationTests;
 /// run_scratches with scenes whose root gives GetStepUntil, in the real Godot: a step played inside one wait on its until, met
 /// however far past its pace, hung at its hang guard, or refused. The probe's scratch folder holds only the InputProbe fixture's
 /// scratch_until scenes and the scratch_probe.gd they extend, so <see cref="ScratchRunnerTests"/>' folder runs never play them;
-/// their paces stay in the fixture's godot-mcp.json. It shares that class's helpers.
+/// their paces stay in the fixture's godot-mcp.json. It shares that class's helpers. The folder also holds the two scenes the
+/// scratch.warnings tests play: ScratchUntilReadWarns, whose GetStepUntil logs a warning, and ScratchStepWarning, which has no
+/// until and whose one step push_warnings. Neither has a pace entry in the fixture's godot-mcp.json, so under it each plays at
+/// the default pace; the profile the warnings tests write in its place paces each at 0.1 s.
 /// </summary>
 public sealed class ScratchUntilRunTests : IAsyncDisposable
 {
@@ -197,6 +200,60 @@ public sealed class ScratchUntilRunTests : IAsyncDisposable
         JsonArray details = scene["details"]!.AsArray();
         Assert.True(details[0]!["ok"]!.GetValue<bool>(), details[0]!.ToJsonString());
         Assert.Equal("first done", ScratchRunnerTests.Status(details[0]!));
+    }
+
+    // ScratchUntilReadWarns is ScratchUntilReadRaises with a push_warning: with scratch.warnings "red" the warning lands where
+    // the error does, in the second step's window.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WithWarningsRedAnUntilReadThatLogsAWarningBeforeTheWalkFailsItsOwnStepNotTheFirst()
+    {
+        await WriteWarningsRedProfileAsync();
+
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchUntilReadWarns"],
+                new ScratchOptions(Details: ScratchRunnerTests.FullDetails),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.True((1, "second") == (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()), scene.ToJsonString());
+        Assert.StartsWith("warning: scratch until read warned", failedAt["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.True(details[0]!["ok"]!.GetValue<bool>(), details[0]!.ToJsonString());
+        Assert.Equal("first done", ScratchRunnerTests.Status(details[0]!));
+    }
+
+    // ScratchStepWarning's one step push_warnings: green under the fixture's profile, which leaves scratch.warnings out, and red
+    // at that step, as a warning, once the profile sets it "red".
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepsWarningIsRedOnlyWhenTheProfileSetsWarningsRed()
+    {
+        JsonObject off = ScratchRunnerTests.Single(
+            await RunAsync(_probe.Directory, ["ScratchStepWarning"], options: null, TestContext.Current.CancellationToken)
+        );
+        await WriteWarningsRedProfileAsync();
+        JsonObject on = ScratchRunnerTests.Single(
+            await RunAsync(_probe.Directory, ["ScratchStepWarning"], options: null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.True(off["verdict"]!.GetValue<string>() == "green", off.ToJsonString());
+        Assert.True(on["verdict"]!.GetValue<string>() == "red", on.ToJsonString());
+        JsonNode failedAt = on["failedAt"]!;
+        Assert.Equal((0, "warns"), (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()));
+        Assert.StartsWith("warning: scratch step warned", failedAt["error"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Replaces the probe's profile with one that sets scratch.warnings "red" and paces the warning scenes briefly.</summary>
+    private Task WriteWarningsRedProfileAsync()
+    {
+        const string Profile = """
+            { "scratch": { "folder": "scratch", "warnings": "red", "pace": { "ScratchUntilReadWarns": 0.1, "ScratchStepWarning": 0.1 } } }
+            """;
+        return File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), Profile, TestContext.Current.CancellationToken);
     }
 
     /// <summary>The class harness's until guard in game milliseconds: the hang guard an until met in game time stays under.</summary>

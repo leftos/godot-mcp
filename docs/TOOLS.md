@@ -696,7 +696,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   it says why the scene needs that pace, and the reason comes back as `paceReason` on a `red` or `killed` scene whose pace came from the profile, the failed step's own reason when that step has a pace of its own (none when its pace is a bare number), since a step that ran into the next is usually a pace set too short),
 
-  `ceilings {<Scene>: seconds}` (the same map as `options.ceilings`: above 0, at most 3600; a key naming a scene outside the run is ignored, and `options.ceilings` wins for the same scene), `memoryCeilings {<Scene>: megabytes}` (the same map as `options.memoryCeilings`, read the same way), `memoryCeilings {<Scene>: megabytes}` (the same map as `options.memoryCeilings`, read the same way),
+  `ceilings {<Scene>: seconds}` (the same map as `options.ceilings`: above 0, at most 3600; a key naming a scene outside the run is ignored, and `options.ceilings` wins for the same scene), `memoryCeilings {<Scene>: megabytes}` (the same map as `options.memoryCeilings`, read the same way),
 
   `setup {<Scene>: [step, ...]}` (the steps a scene's partial run needs for the state the selected steps build on; each step is an index written plainly or a step's exact name, resolved as a `pace.steps` key is; with `options.steps` they play with the selected steps, ascending, and a setup step is judged like any other, `keepGoing` included; without `options.steps` every step plays and `setup` changes nothing; a duplicate entry is deduped).
 
@@ -707,6 +707,8 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
   A value that is neither an array nor an object is refused at load with `scratch.setup.<Scene> must be an array of setup steps or an object {always?, steps?}, not <kind>`; an object naming neither key, an empty list, a `steps` that is not an object and a duplicate step key in `steps` are refused too.
 
   `known {<Scene>: reason}`, `patterns` (case-sensitive regexes, each a string or `{pattern, reason}` with both keys; a step failed by a matching line names the first matching entry as `failedAt.pattern`, with its reason; default `^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked`; `[]` turns line matching off),
+
+  `warnings` (only `"red"`, which judges a warning entry the game logs, a `push_warning` or an engine warning, wherever an error entry is judged: at the boot, after each step and in the wait after the last step; a `known` scene is handled as for an error, and a failure it causes reads its `error` (`failedAt`, `failures[]`, `details[]`, `exit`) as `warning: <message> (<file>:<line>)`, and a listed step's `errors[].message` carries the same `warning: ` prefix; left out, a warning is not judged; any other value is refused at load with `<path> (scratch): scratch.warnings is <JSON value>; it takes "red", which judges a warning as an error, or is left out.`),
 
   `expect` (an array of lines every scene's output must print, each item a regex string or `{pattern, reason}` compiled as `patterns` are; an object item's reason must be a non-empty string saying why the scene must print the line, and `exit.missing` repeats it) and `expectFor {<Scene>: [same items]}` (a scene's own; a scene's list is `expect` then its `expectFor` entry, not deduplicated; a scene named twice is refused with `the scene "A" appears twice in "expectFor"; keep one`),
 
@@ -785,7 +787,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The **boot** (from the launch to the first step) is judged by the error feed and by `scratch.patterns`: an engine error, `push_error` or C# exception there (in the scene's `_ready`, say) makes the scene `red` at `failedAt {index: -1, name: "boot", error: "<message> (<file>:<line>)"}` with no step played and no `details`, even with `options.details`, even for a `known` scene, and it is never played again alone; a scene with no steps that errors at the boot is `red`, not `no-steps`.
 
-  A line printed at the boot that a `scratch.patterns` entry matches does the same, with `failedAt {index: -1, name: "boot", error: "<the line>", status: "", pattern: {pattern, reason?}}`. A warning at the boot that no pattern matches is not judged.
+  A line printed at the boot that a `scratch.patterns` entry matches does the same, with `failedAt {index: -1, name: "boot", error: "<the line>", status: "", pattern: {pattern, reason?}}`. A warning at the boot that no pattern matches is not judged unless the profile sets `scratch.warnings` to `"red"`.
 
   A scene's ceiling is each step's pace / time scale + 10 s (an until step counts its own hang guard, 15 s unless it has a `guard`, in place of its pace / time scale), the last step's pace once more for the wait after it (its wall time, pace / min(1, time scale)), and 10 s for the markers, in load-adjusted time (the fixed 10 s are not divided); at a scale other than 1 the kill reason reads "each of its N steps' pace at time scale <n> + 10 s, the last step's pace once more ("in wall time" is added above 1), and 10 s for the markers", with ", an until step's guard of <g> s in place of its pace", g the largest guard among the played until steps, after the first 10 s when a played step has an until; past it, or when the game stops answering, the scene is `killed` and its game stopped.
 

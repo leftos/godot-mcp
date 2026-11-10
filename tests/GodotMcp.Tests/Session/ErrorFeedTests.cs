@@ -49,6 +49,17 @@ public sealed class ErrorFeedTests
     }
 
     [Fact]
+    public void JudgedSinceGivesErrorsOnlyWithWarningsOffAndBothInFeedOrderWithWarningsOn()
+    {
+        ErrorFeed feed = new();
+        feed.Add([Entry("a"), Entry("b", ErrorFeed.WarningType), Entry("c"), Entry("d", ErrorFeed.WarningType)], 0);
+
+        Assert.Equal(["c"], feed.JudgedSince(1, warnings: false).Select(entry => entry.Message));
+        Assert.Equal(["b", "c", "d"], feed.JudgedSince(1, warnings: true).Select(entry => entry.Message));
+        Assert.Equal([2L, 3L, 4L], feed.JudgedSince(1, warnings: true).Select(entry => entry.Seq));
+    }
+
+    [Fact]
     public void TheBridgesDroppedCountIsAdded()
     {
         ErrorFeed feed = new();

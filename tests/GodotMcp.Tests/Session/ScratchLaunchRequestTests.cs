@@ -109,6 +109,7 @@ public sealed class ScratchLaunchRequestTests
             Listed = true,
             SessionPrefix = "game",
             KeepGoing = false,
+            WarningsRed = false,
             Steps = null,
             TimeScale = 4,
             Windowed = windowed,

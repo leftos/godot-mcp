@@ -93,11 +93,109 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
-    public void AWarningInTheFeedDoesNotFailAStep()
+    public void AWarningIsLeftOutOfAStepsErrorsWhenWarningsAreOff()
     {
-        ScratchStep warned = Step(0) with { Errors = [Error("careful", "", 0) with { Type = ErrorFeed.WarningType }] };
+        ErrorFeed feed = new();
+        long mark = feed.Mark();
+        feed.Add([Warning("careful", "", 0)], 0);
 
+        ScratchStep warned = Step(0) with { Errors = ScratchRun.TakeErrors(feed, ref mark, warnings: false) };
+
+        Assert.Empty(warned.Errors);
         Assert.Equal(ScratchVerdict.Green, ScratchVerdict.Judge(Seen(warned), Plain).Verdict);
+    }
+
+    [Fact]
+    public void AWarningInAStepsErrorsFailsItAsAWarning()
+    {
+        ScratchStep warned = Step(0) with { Errors = [Warning("slow frame", "res://a.gd", 3)] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(warned), Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal("warning: slow frame (res://a.gd:3)", result.FailedAt!.Error);
+    }
+
+    [Fact]
+    public void TheFirstEntryInFeedOrderFailsAStepThatHoldsAWarningAndAnError()
+    {
+        ScratchStep warned = Step(0) with { Errors = [Warning("slow frame", "res://a.gd", 3), Error("boom", "res://a.gd", 7)] };
+
+        Assert.Equal("warning: slow frame (res://a.gd:3)", ScratchVerdict.Judge(Seen(warned), Plain).FailedAt!.Error);
+    }
+
+    [Fact]
+    public void AWarningAtTheBootIsRedAtTheBootAsAWarning()
+    {
+        ScratchObservation seen = Seen(Step(0)) with { BootErrors = [Warning("slow frame", "res://a.gd", 3)] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(new ScratchFailure(-1, "boot", "warning: slow frame (res://a.gd:3)", ""), result.FailedAt);
+    }
+
+    [Fact]
+    public void AWarningInThePaceAfterTheLastStepIsTheExitsErrorAsAWarning()
+    {
+        string? after = ScratchVerdict.FeedError([Warning("slow frame", "res://a.gd", 3)]);
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)) with { AfterError = after }, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Null(result.FailedAt);
+        Assert.Equal("warning: slow frame (res://a.gd:3)", result.Exit.Error);
+    }
+
+    [Fact]
+    public void TakingErrorsWithWarningsOffLeavesTheMarkAtTheLastErrorTaken()
+    {
+        ErrorFeed feed = new();
+        long mark = feed.Mark();
+        feed.Add([Error("boom", "", 0), Warning("careful", "", 0)], 0);
+
+        IReadOnlyList<ErrorEntry> taken = ScratchRun.TakeErrors(feed, ref mark, warnings: false);
+        long afterFirst = mark;
+        feed.Add([Warning("later", "", 0), Error("then", "", 0)], 0);
+        IReadOnlyList<ErrorEntry> next = ScratchRun.TakeErrors(feed, ref mark, warnings: false);
+
+        Assert.Equal(["boom"], taken.Select(entry => entry.Message));
+        Assert.Equal(1, afterFirst);
+        Assert.Equal(["then"], next.Select(entry => entry.Message));
+    }
+
+    [Fact]
+    public void AWarningInAFullDetailsStepIsListedAsAWarning()
+    {
+        ScratchStep warned = Step(0) with { Errors = [Warning("slow frame", "res://a.gd", 3)] };
+
+        JsonNode step = Json(ScratchVerdict.Judge(Seen(warned), Plain with { Details = ScratchDetails.Full }))["details"]![0]!;
+
+        Assert.Equal("warning: slow frame", step["errors"]![0]!["message"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AnErrorAndAWarningWithTheSameTextAndSiteAreListedApart()
+    {
+        ScratchStep both = Step(0) with { Errors = [Error("slow frame", "res://a.gd", 3), Warning("slow frame", "res://a.gd", 3)] };
+
+        JsonNode step = Json(ScratchVerdict.Judge(Seen(both), Plain with { Details = ScratchDetails.Full }))["details"]![0]!;
+
+        Assert.Equal(["slow frame", "warning: slow frame"], step["errors"]!.AsArray().Select(entry => entry!["message"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void TakingErrorsWithWarningsOnTakesBothAndMovesTheMarkPastBoth()
+    {
+        ErrorFeed feed = new();
+        long mark = feed.Mark();
+        feed.Add([Error("boom", "", 0), Warning("careful", "", 0)], 0);
+
+        IReadOnlyList<ErrorEntry> taken = ScratchRun.TakeErrors(feed, ref mark, warnings: true);
+
+        Assert.Equal(["boom", "careful"], taken.Select(entry => entry.Message));
+        Assert.Equal(2, mark);
+        Assert.Empty(ScratchRun.TakeErrors(feed, ref mark, warnings: true));
     }
 
     [Fact]
@@ -174,10 +272,15 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
-    public void AWarningAtTheBootIsNotRed()
+    public void AWarningIsLeftOutOfTheBootsErrorsWhenWarningsAreOff()
     {
-        ScratchObservation seen = Seen(Step(0)) with { BootErrors = [Error("careful", "", 0) with { Type = ErrorFeed.WarningType }] };
+        ErrorFeed feed = new();
+        long mark = feed.Mark();
+        feed.Add([Warning("careful", "", 0)], 0);
 
+        ScratchObservation seen = Seen(Step(0)) with { BootErrors = ScratchRun.TakeErrors(feed, ref mark, warnings: false) };
+
+        Assert.Empty(seen.BootErrors);
         Assert.Equal(1, seen.Total);
         Assert.Equal(ScratchVerdict.Green, ScratchVerdict.Judge(seen, Plain).Verdict);
     }
@@ -972,10 +1075,10 @@ public sealed class ScratchVerdictTests
         long mark = feed.Mark();
         feed.Add([Error("in step 0", "", 0)], 0);
 
-        IReadOnlyList<ErrorEntry> first = ScratchRun.TakeErrors(feed, ref mark);
+        IReadOnlyList<ErrorEntry> first = ScratchRun.TakeErrors(feed, ref mark, warnings: false);
         feed.Add([Error("between the windows", "", 0), Error("warned", "", 0) with { Type = ErrorFeed.WarningType }], 0);
-        IReadOnlyList<ErrorEntry> second = ScratchRun.TakeErrors(feed, ref mark);
-        IReadOnlyList<ErrorEntry> third = ScratchRun.TakeErrors(feed, ref mark);
+        IReadOnlyList<ErrorEntry> second = ScratchRun.TakeErrors(feed, ref mark, warnings: false);
+        IReadOnlyList<ErrorEntry> third = ScratchRun.TakeErrors(feed, ref mark, warnings: false);
 
         Assert.Equal(["in step 0"], first.Select(entry => entry.Message));
         Assert.Equal(["between the windows"], second.Select(entry => entry.Message));
@@ -2565,4 +2668,6 @@ public sealed class ScratchVerdictTests
     private static ScratchPattern Expected(string pattern, string? reason = null) => new(ScratchProfile.Compile(pattern), reason);
 
     private static ErrorEntry Error(string message, string file, int line) => new(1, ErrorFeed.ErrorType, message, file, line, "", [], "");
+
+    private static ErrorEntry Warning(string message, string file, int line) => Error(message, file, line) with { Type = ErrorFeed.WarningType };
 }

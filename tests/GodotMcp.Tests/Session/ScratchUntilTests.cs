@@ -512,5 +512,18 @@ public sealed class ScratchUntilTests
         Assert.Null(entry);
     }
 
+    [Fact]
+    public void AnUnmetUntilWhoseStepLoggedAWarningTakenAsJudgedFailsWithThatWarning()
+    {
+        ErrorEntry warning = Entry(ErrorFeed.WarningType, "slow frame");
+        ScratchUntil unmet = new(false, 2000, 2004, 60);
+        string notMet = ScratchRun.UntilMissed(0, "throws", unmet, GuardSeconds, 1);
+
+        (string? error, ErrorEntry? entry) = ScratchRun.UnmetFailure(unmet, notMet, [warning]);
+
+        Assert.Equal("warning: slow frame (res://scene.gd:3)", error);
+        Assert.Same(warning, entry);
+    }
+
     private static ErrorEntry Entry(string type, string message) => new(1, type, message, "res://scene.gd", 3, "f", [], "");
 }
