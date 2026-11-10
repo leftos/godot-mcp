@@ -19,6 +19,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A prep step behind a `prepWrapper` gate no longer runs out its 300 s ceiling while the gate waits for a slot; a stop says what it waited on.
 - The prep takes a Debug assembly Godot's own build just wrote as up to date instead of building it again.
 - `validate` lists a `.cs` target's Compile items through the `prepWrapper`, whose new `{slot}` token is `light` for that listing.
+- Two games stopped together, a stop, or the server's exit no longer hang when the games' exits are seen at once.
 
 ## 0.38.0 - 2026-11-10
 

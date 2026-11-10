@@ -142,6 +142,7 @@ A change to A that needs a change to B, where nothing but a test or a reviewer c
 - **Add a source folder or file kind** → also add a row to `run.ps1` `$itestRules`, else `itest-groups` names it `unmapped` and every group runs; a new itest group goes in `$itestGroups` and a lane, and in `$itestHeavyGroups` when its tests build C#.
 - **Change the text of a command in `.gate/desktop.toml`** → also change the file's patterns to equal the PC's `%LOCALAPPDATA%\gate\remote.json` letter for letter.
 - **Launch a process** → pipe, keep or kill it through `ToolProcess` and `DesktopProcess`, as the child-process footgun says; a bare `Process.Start` skips the ceiling, the stall kill and the kill-on-close job.
+- **Add or change a `Process.Exited` handler** → it only queues its work (`Task.Run`): `HasExited`, `ExitCode` and `WaitForExit(ms)` raise the handler inline under the caller's locks, and `Process` raises it inside its own lock, so a handler that takes a registry lock or reads another process deadlocks against a thread reading liveness under that lock; see the `Exited` footgun in DEVELOPMENT.md.
 - **Log anywhere in the server** → to stderr, never stdout, which is the MCP protocol.
 - **Add a wire request** → it carries an id, and the reply of a timed-out id is dropped; a long one also handles `cancel` and `backstopMs` in the bridge.
 - **Add or change an input tool** → it takes viewport coordinates and maps them to the window; a drag's motion events carry `button_mask` and `relative`. See the bridge-input footguns in DEVELOPMENT.md (the physics-picking and re-pick rows) before touching `godot_mcp_input.gd`.
@@ -480,7 +481,7 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
   A bridge whose endpoint came from `attach.json` or a join file goes dormant again when its connection ends and `armed.json` still exists: the injected input it still holds released (keys, input actions, mouse buttons, pad buttons and axes), its connection state reset, a running or held watch dropped (as it is when the bridge goes idle instead), a window a quiet join parked restored, its dormant file rewritten.
 
   The attach file is not touched: each attach removes its own when its wait ends, so a detach never deletes another attach's file on the same folder.
-- **Game exits on its own**: `OnRunExitedAsync` releases the override as for stop.
+- **Game exits on its own**: `OnRunExitedAsync`, queued off the `Exited` event, releases the override as for stop.
 - **Snapshots**: `GodotSession.Snapshots` (`SnapshotStore`) holds `snapshot_subtree`'s captures and `get_game_state`'s kept reads, each a `Snapshot` of its `SnapshotKind` (`Subtree` or `State`) carrying the options that take it again, the 16 most recently used, ids never repeating in the session; it is emptied when the run stops, when a restart has ended the old run, when the current run exits, and when an attached game's connection ends (a watcher started at attach awaits `BridgeConnection.Closed`).
 
   A detach drops the session, and the store with it.

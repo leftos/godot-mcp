@@ -20,6 +20,7 @@ namespace GodotMcp.Tests.Session;
 public sealed class StopKilledGameTests : IAsyncDisposable
 {
     private const string StillUsesTheFolder = "; its project folder stays in use until it is gone.";
+    private const string OwnersList = "override-folders.txt";
 
     private readonly TempDirectory _temp = new();
     private readonly FakeTimeProvider _time = new();
@@ -38,7 +39,7 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
         {
             LaunchClock = _clock,
-            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), TextWriter.Null) { Clock = _clock },
+            OverrideFolders = new OverrideFolders(_temp.Combine(OwnersList), TextWriter.Null) { Clock = _clock },
             Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
             RunProcessFactory = Launch,
         };
@@ -181,6 +182,71 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.False(await overrideLeftWhenHandled.WaitAsync(RegistryHarness.HangGuard, cancellation));
     }
 
+    // The run's process ends on its own while the test holds the owners list, which the exit's release must take. A handler of
+    // the Exited event subscribed after the session's runs while the event is still being raised: the session's handler only
+    // queued its work, so the override is still there and the exit not yet handled. Once the list is let go, the release runs.
+    [Fact]
+    public async Task ARunsExitHandlerNeverRunsInsideTheExitedEvent()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+        await RegistryHarness.WaitUntilAsync(() => !_launched.IsEmpty, launch);
+        FakeRunProcess run = _launched.First();
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, run.Token, project, new FakeHello(), cancellation);
+        _ = await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        string overrideFile = OverrideFile.PathIn(project);
+        GodotSession session = _sessions.Resolve("server");
+        var seen = new TaskCompletionSource<(bool OverrideLeft, bool Handled)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        run.AfterExitHandlers = () => seen.TrySetResult((File.Exists(overrideFile), session.ExitHandled.IsCompleted));
+
+        (bool OverrideLeft, bool Handled) inTheEvent;
+        using (HoldOwnersList())
+        {
+            run.Process.Kill(entireProcessTree: true);
+            inTheEvent = await seen.Task.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        }
+
+        Assert.True(inTheEvent.OverrideLeft, "the exit's release ran inside the Exited event");
+        Assert.False(inTheEvent.Handled, "the exit was handled inside the Exited event");
+        await session.ExitHandled.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        Assert.False(File.Exists(overrideFile));
+    }
+
+    // A queued exit handler can run after a replace by name has retired its session and before the session is disposed. Here it
+    // takes the gate once the session is retired, the test holds it at the owners list (after it has ended the session's capture)
+    // until the session is disposed, and the handler still ends without a fault and completes ExitHandled.
+    [Fact]
+    public async Task ALateExitHandlerAfterRetirementCompletesAndDoesNotThrow()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+        await RegistryHarness.WaitUntilAsync(() => !_launched.IsEmpty, launch);
+        FakeRunProcess run = _launched.First();
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, run.Token, project, new FakeHello(), cancellation);
+        _ = await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        GodotSession session = _sessions.Resolve("server");
+        GodotRun current = session.CurrentRun!;
+        // The retirement disposes the run's process, so the child is ended through a handle of the test's own.
+        _games.Add(Process.GetProcessById(run.Process.Id));
+        Assert.True(_launched.TryDequeue(out _));
+        Assert.True(_sessions.Captures.Begin("server"));
+        await session.RetireAsync().WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        Task handler;
+        using (HoldOwnersList())
+        {
+            handler = Task.Run(() => session.OnRunExitedAsync(current), cancellation);
+            // The handler ends the capture under the gate, then waits for the list to release the folder.
+            await RegistryHarness.WaitUntilAsync(() => !_sessions.Captures.IsRunning("server"), handler);
+            session.Dispose();
+        }
+
+        await handler.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        Assert.True(session.ExitHandled.IsCompletedSuccessfully);
+    }
+
     /// <summary>The product's own open of a stopped game, which lets the game's held exit go on once the game is opened.</summary>
     private static Process? ReleasedOnceOpened(int pid, DateTime started, ExitHold hold)
     {
@@ -231,6 +297,9 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         return run;
     }
 
+    /// <summary>The owners list opened alone, as another server's release holds it: the session's own release waits until it is closed.</summary>
+    private FileStream HoldOwnersList() => new(_temp.Combine(OwnersList), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
     private string Project(string folder)
     {
         string projectDir = _temp.Combine(folder);
@@ -266,10 +335,12 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         /// <summary>The token the run's bridge must prove itself with.</summary>
         public string Token => StartInfo.Environment[GodotCommandLine.TokenVariable]!;
 
-        public void Start()
-        {
+        /// <summary>Called from a handler of the exit subscribed at the start, so after the run's own, while the event is raised.</summary>
+        public Action? AfterExitHandlers { get; set; }
+
+        public void Start() =>
             // The child is already running; the run only needs its pid and its exit.
-        }
+            Process.Exited += (_, _) => AfterExitHandlers?.Invoke();
 
         public void BeginRead(Action<string> stdout, Action<string> stderr, Action ended) => _ended = ended;
 

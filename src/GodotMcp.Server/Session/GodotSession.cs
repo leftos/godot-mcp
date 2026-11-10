@@ -173,6 +173,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>Completes when the handler of the current run's exit has finished, its folder released or kept; for tests.</summary>
     internal Task ExitHandled => _exitHandled.Task;
 
+    /// <summary>The run the server started for the session, the one whose exit <see cref="OnRunExitedAsync"/> handles; for tests.</summary>
+    internal GodotRun? CurrentRun => _run;
+
     /// <summary>Whether the session is starting, its run is running, or its attached game is still connected.</summary>
     public bool IsLive => _pending || HasGame;
 
@@ -1160,7 +1163,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </summary>
     private void StartProcess(GodotRun run, Func<int, string>? marker)
     {
-        run.Process.Exited += (_, _) => _ = OnRunExitedAsync(run);
+        // The runtime raises Exited inside the process's own lock, and inline in whatever HasExited or WaitForExit call observed
+        // the exit, under that caller's locks. The handler is queued, so it never runs under either and takes them in no order.
+        run.Process.Exited += (_, _) => _ = Task.Run(() => OnRunExitedAsync(run));
         run.Launcher.Start();
         run.OutputLog ??= OpenOutputLog(run);
         if (marker is not null)
@@ -1799,13 +1804,36 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         finally
         {
             // Set only for the session's current run, so a replaced run's exit never reaches the folder.
-            DeleteScratchUserDataAfterExit(current: handled is not null, run);
-            _gate.Release();
-            handled?.TrySetResult();
+            try
+            {
+                DeleteScratchUserDataAfterExit(current: handled is not null, run);
+                ReleaseGateAfterExit();
+            }
+            finally
+            {
+                // Completed whatever the cleanup met, so whoever awaits the exit's handling is never left waiting.
+                handled?.TrySetResult();
+            }
         }
 
         // A grandchild still holding the game's pipes keeps its output from ending, so the file is closed after the drain grace
         // without holding up the exit. The output's own end closes it first when it comes, and a second close does nothing.
         _ = CloseOutputLogAsync(run);
+    }
+
+    /// <summary>
+    /// Lets go of the gate an exit's handler took. The handler is queued, so it can take the gate after a replace by name has
+    /// retired the session and let the gate go before disposing it: a gate disposed meanwhile has nothing left to let go of.
+    /// </summary>
+    private void ReleaseGateAfterExit()
+    {
+        try
+        {
+            _gate.Release();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The session was disposed while the handler held the gate; nothing else waits on it.
+        }
     }
 }
