@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - A headless scene edit keeps a TabContainer's saved `current_tab`, so the game still opens on that page instead of the first.
 - A `run_scratches` scene that quits itself with exit code 0 after its last step is green instead of red.
+- A prep step behind a `prepWrapper` gate no longer runs out its 300 s ceiling while the gate waits for a slot; a stop says what it waited on.
 
 ## 0.38.0 - 2026-11-10
 
