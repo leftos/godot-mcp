@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- A `scratch.pace` scene or step entry takes `guard` (above 15, at most 120 s), lengthening its until steps' hang guard for an event measured to land later.
+
 ### Changed
 
 - A background scratch run's progress line names the step index `--capture-step` and `--steps` take, then its position: `step 20 open (21 of 72)`.
