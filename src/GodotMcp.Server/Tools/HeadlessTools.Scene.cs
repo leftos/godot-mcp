@@ -23,9 +23,9 @@ internal sealed partial class HeadlessTools
         + "A new .xscn's .uid file is listed there too.";
 
     private const string EditNote =
-        " The file keeps every part the edit does not change as it was; when that cannot be done, it is saved in Godot's full "
-        + "form and the result carries a warning saying why. A C# field named like an engine property (a private scale on a "
-        + "Node2D) is saved as the engine's value, and the result's warning names the field. "
+        " The file keeps every part the edit does not change as it was; a node whose lines cannot be left out without "
+        + "changing how it loads is saved in Godot's pack form, and the warning names it. A C# field named like an engine "
+        + "property (a private scale on a Node2D) is saved as the engine's value, and the result's warning names the field. "
         + "A .xscn is always saved whole through its addon's saver, which keeps its comments and keys.";
 
     private const string ScenePathDescription =

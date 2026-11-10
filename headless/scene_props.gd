@@ -45,6 +45,15 @@ const BASE_RESOURCE := "%s belongs to the base scene %s; set %s whole to overrid
 const RESOURCE_PATH_LEAF := "%s names a resource's file path, which a scene edit cannot change"
 ## Why a property path through a node is refused: the path that reaches the node.
 const NODE_IN_PATH := "%s holds a node; set the property on that node's own path"
+## The metadata a TabContainer keeps on each page as its tab's index (4.7.2 tab_container.cpp
+## L560-565), which a move reads to move the tab with the page (L631).
+const TAB_INDEX_KEY := "metadata/_tab_index"
+## Why add_node's options.properties and set_node_properties refuse TAB_INDEX_KEY: Godot sets it,
+## and a value set by hand would move another page's tab on the next move.
+const TAB_INDEX_REFUSAL := (
+	"metadata/_tab_index is set by Godot from the page's position in its TabContainer; "
+	+ "move the node instead."
+)
 
 
 ## Adds a node of params.nodeType named params.nodeName under params.parent, at params.position
@@ -271,8 +280,8 @@ static func _instance_of(path: String, scene: String) -> Dictionary:
 	return {"node": node, "type": node.get_class(), "instance": path}
 
 
-## Whether packed is the scene at scene_path or instances it at any depth.
-## Why properties would set what add_node sets itself (the name, the owner), or "".
+## Why properties would set what add_node sets itself (the name, the owner) or what Godot sets
+## (a page's metadata/_tab_index), or "".
 static func _reserved_key(properties: Variant) -> String:
 	if not properties is Dictionary:
 		return ""
@@ -280,6 +289,8 @@ static func _reserved_key(properties: Variant) -> String:
 		return "Set the node's name with nodeName, not options.properties."
 	if (properties as Dictionary).has("owner"):
 		return "add_node sets the node's owner itself; leave owner out of options.properties."
+	if (properties as Dictionary).has(TAB_INDEX_KEY):
+		return TAB_INDEX_REFUSAL
 	return ""
 
 
@@ -290,6 +301,7 @@ static func _same_file(path: String, other: String) -> bool:
 	return path == other
 
 
+## Whether packed is the scene at scene_path or instances it at any depth.
 static func _contains_scene(packed: PackedScene, scene_path: String, depth: int) -> bool:
 	if _same_file(packed.resource_path, scene_path):
 		return true
@@ -352,6 +364,8 @@ static func _plan_update(root: Node, update: Dictionary, scene: String) -> Dicti
 	if not refusal.is_empty():
 		return {"error": refusal}
 	var property: String = str(update.get("property", ""))
+	if property == TAB_INDEX_KEY:
+		return {"error": TAB_INDEX_REFUSAL}
 	var converted: Dictionary = _converted(node, path, property, update.get("value"), root)
 	if converted.has("error"):
 		return converted

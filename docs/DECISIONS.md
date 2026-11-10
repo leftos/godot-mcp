@@ -201,7 +201,11 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
       The result lists the kept and dropped names. Ruled out: a stricter same-type-and-hint rule (a swap the editor keeps would lose values here).
     - **A save keeps the source's stored set.** Godot's `pack` compares against the ClassDB default, which is 3 for `layout_mode` on every Control subclass (built parentless) and 0 on `Control`, so a subclass in position mode gains `layout_mode = 0` (`class_db.cpp` L2184-2196, `control.cpp` L978-982, L4911-4912); the editor writes the same line and the loaded scene is identical.
 
-      Every save with a source drops a pair the source did not store when its value equals what the source node loads as, with a self-check that falls back to the full pack and a `warning`.
+      Every save with a source drops a pair the source did not store when its value equals what the source node loads as, with a self-check that reverts, for the node that fails it, to Godot's pack form and a `warning` naming the node.
+
+      The put-back of a line the source stored reverts per node the same way, with its own warning, and a node that keeps the pack form gets no restored lines. Only a trimmed scene that cannot be loaded at all falls back to the pack form throughout, the warning naming every path.
+
+      A `TabContainer` page's tab title, icon and disabled state follow the page because Godot's tab bar moves them with it and the check loads every dropped line, so no line needs an exemption.
 
       Ruled out: `save_scene` only, and documenting it as a footgun. The other half (#64): `pack` also leaves out a line the source stored when its value is the default, the class's (`Label`'s constructor sets `SIZE_SHRINK_CENTER`, `label.cpp` L1531) or the instanced scene's, and the splice then took Godot's text for an untouched node.
 

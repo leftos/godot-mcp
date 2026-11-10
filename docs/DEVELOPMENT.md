@@ -541,7 +541,15 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   `ClassDB` builds a class's defaults from a parentless instance (`class_db.cpp` L2184-2196), so every Control subclass has a `layout_mode` default of 3 (uncontrolled, `control.cpp` L978-982), while `Control` itself registers 0 (L4911-4912); a `ColorRect` under a Control in position mode reads 0 and `pack` stores `layout_mode = 0`, which the editor writes too and which loads identically.
 
-  So `SceneEdit.keep_source_set` drops, after the native-value rewrite, each pair the source's record did not store whose value equals what the source node reads (instantiating the source again, so its scripts' `_init` runs once more), then instantiates the result and keeps the full pack with a `warning` if any dropped property would load differently. Object values are never dropped: a dropped one would stay among the packed variants and still be written.
+  So `SceneEdit.keep_source_set` drops, after the native-value rewrite, each pair the source's record did not store whose value equals what the source node reads (instantiating the source again, so its scripts' `_init` runs once more), then instantiates the result and, for each node where a dropped property would load differently, keeps Godot's pack form of that node alone with a `warning` naming its path and the values (`<path>.<prop> would load as <v>, not <v>`); only a trimmed scene that cannot be instantiated keeps the pack form of the whole scene. Object values are never dropped: a dropped one would stay among the packed variants and still be written.
+
+  The put-back of a line the source stored that the pack drops reverts the same way, per node, with the restore warning (`<scene>: left out lines the source stored for <paths> that Godot's pack drops, since keeping them would change how they load: <reasons>`); a node that kept the pack form gets no restored lines.
+
+  A `TabContainer` stores `tab_N/title`, `icon`, `disabled` and `hidden` by page position, but Godot's tab bar moves them with the page and the keep logic loads every dropped or put-back line, so after an insert, move or delete they follow their pages. The later pages' `metadata/_tab_index` lines are renumbered, as Godot sets them on every `move_child`, and `current_tab` follows the current page after an insert or move among pages.
+
+  `metadata/_tab_index` is refused as a property to set. A new child is a page, and is saved without `visible = false`, only when it is a Control that is not `top_level`: Godot hides every page it adds, so the loaded page reads hidden anyway.
+
+  `duplicate_node` of a page puts its tab title, icon, disabled and hidden state and the current page back after the pack under the holder, since a page taken out of its container loses them (`SceneNodes._tab_state`, `_restore_tab_state`).
 
   The editor writes that `layout_mode = 0` too (measured with a headless 4.7.2 editor, an `EditorPlugin` and `EditorInterface.save_scene()`, about 5 s: a quick way to learn what the editor writes).
 

@@ -20,16 +20,16 @@ const PROPERTY_NAME_MASK := (1 << 30) - 1
 ## How many base scenes deep an inherited scene is followed.
 const MAX_BASE_DEPTH := 64
 ## The warning a save returns when leaving out the properties its source did not store would
-## change how the scene loads, with the source and what would change.
+## change how some nodes load, with the source, those nodes' paths and what would change.
 const SOURCE_SET_WARNING := (
-	"the scene stores every property Godot's pack stores, not only the ones %s stored, since "
-	+ "leaving the others out would change it: %s"
+	"%s: kept Godot's pack form for %s, since leaving out lines the source did not store would "
+	+ "change how they load: %s"
 )
-## The warning a save returns when leaving out a line its source stored would change how the scene
-## loads, with the source and what would change.
+## The warning a save returns when keeping a line its source stored would change how some nodes
+## load, with the source, those nodes' paths and what would change.
 const SOURCE_RESTORE_WARNING := (
-	"the scene leaves out lines %s stored that Godot's pack drops, since keeping them would change "
-	+ "it: %s"
+	"%s: left out lines the source stored for %s that Godot's pack drops, since keeping them "
+	+ "would change how they load: %s"
 )
 
 ## The engine log operations.gd keeps (its ErrorLog, with count() and since(start)), so a save can
@@ -273,8 +273,10 @@ static func _ends_with_any(text: String, suffixes: Array) -> bool:
 ## the text source has for every section the save left alone, and renames maps the path a node a
 ## move carried has in source to the one it has now, so its record and sections are matched with
 ## the saved ones. A save with a source stores no property the source's record for a node did
-## not store when the node loads the same without it, and, when keep, keeps a property the source
-## stored that Godot's pack leaves out when the scene still loads the same (keep_source_set).
+## not store when the node loads the same without it, and, when keep, puts back a property the
+## source stored that Godot's pack leaves out when the node still loads the same with it; a node
+## for which either would change how it loads keeps Godot's pack form, and the warning names it
+## (keep_source_set).
 ## {uid, warning?} with uid as uid:// text, or {error}.
 static func save(
 	root: Node, source: String, path: String, known: Dictionary, layout: Dictionary
@@ -313,14 +315,15 @@ static func save(
 ## is built parentless for its defaults, so its layout_mode default is 3, while a child of a Control
 ## in position mode reads 0: 4.7.2 class_db.cpp L2184-2196, control.cpp L978-982), so it stores
 ## lines the source never had and leaves out lines the source stored. packed is then instantiated
-## and each changed property compared with the value it must read; on a mismatch packed's state is
-## put back as it was and the result is the warning saying why, else "". renames is {path in
-## source: path now} for the nodes a move carried: a carried node's record is matched with
-## source's record at its source path, and a node at a path a carried node left is new
-## (_source_path). A carried node's pair is judged at its new place, not against the source node
-## at its old one: it is dropped only when packed, instantiated without it, still reads its value
-## there (_keep_unread_carried), since a default that depends on the parent (a Control's
-## layout_mode in or out of a Container) differs between the two places.
+## and each changed property compared with the value it must read; a node that does not read it
+## keeps Godot's pack form, alone (_settled), and the result holds the warnings
+## saying why, "; "-joined, else "". renames is {path in source: path now} for the nodes a move
+## carried: a carried node's record is matched with source's record at its source path, and a
+## node at a path a carried node left is new (_source_path). A carried node's pair is judged at its
+## new place, not against the source node at its old one: it is dropped only when packed,
+## instantiated without it, still reads its value there (_keep_unread_carried), since a default
+## that depends on the parent (a Control's layout_mode in or out of a Container) differs between
+## the two places.
 static func keep_source_set(
 	packed: PackedScene, source: String, keep_layout: bool, renames: Dictionary
 ) -> String:
@@ -332,20 +335,58 @@ static func keep_source_set(
 		return ""
 	var plan: Dictionary = _source_plan(packed.get_state(), scene.get_state(), loaded, renames)
 	var full: Dictionary = packed.get("_bundled")
-	var trimmed: Array = _trimmed(full, plan)
-	if _keep_unread_carried(packed, trimmed, plan):
-		trimmed = _trimmed(full, plan)
+	_keep_unread_carried(packed, _trimmed(full, plan), plan)
+	var reverted: Dictionary = _settled(
+		packed, func(failed: Dictionary) -> Array: return _trimmed(full, _without(plan, failed))
+	)
 	loaded.free()
-	var dropped: Dictionary = trimmed[1]
-	if not dropped.is_empty():
-		packed.set("_bundled", trimmed[0])
-		var mismatch: String = _drop_mismatch(packed, dropped)
-		if not mismatch.is_empty():
-			packed.set("_bundled", full)
-			return SOURCE_SET_WARNING % [source, mismatch]
+	var warning: String = _warning(SOURCE_SET_WARNING, source, reverted)
 	if not keep_layout:
-		return ""
-	return _restore_source_set(packed, scene, source, renames)
+		return warning
+	var restored: String = _restore_source_set(packed, scene, source, renames, reverted)
+	return warning + ("" if warning.is_empty() or restored.is_empty() else "; ") + restored
+
+
+## Sets packed's state to bundled of build(failed) = [bundled, changed ({path: {name: value}})]
+## when packed, instantiated so, reads each changed value; a path whose node does not joins failed
+## ({path: reason}, the result) and build runs again. A scene that cannot be instantiated fails
+## every changed path; packed keeps its state when any path failed.
+static func _settled(packed: PackedScene, build: Callable) -> Dictionary:
+	var base: Dictionary = packed.get("_bundled")
+	var failed: Dictionary = {}
+	var next: Array = build.call(failed)
+	while not (next[1] as Dictionary).is_empty():
+		packed.set("_bundled", next[0])
+		var reasons: Dictionary = _drop_mismatches(packed, next[1])
+		if reasons.is_empty():
+			return failed
+		packed.set("_bundled", base)
+		if reasons.has(""):
+			for path: String in next[1]:
+				failed[path] = reasons[""]
+			return failed
+		failed.merge(reasons)
+		next = build.call(failed)
+	return failed
+
+
+## format % [source, failed's paths, its reasons each once] ({path: reason}); "" for none.
+static func _warning(format: String, source: String, failed: Dictionary) -> String:
+	var reasons: PackedStringArray = []
+	for reason: String in failed.values():
+		if not reasons.has(reason):
+			reasons.append(reason)
+	var paths: String = ", ".join(PackedStringArray(failed.keys()))
+	return "" if failed.is_empty() else format % [source, paths, "; ".join(reasons)]
+
+
+## plan ({record index: entry}, _source_plan) without the entries whose path paths holds.
+static func _without(plan: Dictionary, paths: Dictionary) -> Dictionary:
+	var kept: Dictionary = {}
+	for record: int in plan:
+		if not paths.has(plan[record]["path"]):
+			kept[record] = plan[record]
+	return kept
 
 
 ## [bundled, dropped]: full, a PackedScene's _bundled state, with each record of plan without the
@@ -368,7 +409,8 @@ static func _trimmed(full: Dictionary, plan: Dictionary) -> Array:
 static func _keep_unread_carried(packed: PackedScene, trimmed: Array, plan: Dictionary) -> bool:
 	var dropped: Dictionary = trimmed[1]
 	var carried: Array = plan.values().filter(
-		func(entry: Dictionary) -> bool: return entry["carried"] and dropped.has(entry["path"])
+		func(entry: Dictionary) -> bool:
+			return entry.get("carried", false) and dropped.has(entry["path"])
 	)
 	if carried.is_empty():
 		return false
@@ -407,38 +449,49 @@ static func _unread(root: Node, path: String, values: Dictionary) -> PackedStrin
 ## Restores into packed each (name, value) pair the scene at source stores that Godot's pack left
 ## out of packed's state (the value is the class default), when the packed scene, instantiated as
 ## it loads, reads that value for the property anyway, so the file keeps the line the source had
-## without changing how the scene loads. "" on success, else a warning clause after packed's state
-## is put back as it was. renames as keep_source_set takes it.
+## without changing how the scene loads. A node whose restored lines change how it loads keeps
+## none of them, alone (_settled), and the nodes of reverted ({path: reason}, keep_source_set),
+## which keep Godot's pack form, get none. "" when every node kept its lines, else the warning
+## clause saying why some did not. renames as keep_source_set takes it.
 static func _restore_source_set(
-	packed: PackedScene, scene: PackedScene, source: String, renames: Dictionary
+	packed: PackedScene,
+	scene: PackedScene,
+	source: String,
+	renames: Dictionary,
+	reverted: Dictionary
 ) -> String:
 	var state: SceneState = packed.get_state()
 	var stored: Dictionary = _stored_values(scene.get_state())
 	var missing: Dictionary = _missing_source_values(state, stored, renames)
+	for path: String in reverted:
+		missing.erase(path)
 	if missing.is_empty():
 		return ""
 	var loaded: Node = instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
 	if loaded == null:
 		return ""
-	var context := {"state": state, "loaded": loaded, "missing": missing, "added": {}}
+	var context := {"state": state, "loaded": loaded, "missing": missing}
 	var base: Dictionary = packed.get("_bundled")
+	var restore := func(failed: Dictionary) -> Array:
+		for path: String in failed:
+			missing.erase(path)
+		return _restored(base, context)
+	var failed: Dictionary = _settled(packed, restore)
+	loaded.free()
+	return _warning(SOURCE_RESTORE_WARNING, source, failed)
+
+
+## [bundled, added]: base, a PackedScene's _bundled state, with each record's pairs gaining what
+## _restored_pairs adds of context.missing, and {path: {name: value}} for the pairs added.
+static func _restored(base: Dictionary, context: Dictionary) -> Array:
+	context["added"] = {}
 	var restored: Dictionary = base.duplicate()
 	restored["variants"] = (base["variants"] as Array).duplicate()
 	var restore := func(
 		bundled: Dictionary, record: int, _head: PackedInt32Array, pairs: PackedInt32Array
 	) -> PackedInt32Array:
 		return _restored_pairs(bundled, pairs, record, context)
-	var next: Dictionary = _with_pairs(restored, restore)
-	loaded.free()
-	var added: Dictionary = context["added"]
-	if added.is_empty():
-		return ""
-	packed.set("_bundled", next)
-	var mismatch: String = _drop_mismatch(packed, added)
-	if mismatch.is_empty():
-		return ""
-	packed.set("_bundled", base)
-	return SOURCE_RESTORE_WARNING % [source, mismatch]
+	return [_with_pairs(restored, restore), context["added"]]
 
 
 ## {path: {name: value}} for each record of state: the values the source's record for its node
@@ -658,7 +711,8 @@ static func _native_pairs(
 ## path, relative to the root) source_state lists at _source_path of path and loaded, source's
 ## scene instantiated, holds there: node is loaded's node, stored the names source_state's record
 ## for it stores, hidden its engine properties a script member hides (_hidden_names), carried
-## whether a move carried it (its source path is another).
+## whether a move carried it (its source path is another). A record source does not list under a
+## TabContainer's record is a new page: {path, new_page} (_droppable).
 static func _source_plan(
 	state: SceneState, source_state: SceneState, loaded: Node, renames: Dictionary
 ) -> Dictionary:
@@ -677,7 +731,36 @@ static func _source_plan(
 				"hidden": _hidden_names(node),
 				"carried": source_path != path,
 			}
+		elif _is_page(state, record):
+			plan[record] = {"path": path, "new_page": true}
 	return plan
+
+
+## Whether the record at record of state is a page: a Control, not top_level, under a record of a
+## TabContainer type; Godot hides a page when it is added (4.7.2 tab_container.cpp L581-585).
+static func _is_page(state: SceneState, record: int) -> bool:
+	var type: String = state.get_node_type(record)
+	if not ClassDB.class_exists(type) or not ClassDB.is_parent_class(type, "Control"):
+		return false
+	if _stores_true(state, record, "top_level"):
+		return false
+	var parent: String = _plain_path(state.get_node_path(record, true))
+	for index in state.get_node_count():
+		if _plain_path(state.get_node_path(index)) == parent:
+			var parent_type: String = state.get_node_type(index)
+			return (
+				ClassDB.class_exists(parent_type)
+				and ClassDB.is_parent_class(parent_type, "TabContainer")
+			)
+	return false
+
+
+## Whether the record at record of state stores true for property.
+static func _stores_true(state: SceneState, record: int, property: String) -> bool:
+	for pair in state.get_node_property_count(record):
+		if state.get_node_property_name(record, pair) == property:
+			return state.get_node_property_value(record, pair) == true
+	return false
 
 
 ## The path in source of the node at path now, renames being {path in source: path now} for the
@@ -727,8 +810,11 @@ static func _source_pairs(
 ## stored, hidden, carried}): the source's record stores no such property, value is no Object (an
 ## Object dropped would stay among the packed variants and still be saved) and entry.node reads
 ## value; for a carried node, whose source node is at its old place, the value is judged at its
-## new place instead (_keep_unread_carried).
+## new place instead (_keep_unread_carried). A new page's entry ({path, new_page}) lets go only its
+## visible = false, which the page reads once added anyway.
 static func _droppable(entry: Dictionary, property: String, value: Variant) -> bool:
+	if entry.get("new_page", false):
+		return property == "visible" and value is bool and not value
 	if (entry["stored"] as PackedStringArray).has(property) or typeof(value) == TYPE_OBJECT:
 		return false
 	if entry["carried"]:
@@ -744,19 +830,19 @@ static func _loaded_value(node: Node, property: String, hidden: PackedStringArra
 	return node.get(property)
 
 
-## Why packed, instantiated, does not read each dropped property ({path: {name: value}}) as its
-## value, or "".
-static func _drop_mismatch(packed: PackedScene, dropped: Dictionary) -> String:
+## {path: reason} for each path of dropped ({path: {name: value}}) whose node packed, instantiated,
+## does not read each property of as its value; {"": reason} when packed cannot be instantiated.
+static func _drop_mismatches(packed: PackedScene, dropped: Dictionary) -> Dictionary:
 	var check: Node = instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
 	if check == null:
-		return "the scene without them could not be instantiated"
-	var reason: String = ""
+		return {"": "the scene without them could not be instantiated"}
+	var reasons: Dictionary = {}
 	for path: String in dropped:
-		reason = _path_mismatch(check, path, dropped[path])
+		var reason: String = _path_mismatch(check, path, dropped[path])
 		if not reason.is_empty():
-			break
+			reasons[path] = reason
 	check.free()
-	return reason
+	return reasons
 
 
 ## Why the node at path under root does not read each of values ({name: value}), or "".

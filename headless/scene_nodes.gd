@@ -412,7 +412,8 @@ static func _copy_name(root: Node, parent: Node, source: Node, given: String) ->
 ## {node, owned, outbound} for a copy of source, the nodes of it root must own, and the
 ## connections from source's nodes to nodes outside it; or {error}. source moves for a moment
 ## under a bare holder that owns it and what root owns below it, is packed there and put back
-## where it was, its outbound connections taken off for the pack and made again.
+## where it was, its outbound connections taken off for the pack and made again, and, as a
+## TabContainer's page, its tab's state and the current page put back (_tab_state).
 static func _copy_of(source: Node, root: Node) -> Dictionary:
 	var parent: Node = source.get_parent()
 	var index: int = source.get_index()
@@ -421,10 +422,12 @@ static func _copy_of(source: Node, root: Node) -> Dictionary:
 	for entry: Dictionary in outbound:
 		source.get_node(entry["path"]).disconnect(entry["signal"], entry["callable"])
 	var holder := Node.new()
+	var tab_state: Dictionary = _tab_state(parent, source)
 	_move(source, holder, owned, holder)
 	var packing: Dictionary = SceneEdit.pack_native(holder)
 	_move(source, parent, owned, root)
 	parent.move_child(source, index)
+	_restore_tab_state(parent, source, tab_state)
 	holder.free()
 	_connect_outbound(source, outbound, ~0)
 	var path: String = String(root.get_path_to(source))
@@ -521,6 +524,43 @@ static func _place(copy: Node, parent: Node, source: Node, owned: Array[Node], r
 		parent.move_child(copy, source.get_index() + 1)
 	for node: Node in owned:
 		node.owner = root
+
+
+## {title, icon, disabled, hidden, current} of page's tab when parent is a TabContainer and page
+## one of its pages, current the container's current page; else {}. A page taken out of its
+## TabContainer loses its tab and its _tab_name, and the current tab moves (4.7.2
+## tab_container.cpp L661, L672-673; tab_bar.cpp L1467-1496), so _copy_of puts them back.
+static func _tab_state(parent: Node, page: Node) -> Dictionary:
+	var tabs := parent as TabContainer
+	if tabs == null or not page is Control:
+		return {}
+	var at: int = tabs.get_tab_idx_from_control(page as Control)
+	if at < 0:
+		return {}
+	return {
+		"title": tabs.get_tab_title(at),
+		"icon": tabs.get_tab_icon(at),
+		"disabled": tabs.is_tab_disabled(at),
+		"hidden": tabs.is_tab_hidden(at),
+		"current": tabs.get_current_tab_control(),
+	}
+
+
+## Gives page's tab in parent the state _tab_state took (set_tab_title sets its _tab_name again,
+## tab_container.cpp L864-868) and makes the page that was current current again, through the tab
+## bar, since TabContainer.current_tab does nothing out of the tree (L692-695).
+static func _restore_tab_state(parent: Node, page: Node, state: Dictionary) -> void:
+	if state.is_empty():
+		return
+	var tabs := parent as TabContainer
+	var at: int = tabs.get_tab_idx_from_control(page as Control)
+	tabs.set_tab_title(at, state["title"])
+	tabs.set_tab_icon(at, state["icon"])
+	tabs.set_tab_disabled(at, state["disabled"])
+	tabs.set_tab_hidden(at, state["hidden"])
+	var current: Control = state["current"]
+	if current != null:
+		tabs.get_tab_bar().current_tab = tabs.get_tab_idx_from_control(current)
 
 
 static func _delete_refusal(root: Node, path: String, scene_path: String) -> String:

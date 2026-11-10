@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Tools;
@@ -25,6 +26,21 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
 
     private const string SpriteScene =
         "[gd_scene format=3]\n\n[node name=\"Stage\" type=\"Node2D\"]\n\n[node name=\"Icon\" type=\"Sprite2D\" parent=\".\"]\n";
+
+    // A TabContainer whose second page has a custom title, then a Label with the size_flags_vertical = 4 Godot's pack drops.
+    private const string TabsHead =
+        "[gd_scene format=3 uid=\"uid://b507tabsitest\"]\n\n[node name=\"Root\" type=\"Control\" unique_id=1001]\n\n"
+        + "[node name=\"Tabs\" type=\"TabContainer\" parent=\".\" unique_id=1002]\nlayout_mode = 0\ncurrent_tab = 0\n"
+        + "tab_1/title = \"Net\"\n\n[node name=\"Sound\" type=\"VBoxContainer\" parent=\"Tabs\" unique_id=1003]\nlayout_mode = 2\n"
+        + "metadata/_tab_index = 0\n\n[node name=\"Gameplay\" type=\"VBoxContainer\" parent=\"Tabs\" unique_id=1004]\nvisible = false\n"
+        + "layout_mode = 2\nmetadata/_tab_name = \"Net\"\nmetadata/_tab_index = 1\n\n";
+
+    private const string TabsTail =
+        "[node name=\"Server\" type=\"VBoxContainer\" parent=\"Tabs\" unique_id=1005]\nvisible = false\nlayout_mode = 2\n"
+        + "metadata/_tab_index = {0}\n\n[node name=\"Side\" type=\"Label\" parent=\".\" unique_id=1007]\nlayout_mode = 0\n"
+        + "size_flags_vertical = 4\ntext = \"a\"\n";
+
+    private const string NewPageHead = "[node name=\"New\" type=\"VBoxContainer\" parent=\"Tabs\" unique_id=";
 
     // A 1x1 PNG.
     private const string DotPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -132,6 +148,38 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Contains("\nremote_path = NodePath(\"../Hand\")\n", saved, StringComparison.Ordinal);
         Assert.Contains("\nremote_path = NodePath(\"../Arm\")\n", saved, StringComparison.Ordinal);
         Assert.Contains(HeadlessSceneTests.RigPanel + "\n[node name=\"To\"", saved, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnInsertAmongTabPagesChangesOnlyTheInsertAndTheLaterIndex()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "tabs.tscn"), TabsHead + TabsTailAt(2));
+        JsonObject add = new()
+        {
+            ["nodeType"] = "VBoxContainer",
+            ["nodeName"] = "New",
+            ["options"] = new JsonObject
+            {
+                ["parent"] = "Tabs",
+                ["position"] = new JsonObject { ["after"] = "Gameplay" },
+            },
+        };
+        JsonObject update = new() { ["updates"] = new JsonArray(Update("Tabs/New", "size_flags_horizontal", 3)) };
+        SceneBatchStep[] steps = [new("add_node", add), new("set_node_properties", update)];
+
+        JsonObject batch = await BatchAsync(probe.Directory, "tabs.tscn", steps, cancellation);
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Null(batch["warning"]);
+        string[] lines = Read(probe.Directory, "tabs.tscn").Split('\n');
+        int inserted = Array.FindIndex(lines, line => line.StartsWith(NewPageHead, StringComparison.Ordinal));
+        Assert.True(inserted > 0, string.Join('\n', lines));
+        lines[inserted] = NewPageHead + "0]";
+        string newPage = NewPageHead + "0]\nlayout_mode = 2\nsize_flags_horizontal = 3\nmetadata/_tab_index = 2\n\n";
+        string expected = TabsHead + newPage + TabsTailAt(3);
+        Assert.Equal(expected, string.Join('\n', lines));
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -314,6 +362,9 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
             ["property"] = property,
             ["value"] = value,
         };
+
+    // TabsTail with Server's metadata/_tab_index at index.
+    private static string TabsTailAt(int index) => TabsTail.Replace("{0}", index.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
 
     private static string Read(string directory, string relative) => File.ReadAllText(Path.Combine(directory, relative));
 
