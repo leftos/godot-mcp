@@ -69,6 +69,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
   An editor session (`run_editor`) is a fourth kind: the Godot editor with the bridge inside it. It writes no `override.cfg` either, so the folder's quiet and shut-out rules do not bind it, and the runtime tools act on the editor's own windows (see `run_editor`).
 
   Two sessions on one folder need distinct names: pass `options.session` to `run_project`, `run_editor` or `attach_project`. The headless tools and `preview_scene` take `projectPath` instead and no session.
+- **Calls sent in one turn run at once.** A client may send a turn's tool calls together, and the server runs each as it arrives: only input tools wait for one another (one input call at a time per session). Calls whose order matters, such as a game method that must finish before the next call starts it again, go in separate turns or as the steps of one `batch_drive`, which runs them in order.
 - **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. The key is present only when the game raised an error during the call: its absence means none. Read `errors` in every result before the next step.
 - **Viewport coordinates.** Every `x`, `y` an input tool takes is in root-viewport coordinates, as `get_ui_elements` reports rects; the bridge maps them to the window whether it is stretched or letterboxed.
 

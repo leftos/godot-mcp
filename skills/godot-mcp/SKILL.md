@@ -212,6 +212,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
   A wait that is met after checks that errored says so in `failedChecks`: a condition that holds too early (a label's placeholder text) reads as met, so wait on the value you need, not on "not empty".
 - **A misnamed or mistyped argument is refused by name**, with the keys the tool takes or the kind the value needs: read the refusal and fix the call, since nothing ran.
 - **One input at a time per session**, each answering once its gesture has ended and two frames have run.
+- **Calls sent in one turn run at once**, inputs aside: two `call_method` calls of one game method in one turn run side by side. Calls whose order matters go in separate turns or in one `batch_drive`.
 - **Headless tools run beside a live session** on the same folder; the game sees a scene edit only after `restart_project`.
 
   An editor session is the exception for writes: while one is open on the folder, `add_node`, `set_node_properties`, `batch_scene_operations` and every other headless write are refused, naming the session, since they would race the editor's copy of the scene. Make the change in the editor and save it with `editor {action: save}`, or `stop_project` the editor session first; reads (`validate`, `get_scene_file_tree`, `get_node_properties`, `get_node_signals`, `describe_class`) stay allowed. Only this server's editor sessions are seen.
