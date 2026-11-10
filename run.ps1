@@ -25,6 +25,10 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
            selected here first, printing itest-groups' lines (below), and the inner run gets them as -Groups <a,b,...>
            in the groups table's order; with none selected it prints "itest: no group touched by the changes since
            <ref>" and exits 0 with no gate run. -Filter and -Groups pass through as given; a bare itest passes neither.
+           When the gate's log has no verdict of a run (passed, FAILED or a kill line: the gate did not route the run,
+           or ran nothing), the last line is
+           "itest: no test ran: <the gate's not-routed line, or that the log has no passed verdict>" and the exit
+           status is the gate's, or 1 where the gate's was 0.
            The refusals, status 2, come before that run: -Filter with -Since, -Groups with either or naming no group,
            a -Filter selecting classes of both the visible-desktop group and a hidden-desktop one, and a -Since ref git
            cannot resolve. itest -InGate, the form the gate runs, does what follows in the process it is started in:
@@ -402,11 +406,29 @@ $captureOut = Join-Path $root 'bin/capture'
 $gateWrapper = Join-Path $root 'tools/gate.ps1'
 $pwshPath = [Environment]::ProcessPath
 
-# The last kill line of the gate in a log (a match whose first group is STALLED, TIMED OUT or BACKSTOP), or $null.
+# The last kill line of the gate in a log, or $null: a match whose first group is the line from "gate:" on and whose
+# second is STALLED, TIMED OUT or BACKSTOP. A line may carry the gate's stamp and stream.
 function Get-GateKillLine {
     param([Parameter(Mandatory)] [string]$Log)
-    return Select-String -LiteralPath $Log -Pattern '^gate: (STALLED|TIMED OUT|BACKSTOP)' -ErrorAction SilentlyContinue |
-        Select-Object -Last 1
+    $pattern = '^(?:\S+ gat )?(gate: (STALLED|TIMED OUT|BACKSTOP).*)$'
+    return Select-String -LiteralPath $Log -Pattern $pattern -ErrorAction SilentlyContinue | Select-Object -Last 1
+}
+
+# Why a routed run's log shows no test ran: the text from "gate:" on of its last not-routed line, or "the gate's log has
+# no passed verdict"; $null when the log has a verdict of a command that ran: the gate's passed or FAILED verdict or
+# its kill line (STALLED, TIMED OUT, BACKSTOP). A line may carry the gate's stamp and stream.
+function Get-GateNoRunLine {
+    param([Parameter(Mandatory)] [string]$Log)
+    $pattern = '^(?:\S+ gat )?(gate: (?:passed in |FAILED \(status |STALLED|TIMED OUT|BACKSTOP|not routed: ).*)$'
+    $lines = @(Select-String -LiteralPath $Log -Pattern $pattern -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+    if ($lines | Where-Object { -not $_.StartsWith('gate: not routed: ') }) {
+        return $null
+    }
+    if ($lines.Count -gt 0) {
+        return $lines[-1]
+    }
+    return "the gate's log has no passed verdict"
 }
 
 # The kind of the gate's kill in a log, STALLED, TIMED OUT or BACKSTOP; '' when the log has no kill line.
@@ -416,7 +438,7 @@ function Get-GateKillKind {
     if (-not $line) {
         return ''
     }
-    return $line.Matches[0].Groups[1].Value
+    return $line.Matches[0].Groups[2].Value
 }
 
 # The gate's kill line in a log followed by what it means, or a note that the log has none.
@@ -426,12 +448,12 @@ function Get-GateKill {
     if (-not $line) {
         return "no kill line in $Log"
     }
-    $reading = switch ($line.Matches[0].Groups[1].Value) {
+    $reading = switch ($line.Matches[0].Groups[2].Value) {
         'STALLED' { "It hung: read $Log for where it stopped." }
         'TIMED OUT' { "It kept working past its ceiling even allowing for load: a busy loop or a ceiling set too tight; read $Log before raising it." }
         default { 'The machine was busy: run it once more alone.' }
     }
-    return "$($line.Line) $reading"
+    return "$($line.Matches[0].Groups[1].Value) $reading"
 }
 
 # Runs a program with no gate: its whole output goes to the log in UTF-8 and not to the screen, the last 15 lines are
@@ -1353,7 +1375,9 @@ function Get-ItestRefusal {
 # without slots. The builder's copy of the repo cannot see this repo's history, so -Since's groups are selected here,
 # itest-groups' lines printed, and the inner run gets them as -Groups in table order; with none selected it prints that
 # no group was touched and returns 0 with no gate run. -Filter and -Groups pass through; a bare itest passes nothing.
-# Arguments refused with no build are refused here first, status 2. Returns the gate's status.
+# Arguments refused with no build are refused here first, status 2. Returns the gate's status, except that a gate run
+# whose log has no verdict of a run (passed, FAILED or a kill line) ends with "itest: no test ran: <the gate's
+# not-routed line, or that the log has no passed verdict>", and returns 1 when the gate's status was 0.
 function Invoke-ItestRouted {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
@@ -1391,6 +1415,13 @@ function Invoke-ItestRouted {
     $status = $LASTEXITCODE
     if ($status -eq 124) {
         Write-Host "itest was killed by the gate: $(Get-GateKill -Log $log)" -ForegroundColor Yellow
+    }
+    $noRun = Get-GateNoRunLine -Log $log
+    if ($noRun -and ($status -eq 0 -or $noRun.StartsWith('gate: not routed: '))) {
+        Write-Host "itest: no test ran: $noRun" -ForegroundColor Red
+        if ($status -eq 0) {
+            return 1
+        }
     }
     return $status
 }
