@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- An import error behind a gate's line stamp now runs the import's second pass, as a bare `ERROR:` line does.
+
 ## 0.37.0 - 2026-11-05
 
 ### Added

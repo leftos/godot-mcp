@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using GodotMcp.Server.Tools;
 using Microsoft.Extensions.Logging;
 
@@ -37,7 +38,7 @@ internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IRead
 /// import when imported files are missing, a source asset changed since it was imported, or its import settings changed since the
 /// server last saw them. The caller serialises prep per folder.
 /// </summary>
-internal static class ProjectPrep
+internal static partial class ProjectPrep
 {
     /// <summary>The configuration the prep builds and lists Compile items in, which the build's refusals name.</summary>
     public const string Configuration = "Debug";
@@ -557,13 +558,14 @@ internal static class ProjectPrep
     }
 
     /// <summary>
-    /// Why the import must run once more, or null: its first pass logged errors, or it registered a <c>[GlobalClass]</c> loader or saver the
-    /// class cache did not name before it (<paramref name="classesBefore"/>, null when no class was due), whose loader the
-    /// pass's own scan ran without, so the files it reads were left out of the uid cache.
+    /// Why the import must run once more, or null: its first pass logged errors (<c>ERROR:</c> lines, bare or after a gate's stamp),
+    /// or it registered a <c>[GlobalClass]</c> loader or saver the class cache did not name before it
+    /// (<paramref name="classesBefore"/>, null when no class was due), whose loader the pass's own scan ran without, so the
+    /// files it reads were left out of the uid cache.
     /// </summary>
-    private static string? SecondPassReason(string log, IReadOnlySet<string>? classesBefore, string projectDir, ProjectFiles files)
+    internal static string? SecondPassReason(string log, IReadOnlySet<string>? classesBefore, string projectDir, ProjectFiles files)
     {
-        if (File.Exists(log) && File.ReadLines(log).Any(line => line.StartsWith("ERROR:", StringComparison.Ordinal)))
+        if (File.Exists(log) && File.ReadLines(log).Any(IsImportError))
         {
             return "its first pass logged errors";
         }
@@ -572,6 +574,13 @@ internal static class ProjectPrep
             ? "its first pass registered the project's [GlobalClass] loaders or savers, which only a later pass's scan uses"
             : null;
     }
+
+    [GeneratedRegex(@"^(?:\S+ (?:out|err) )?ERROR:", RegexOptions.CultureInvariant)]
+    private static partial Regex ImportErrorPattern();
+
+    /// <summary>Whether a line of the import's log is an engine error: <c>ERROR:</c> at its start, or after the
+    /// <c>&lt;stamp&gt; out|err </c> a gate puts before each line it logs.</summary>
+    internal static bool IsImportError(string line) => ImportErrorPattern().IsMatch(line);
 
     /// <summary>Whether the class cache names a <c>[GlobalClass]</c> after an import that it did not name before it.</summary>
     internal static bool RegisteredNewClasses(IReadOnlySet<string> before, IReadOnlySet<string> after) => !after.IsSubsetOf(before);

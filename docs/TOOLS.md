@@ -1817,7 +1817,7 @@ When MSBuild's file is missing (a routed build's diagnostics file stays on the b
 
 `build.log` and `build.diagnostics.log` are deleted before each build, so a build whose command never ran (a wrapper exiting 124) leaves no earlier build's log or diagnostics. A listing's `.log` and `.json` (it writes no `.wrapper.log`) are deleted once it succeeds and kept when it fails.
 
-The import is read differently: its `ERROR:` check reads the wrapped import output, so an import error a prefixing wrapper rewrites is not detected.
+The import is read differently: its `ERROR:` check reads the import log, and counts an engine `ERROR:` line whether it starts the line or follows the `<stamp> out ` or `<stamp> err ` a gate puts before each line it logs; a wrapper that prefixes lines in another shape hides an import error from it.
 
 A wrapped process has no stall kill (a gate waiting for a slot is silent), the ceiling still holds, and a wrapper exit of 124 refuses the prep with `the prep wrapper stopped the build (exit 124); its log: …`. `prep.note` says `ran through prepWrapper (<program>)`. A malformed `godot-mcp.json` refuses any prep that runs a process.
 
