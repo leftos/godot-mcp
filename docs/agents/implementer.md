@@ -37,7 +37,7 @@ The gate's kill line (exit 124) says why: `STALLED` (no output and no CPU for 12
 - The server's stdout is the MCP protocol: every log goes to stderr.
 - Every request on the wire carries an id; a reply for a timed-out id is dropped.
 - Input tools take viewport coordinates and map them to the window; a drag's motion events carry `button_mask` and `relative`.
-- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed: the source is `F:\Godot\src-4.7.2`; `F:\Godot\repo` is a stale 4.5.1 checkout.
+- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed: the source is `F:\Godot\src-4.7.2`.
 - Cyclomatic complexity ≤ 8 per method (CA1502; the threshold is `CodeMetricsConfig.txt`; gdcomplexity for GDScript), ≤ 100 lines per method, gdlint's 1000 lines per file, warnings are errors.
 - Temporary files go in the untracked `.tmp/`.
 - gdformat writes CRLF on Windows: convert a file it reformats back to LF and check `git ls-files --eol <file>` shows `w/lf` (DEVELOPMENT.md, Footguns).

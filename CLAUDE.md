@@ -19,7 +19,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - The server's stdout is the MCP protocol: every log goes to stderr.
 - Every request on the wire carries an id; a reply for a timed-out id is dropped.
 - Input tools take viewport coordinates and map them to the window; a drag's motion events carry `button_mask` and `relative`.
-- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed: the source is `F:\Godot\src-4.7.2`; `F:\Godot\repo` is a stale 4.5.1 checkout.
+- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed: the source is `F:\Godot\src-4.7.2`.
 - Every build and test runs through `run.ps1`.
 
 ## Workflow

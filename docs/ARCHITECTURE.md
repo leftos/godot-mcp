@@ -152,7 +152,7 @@ A change to A that needs a change to B, where nothing but a test or a reviewer c
 - **Change a file under `src/GodotMcp.Dotnet*` or `dotnet/`** → the server loads the helper from a content-hashed copy (`HelperCache`), so `run.ps1 dotnet` must have laid out `bin/dotnet/` and a game must restart; never point a game at `bin/dotnet` itself.
 - **Change how `PlayStep` reads a step's name** → change both homes alike: the bridge's `_step_index` and `_step_list` (`godot_mcp_inspect.gd`, for `call_method` and `options.call`) and the helper's `GameTools.ReadSteps` with Core's `StepNames` (for game tools); their refusals match word for word, pinned by `test_inspect_play_step.gd` and `StepNamesTests`.
 - **Bump the Godot minor** → also bump `GodotSharp` in `Directory.Packages.props` and rebuild the helper, whose loader refuses any other minor.
-- **Cite Godot's behaviour** → from the 4.7.2 source or docs, never from memory or the stale 4.5.1 checkout.
+- **Cite Godot's behaviour** → from the 4.7.2 source or docs, never from memory.
 - **Add a GDScript function** → keep it at complexity 8 and 100 lines or add it to `tools/gdcomplexity-baseline.txt`, a list that can only shrink; gdformat writes CRLF on Windows, so convert the file back to LF.
 - **Add a `.md` file under `docs/`** → also link it from [README.md](./README.md), and a term it uses in a project sense goes in the glossary there.
 
