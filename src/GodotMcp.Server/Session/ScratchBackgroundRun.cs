@@ -516,7 +516,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
                 state.StepName = name;
                 state.Total = total;
                 state.Remaining = Math.Round(remainingSecondsAtMost, 1);
-                return $"scene {Clean(state.Name)} step {step}/{total} {Clean(name)}";
+                return $"scene {Clean(state.Name)} step {step} {Clean(name)} ({step + 1} of {total})";
             }
         );
 

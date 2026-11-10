@@ -753,7 +753,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The run's files are in `<project>/.godot/godot-mcp/`.
 
-  `scratch-<runId>.json` is its status, rewritten whole at each scene's start and end and each step's start; `scratch-<runId>.log` is one line per event, each starting `godot-mcp scratch run <runId> `: `scene <scene> start` (`start alone` for a replay), `scene <scene> step <i>/<total> <name>` (`i` 0-based, as in `options.steps`, `total` the scene's step count), `scene <scene> <verdict> in <seconds> s`, and last the completion line. The run id is `<UTC yyyyMMddTHHmmss>-<4 hex>`.
+  `scratch-<runId>.json` is its status, rewritten whole at each scene's start and end and each step's start; `scratch-<runId>.log` is one line per event, each starting `godot-mcp scratch run <runId> `: `scene <scene> start` (`start alone` for a replay), `scene <scene> step <i> <name> (<i+1> of <total>)` (`i` the 0-based index `options.steps`, `--steps` and `--capture-step` take, `total` the scene's step count), `scene <scene> <verdict> in <seconds> s`, and last the completion line. The run id is `<UTC yyyyMMddTHHmmss>-<4 hex>`.
 
   The log's last line is the completion line: `finished: done, passed <true|false>, green <n>, red <n>, killed <n>, known <n>`, `finished: stopped`, `finished: interrupted` or `finished: failed: <one line>`.
 

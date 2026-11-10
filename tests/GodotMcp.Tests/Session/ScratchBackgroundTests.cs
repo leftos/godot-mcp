@@ -230,9 +230,20 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         run.StepStarted(0, 0, $"y{(char)0x2028}finished: done{(char)0x2029}", 1, 1);
 
         string[] lines = LogLines(run);
-        Assert.Equal($"godot-mcp scratch run {run.RunId} scene A step 0/1 xfinished: done", lines[^2]);
-        Assert.Equal($"godot-mcp scratch run {run.RunId} scene A step 0/1 yfinished: done", lines[^1]);
+        Assert.Equal($"godot-mcp scratch run {run.RunId} scene A step 0 xfinished: done (1 of 1)", lines[^2]);
+        Assert.Equal($"godot-mcp scratch run {run.RunId} scene A step 0 yfinished: done (1 of 1)", lines[^1]);
         Assert.DoesNotContain(lines, line => Completion().IsMatch(line));
+    }
+
+    [Fact]
+    public void AProgressLineNamesTheStepIndexTheCaptureTakes()
+    {
+        ScratchBackgroundRun run = Started(new ScratchRuns(), "index", "A");
+        run.SceneStarted(0);
+
+        run.StepStarted(0, 20, "open", 72, 1);
+
+        Assert.Equal($"godot-mcp scratch run {run.RunId} scene A step 20 open (21 of 72)", LogLines(run)[^1]);
     }
 
     [Fact]

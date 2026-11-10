@@ -79,7 +79,7 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
         Assert.Equal("green", ScratchRunnerTests.Single(result)["verdict"]!.GetValue<string>());
         string[] lines = LogLines(started);
         Assert.Equal($"godot-mcp scratch run {runId} scene {Scene} start", lines[0]);
-        Assert.Contains($"godot-mcp scratch run {runId} scene {Scene} step 0/3 open", lines);
+        Assert.Contains($"godot-mcp scratch run {runId} scene {Scene} step 0 open (1 of 3)", lines);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
