@@ -8,6 +8,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - An import error behind a gate's line stamp now runs the import's second pass, as a bare `ERROR:` line does.
 - A quiet run turns vsync off, so a sleeping screen no longer slows its game to a third of real time.
+- A `wait_for` expression on a member its node's script lacks, such as an unreadable C# property, fails at once instead of running out its timeout.
 
 ## 0.37.0 - 2026-11-05
 
