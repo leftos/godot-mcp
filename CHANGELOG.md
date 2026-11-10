@@ -15,6 +15,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- An insert, move, duplicate or delete among TabContainer pages keeps the rest of the `.tscn` text, and tab titles follow their pages.
+- A headless save keeps Godot's pack form only for a node that needs it, named in the warning, instead of rewriting the whole scene.
 - A Godot start that crashes at boot with 0xC06D007F, before any request reaches it, is started once more instead of failing the call.
 - An import error behind a gate's line stamp now runs the import's second pass, as a bare `ERROR:` line does.
 - A quiet run turns vsync off, so a sleeping screen no longer slows its game to a third of real time.
