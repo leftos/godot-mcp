@@ -600,13 +600,13 @@ public sealed class SessionAttachTests : IAsyncDisposable
         TaskCompletionSource<bool> judged = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // Only alpha's own hello: beta's, or a late verdict on another attach's, carries another token.
         string? alphaToken = null;
-        Action<string?, bool> onJudged = (judgedToken, handedOver) =>
+        void onJudged(string? judgedToken, bool handedOver)
         {
             if (judgedToken is not null && judgedToken == Volatile.Read(ref alphaToken))
             {
                 judged.TrySetResult(handedOver);
             }
-        };
+        }
         _harness.Listener.HelloJudged += onJudged;
         SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
         await folderLock.WaitAsync(cancellation);
@@ -653,13 +653,13 @@ public sealed class SessionAttachTests : IAsyncDisposable
         TaskCompletionSource<bool> judged = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // Only alpha's own hello: beta's, or a late verdict on another attach's, carries another token.
         string? alphaToken = null;
-        Action<string?, bool> onJudged = (judgedToken, handedOver) =>
+        void onJudged(string? judgedToken, bool handedOver)
         {
             if (judgedToken is not null && judgedToken == Volatile.Read(ref alphaToken))
             {
                 judged.TrySetResult(handedOver);
             }
-        };
+        }
         _harness.Listener.HelloJudged += onJudged;
         SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
         await folderLock.WaitAsync(cancellation);

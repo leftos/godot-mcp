@@ -151,14 +151,14 @@ public sealed class DormantGamesTests : IDisposable
         string path = DormantGames.JoinPathIn(_project.Path, 4101);
         FileStream read = AttachFileTests.OpenAsGodotReads(path);
         int retries = 0;
-        Action<string> onRetried = retried =>
+        void onRetried(string retried)
         {
             if (retried == path)
             {
                 retries++;
                 read.Dispose();
             }
-        };
+        }
         AttachFile.HeldOpenRetried += onRetried;
         try
         {

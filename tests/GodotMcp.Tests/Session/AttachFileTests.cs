@@ -109,14 +109,14 @@ public sealed class AttachFileTests : IDisposable
         string path = AttachFile.PathIn(_project.Path);
         FileStream read = OpenAsGodotReads(path);
         int retries = 0;
-        Action<string> onRetried = retried =>
+        void onRetried(string retried)
         {
             if (retried == path)
             {
                 retries++;
                 read.Dispose();
             }
-        };
+        }
         AttachFile.HeldOpenRetried += onRetried;
         try
         {
@@ -139,14 +139,14 @@ public sealed class AttachFileTests : IDisposable
         string path = AttachFile.PathIn(_project.Path);
         FileStream read = OpenAsGodotReads(path);
         int retries = 0;
-        Action<string> onRetried = retried =>
+        void onRetried(string retried)
         {
             if (retried == path)
             {
                 retries++;
                 read.Dispose();
             }
-        };
+        }
         AttachFile.HeldOpenRetried += onRetried;
         try
         {
@@ -168,13 +168,13 @@ public sealed class AttachFileTests : IDisposable
         AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ABCDEF"), Plain);
         string path = AttachFile.PathIn(_project.Path);
         int retries = 0;
-        Action<string> onRetried = retried =>
+        void onRetried(string retried)
         {
             if (retried == path)
             {
                 retries++;
             }
-        };
+        }
         AttachFile.HeldOpenRetried += onRetried;
         try
         {
@@ -195,13 +195,13 @@ public sealed class AttachFileTests : IDisposable
         AttachFile.Write(_project.Path, new BridgeEndpoint(1111, "OLD"), Plain);
         string path = AttachFile.PathIn(_project.Path);
         int retries = 0;
-        Action<string> onRetried = retried =>
+        void onRetried(string retried)
         {
             if (retried == path)
             {
                 retries++;
             }
-        };
+        }
         AttachFile.HeldOpenRetried += onRetried;
         try
         {
