@@ -130,6 +130,24 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Godot for {Project} was still running {Seconds} s after the kill.")]
     public static partial void StillRunningAfterKill(ILogger logger, string project, double seconds);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The process session on {Project} ended: {Warning}")]
+    public static partial void ProcessEndStillRunning(ILogger logger, string project, string warning);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Could not open process {Pid} of the process session's job on {Project} to wait for it: error {Error}."
+    )]
+    public static partial void ProcessMemberUnopened(ILogger logger, int pid, string project, int error);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Ending the job of the process session on {Project} failed: error {Error}; closing the job still ends its processes."
+    )]
+    public static partial void ProcessJobEndFailed(ILogger logger, string project, int error);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Ending the process session on {Project} failed; it is listed as stopped anyway.")]
+    public static partial void ProcessEndFailed(ILogger logger, Exception exception, string project);
+
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "The game for {Project} quit leaving {Processes} running; ending them with its console wrapper."

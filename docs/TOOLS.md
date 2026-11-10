@@ -329,6 +329,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A process session (`run_process`) is stopped by name only: `stop_project {session}` closes its job and ends the program and everything it started at once, returning `{session, projectPath, kind: "process", exitCode, killed, alreadyExited}` (`exitCode` the program's only when it had already exited, null when the stop had to end it; `killed` true only then), and the session stays listed as stopped.
 
+  It returns once every process of the job is gone (or after 5 s of load-adjusted time) and its output is drained (up to 5 s more); when the wait for the processes runs out it adds `warning`: `The ended process (pid <pid>) was still running after <spent>; the files it holds stay in use until it is gone.` (`<spent>` as the kill wait's: `5 s of load-adjusted time (wall 5.2 s, machine free 90% on average)`, or at the backstop `25 s of wall time, 5 x its 5 s end wait (...)`; a plural form names several pids, and a process the server could not open to wait for is named too). The killed program's exit code, as `get_debug_output` reads it, is 1.
+
   `stop_project {projectPath}` never stops a process session, and naming one beside `projectPath` is refused (`session '<name>' is a process; stop it by name with stop_project, without projectPath.`).
 
   `exitCode` is the process the server started (on Windows the `Godot_console` wrapper); `gameExitCode` is the game's own, null when it could not be read and whenever the game was killed (the code read after a kill is not the game's).
@@ -377,7 +379,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** starts a program the project's `godot-mcp.json` declares, leaving it running: `{session, projectPath, process, processId, command, log, ready?}` (`process` its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to, `ready` the line it waited on when the call or the profile declares one, `prep` `{command, exit, ms, log, gate?}` when the profile declares a `prep`: the argv run, its exit code, its milliseconds and its log `.godot/godot-mcp/process-<session>.prep.log`).
 
-  It returns once the program starts, or once its ready line matches.
+  It returns once the program starts, or once its ready line matches. A call cancelled during the ready wait ends the process and waits for it before the cancellation returns.
 - **Use:** a game server or a mock backend a drive needs beside its games. `projectPath` is the folder holding `project.godot`, `process` a name under the file's `processes` section, and `args` are appended to its `command`. Without `options.session` the session is the process's name fitted to the name rule, as a folder name is; a live session of that name on the same folder refuses the start as a run's does, and one on another folder takes `<name>-2`, `-3`, ….
 
   `options {session, ready}`; `options.ready {output, timeoutMs}` gives the line to wait for, replacing the profile's `ready` whole.
@@ -390,15 +392,15 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The wait scans only the lines the program prints after it starts, so a restart never matches the replaced process's line, and the result's `ready` is `{line, stream, ms}`: the matched line cut as `get_debug_output` cuts it, the stream it came from, and the real elapsed milliseconds.
 
-  The process is stopped and the start refused when it exits first (`The process '<name>' exited (code <n>) before a line matched '<pattern>'; its last stderr lines:` its last 20, or `(none)`), or when its timeout passes (`The process '<name>' printed no line matching '<pattern>' within <n> s of load-adjusted time, so it was stopped; its last output lines:` the last 20 of each stream).
+  The process is stopped and the start refused when it exits first (`The process '<name>' exited (code <n>) before a line matched '<pattern>'; its last stderr lines:` its last 20, or `(none)`), or when its timeout passes (`The process '<name>' printed no line matching '<pattern>' within <n> s of load-adjusted time, so it was stopped; its last output lines:` the last 20 of each stream). Either refusal ends with a paragraph of its own, `stop_project`'s process warning, when the ended process was still running after the wait.
 
   A line the pattern takes over 1 s to match refuses it too: `The ready pattern '<pattern>' took over 1 s to match a line; simplify the pattern.` To wait for a later line, use `wait_for`'s `output` condition.
-- **A process session:** it has no bridge. `list_sessions` reports `kind: "process"`, its `processId` (the program itself) and a null `gameProcessId`, live while it runs and still listed as stopped after it ends.
+- **A process session:** it has no bridge. `list_sessions` reports `kind: "process"`, its `processId` (the program itself) and a null `gameProcessId`, live until every process of its job has exited and its output is drained (not just until the program's exit code is set), and still listed as stopped after it ends.
 
   Its stdout and stderr fill the same last-500-lines buffers `get_debug_output` reads (lines cut at 1000 characters), its output is also written to `.godot/godot-mcp/process-<session>.log` (fresh on each start), and `wait_for` with an `output` condition, `after` included, reads those buffers.
 
   Every other runtime tool refuses it: `Session '<name>' is a process (<program>), not a Godot game: only wait_for with an output condition, get_debug_output, restart_project, stop_project and list_sessions reach it.` `batch_drive` refuses a tool step on a process before any step of the batch runs (`{passed: false, steps: [], failedAt: {index, reason}}`), while a `wait` assertion with an `output` condition works.
-- **Stop:** `stop_project {session}` terminates the process and everything it started at once, and the server's exit ends process sessions with the runs. A process session is stopped by name only; `stop_project {projectPath}` never stops it.
+- **Stop:** `stop_project {session}` terminates the process and everything it started at once and waits until they are gone (see `stop_project`), and the server's exit ends process sessions with the runs. A process session is stopped by name only; `stop_project {projectPath}` never stops it.
 - **Edges:** parsing the section is strict: an unknown key, a wrong type, an empty `command`, a `prep` that is not a non-empty array of non-empty strings, a `ready.output` that is not a valid .NET regular expression, a duplicate name and a `cwd` that is absolute or leaves the project folder are each refused with the file's path and the fix. A process session needs Windows, since its process tree lives in a Windows job object; elsewhere the start is refused and nothing starts.
 
   A call's `options.ready` with no `output`, an invalid pattern or a `timeoutMs` outside 1 to 600000 is refused before the start.
@@ -409,7 +411,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `processId` is the process `run_project` started, the `Godot_console` wrapper on Windows that `stop_project` ends; for a process session the program `run_process` started; null for an attach. `gameProcessId` is the game's own process, the one a debugger attaches to; null until the bridge has connected, and always null for a process.
 
-  A process session is live while its program runs and is still listed as stopped once it ends, so `get_debug_output` still reads it.
+  A process session is live until every process of its job has exited and its output is drained, and is still listed as stopped once it ends, so `get_debug_output` still reads it.
   `recording` is `{mode: "movie", path}` for a movie run while it runs, `{mode: "realtime", path, destination?, startedSeconds}` for a real-time recording, nothing while its `start` is in flight, and once a recording has ended on its own (the game quit) what `stop_project` will return for it, until `stop_project`, `restart_project`, `detach_project` or `record_mark` `stop` takes it.
   `armed` lists the folders `arm_project` armed, each with its `quiet`, `shutOutRealGamepads` and `dormant` games (`{pid, startedAt}`) that `attach_project` can join; `headlessHosts` lists the warm headless hosts by folder, `{projectPath, pid, startedAt, requests, idleSeconds}` (`idleSeconds` 0 while one serves a call).
 - **Use:** when a call is refused for want of a session name, or to find a session a previous turn started; `gameProcessId` for a debugger's attach. A stopped run is kept until its name is reused, with its last pids and output (`get_debug_output` and `restart_project` still reach it by name), and listed only with `includeStopped: true`.
@@ -417,7 +419,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `get_debug_output`
 
-- **Does:** the newest stdout and stderr lines of a session's run (the current or last one under its name), whether it still runs, and its exit code. A process session's program answers too, from the output `run_process` captured.
+- **Does:** the newest stdout and stderr lines of a session's run (the current or last one under its name), whether it still runs, and its exit code. A process session's program answers too, from the output `run_process` captured: its `running` stays true until every process of its job has exited and its output is drained, while `exitCode` appears once the program itself has exited, so `running: true` with an `exitCode` can show briefly.
 - **Use:** when the game crashed or quit, or a tool reports the connection ended. `limit` (1 to 500, default 100); `before` (a line number) pages back, starting from the returned `stdoutFirstLine` or `stderrFirstLine`.
 - **Edges:** the server keeps the last 500 lines of each stream; lines over 1000 characters are cut. Structured errors are better read from `get_errors`. A run session's whole output is also in `.godot/godot-mcp/run-<session>.log`, both streams interleaved in arrival order, lines as-is, with no size cap; the result's `log` is its absolute path (left out for a process session, whose own `log` names its file, and when the file could not be opened) and is still reported after the run has ended.
 

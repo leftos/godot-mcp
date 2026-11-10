@@ -15,8 +15,14 @@ internal sealed partial class GodotSession
 {
     private readonly OutputBuffer _processStdout = new(GodotRun.OutputCapacity);
     private readonly OutputBuffer _processStderr = new(GodotRun.OutputCapacity);
-    private ToolProcess.Running? _process;
+    private ProcessRun? _process;
     private ProcessLaunch? _launch;
+
+    /// <summary>
+    /// One start of a process session: the started program and its one end, kept together so a restart replaces both at once
+    /// while the replaced start's exit watcher still holds its own.
+    /// </summary>
+    private sealed record ProcessRun(ToolProcess.Running Running, ProcessEnd End);
 
     /// <summary>
     /// The launch a process session keeps, so a restart runs the same prep again, starts the same command and waits on the
@@ -39,18 +45,28 @@ internal sealed partial class GodotSession
     /// <summary>Whether the session has started its process once, so its stored launch can be started again.</summary>
     internal bool HasProcessLaunch => _launch is not null;
 
-    /// <summary>Whether the process session's program is running; false for a session that has not started or has stopped.</summary>
-    private bool ProcessRunning
+    /// <summary>
+    /// Whether the process session is live: it has started and its end has not completed, so some process of its job may not
+    /// yet be gone or its output not yet drained; false for a session that has not started. It never blocks.
+    /// </summary>
+    private bool ProcessRunning => _process is { } run && !run.End.IsCompleted;
+
+    /// <summary>
+    /// Whether the program itself has exited, by its exit code: what its exit code, "exited before ready" and a stop's
+    /// <c>alreadyExited</c> say. False for a session that has not started.
+    /// </summary>
+    private bool ProgramExited
     {
         get
         {
             try
             {
-                return _process is { } process && !process.Process.HasExited;
+                return _process is { } run && run.Running.Process.HasExited;
             }
             catch (InvalidOperationException)
             {
-                return false;
+                // The process was disposed as the session let go of it: it runs no more.
+                return true;
             }
         }
     }
@@ -98,7 +114,7 @@ internal sealed partial class GodotSession
         long stdoutStart = _processStdout.TotalLines;
         long stderrStart = _processStderr.TotalLines;
         string log;
-        ToolProcess.Running process;
+        ProcessRun run;
         try
         {
             log = Path.Combine(ProjectPrep.LogFolder(ProjectDir), $"process-{Name}.log");
@@ -111,7 +127,7 @@ internal sealed partial class GodotSession
                 StandardOutputLine = _processStdout.Add,
                 StandardErrorLine = _processStderr.Add,
             };
-            process = ToolProcess.Start(request, Logger);
+            run = StartRun(request);
         }
         catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
         {
@@ -119,15 +135,31 @@ internal sealed partial class GodotSession
         }
 
         // The session owns the process before anything can watch it, so a failure from here leaves a session stop_project can end.
-        _process = process;
+        _process = run;
         ProcessLaunch launch = new(key, profile, [.. command], ready, prep);
         _launch = launch;
-        ProcessId = process.Process.Id;
+        int processId = run.Running.Process.Id;
+        ProcessId = processId;
         ProcessProgram = ProgramName(command[0]);
-        _ = CloseJobWhenExitedAsync(process);
+        _ = EndWhenExitedAsync(run);
         ReadyResult? met = ready is null ? null : await WaitForReadyAsync(launch, stdoutStart, stderrStart, cancellationToken);
         _pending = false;
-        return (process.Process.Id, log, met);
+        return (processId, log, met);
+    }
+
+    /// <summary>Starts the program with its end; a program whose end cannot be made is let go of, which closes its job.</summary>
+    private ProcessRun StartRun(ToolProcessRequest request)
+    {
+        ToolProcess.Running process = ToolProcess.Start(request, Logger);
+        try
+        {
+            return new ProcessRun(process, new ProcessEnd(process, registry.LaunchClock, ProjectDir));
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -160,7 +192,7 @@ internal sealed partial class GodotSession
                 );
             }
 
-            if (!ProcessRunning)
+            if (ProgramExited)
             {
                 throw await RefuseReadyAsync(() => ExitedBeforeReady(launch));
             }
@@ -170,34 +202,49 @@ internal sealed partial class GodotSession
                 throw await RefuseReadyAsync(() => ReadyTimedOut(launch));
             }
 
-            try
-            {
-                await Task.Delay(OutputWait.Poll, deadline.Token);
-            }
-            catch (OperationCanceledException) when (deadline.Expired)
-            {
-                throw await RefuseReadyAsync(() => ReadyTimedOut(launch));
-            }
+            await PollReadyAsync(launch, deadline);
         }
     }
 
-    /// <summary>Ends a process that failed its ready wait: closes its job, waits for it and finishes its output, then returns the refusal.</summary>
+    /// <summary>
+    /// One poll's pause of the ready wait: a deadline that expires in it refuses the start, and a cancelled call ends the
+    /// process, waiting for its end, before the cancellation goes on.
+    /// </summary>
+    private async Task PollReadyAsync(ProcessLaunch launch, LoadDeadline deadline)
+    {
+        try
+        {
+            await Task.Delay(OutputWait.Poll, deadline.Token);
+        }
+        catch (OperationCanceledException) when (deadline.Expired)
+        {
+            throw await RefuseReadyAsync(() => ReadyTimedOut(launch));
+        }
+        catch (OperationCanceledException)
+        {
+            await EndProcessAsync();
+            throw;
+        }
+    }
+
+    /// <summary>Ends the session's process and waits for its end; the warning naming what was still running, or null.</summary>
+    private async Task<string?> EndProcessAsync() => _process is { } run ? await run.End.Start() : null;
+
+    /// <summary>
+    /// Ends a process that failed its ready wait and waits for its end, then returns the refusal, with the end's warning in a
+    /// paragraph of its own, never read as one more stderr line, when a process was still running past it.
+    /// </summary>
     private async Task<SessionException> RefuseReadyAsync(Func<SessionException> refusal)
     {
-        if (_process is { } process)
-        {
-            process.Tree.CloseJob();
-            await WaitGoneAsync(process.Process);
-            await process.FinishOutputAsync();
-        }
-
-        return refusal();
+        string? warning = await EndProcessAsync();
+        SessionException refused = refusal();
+        return warning is null ? refused : new SessionException($"{refused.Message}\n\n{warning}");
     }
 
     /// <summary>The refusal of a process that exited before its ready line: its own exit code and its last stderr lines.</summary>
     private SessionException ExitedBeforeReady(ProcessLaunch launch)
     {
-        int code = _process is { } process ? ExitCodeOf(process.Process) ?? 0 : 0;
+        int code = _process is { } run ? ExitCodeOf(run.Running.Process) ?? 0 : 0;
         string lines = Lines(_processStderr);
         return new SessionException(
             $"The process '{launch.Key}' exited (code {code}) before a line matched '{launch.Ready!.Output}'; " + $"its last stderr lines:\n{lines}"
@@ -226,20 +273,21 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
-    /// Ends a process session at once: closes its job, which ends the process and everything it started, and reports its
-    /// exit code only when it had already exited.
+    /// Ends a process session at once: ends its job, which ends the process and everything it started, and waits for that end
+    /// (or joins the one its own exit started), then reports its exit code only when it had already exited, and a warning naming
+    /// the processes still running when the end's wait ran out.
     /// </summary>
     /// <exception cref="SessionException">No process was started in the session.</exception>
     private async Task<ProcessStopResult> StopProcessAsync()
     {
-        ToolProcess.Running process =
-            _process ?? throw new SessionException("No process has been started in this session, so there is nothing to stop.");
-        bool alreadyExited = !ProcessRunning;
-        int? exitCode = alreadyExited ? ExitCodeOf(process.Process) : null;
-        process.Tree.CloseJob();
-        await WaitGoneAsync(process.Process);
-        await process.FinishOutputAsync();
-        return new ProcessStopResult(Name, ProjectDir, "process", exitCode, Killed: !alreadyExited, AlreadyExited: alreadyExited);
+        ProcessRun run = _process ?? throw new SessionException("No process has been started in this session, so there is nothing to stop.");
+        bool alreadyExited = ProgramExited;
+        int? exitCode = alreadyExited ? ExitCodeOf(run.Running.Process) : null;
+        string? warning = await run.End.Start();
+        return new ProcessStopResult(Name, ProjectDir, "process", exitCode, Killed: !alreadyExited, AlreadyExited: alreadyExited)
+        {
+            Warning = warning,
+        };
     }
 
     /// <summary>
@@ -257,7 +305,7 @@ internal sealed partial class GodotSession
             {
                 ProcessLaunch launch = _launch ?? throw new SessionException(NothingToRestart);
                 int previousProcessId = ProcessId ?? throw new SessionException(NothingToRestart);
-                ToolProcess.Running previous = _process ?? throw new SessionException(NothingToRestart);
+                ToolProcess.Running previous = _process?.Running ?? throw new SessionException(NothingToRestart);
                 ProcessStopResult stopped = await StopProcessAsync();
                 previous.CloseLog();
                 try
@@ -289,7 +337,7 @@ internal sealed partial class GodotSession
                 finally
                 {
                     // A start that failed before assigning leaves the old handle in place, so the session stays stoppable.
-                    if (!ReferenceEquals(_process, previous))
+                    if (!ReferenceEquals(_process?.Running, previous))
                     {
                         previous.Dispose();
                     }
@@ -310,17 +358,11 @@ internal sealed partial class GodotSession
     private static async Task<ProcessPrepResult?> RunPrepAsync(ProcessLaunch launch, CancellationToken cancellationToken) =>
         launch.Prep is null ? null : await launch.Prep(cancellationToken);
 
-    /// <summary>Ends a process session at the server's exit: closes its job and waits for the process to go.</summary>
-    private async Task ShutdownProcessAsync()
-    {
-        if (_process is not { } process)
-        {
-            return;
-        }
-
-        process.Tree.CloseJob();
-        await WaitGoneAsync(process.Process);
-    }
+    /// <summary>
+    /// Ends a process session at the server's exit and waits for its end, which logs a warning naming any process still running
+    /// past its wait.
+    /// </summary>
+    private async Task ShutdownProcessAsync() => await EndProcessAsync();
 
     /// <summary>The process session's output pages, as a run's <see cref="GetDebugOutput"/> reads its run's.</summary>
     private DebugOutput GetProcessDebugOutput(int limit, long? before)
@@ -332,7 +374,7 @@ internal sealed partial class GodotSession
             Session = Name,
             ProjectPath = ProjectDir,
             Running = ProcessRunning,
-            ExitCode = ProcessRunning || _process is null ? null : ExitCodeOf(_process.Process),
+            ExitCode = _process is { } run && ProgramExited ? ExitCodeOf(run.Running.Process) : null,
             Stdout = stdout.Lines,
             Stderr = stderr.Lines,
             StdoutFirstLine = stdout.FirstLine,
@@ -351,51 +393,37 @@ internal sealed partial class GodotSession
         return (_processStdout.Raw(), _processStderr.Raw(), stdoutTotal, stderrTotal);
     }
 
-    /// <summary>Lets go of the process session's process and job, closing the job first so its tree ends.</summary>
+    /// <summary>
+    /// Lets go of the process session's process and job, starting its end first, so its tree ends; the end goes on without the
+    /// caller, which may hold the registry's lock, and logs a process still running past its wait.
+    /// </summary>
     private void DisposeProcess()
     {
-        ToolProcess.Running? process = _process;
+        ProcessRun? run = _process;
         _process = null;
-        if (process is null)
+        if (run is null)
         {
             return;
         }
 
-        process.Tree.CloseJob();
-        process.Dispose();
+        _ = run.End.Start();
+        run.Running.Dispose();
     }
 
-    /// <summary>Closes the job when the process ends on its own, so the processes it started end with it.</summary>
-    private static async Task CloseJobWhenExitedAsync(ToolProcess.Running process)
+    /// <summary>Starts the end when the program exits on its own, so the processes it started end with it.</summary>
+    private static async Task EndWhenExitedAsync(ProcessRun run)
     {
         try
         {
-            await process.Process.WaitForExitAsync();
+            await run.Running.Process.WaitForExitAsync();
         }
         catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException or Win32Exception)
         {
-            // The process was never started or was disposed as the session let go of it; the job still closes below.
+            // The process was never started or was disposed as the session let go of it, which started its end.
         }
         finally
         {
-            process.Tree.CloseJob();
-        }
-    }
-
-    /// <summary>Waits for a process to go, at most <see cref="KillWait"/>; the job's close has already asked it to.</summary>
-    private static async Task WaitGoneAsync(Process process)
-    {
-        try
-        {
-            await process.WaitForExitAsync().WaitAsync(KillWait);
-        }
-        catch (TimeoutException)
-        {
-            // The job was closed; the process handle's exit signal may lag behind the tree's end.
-        }
-        catch (InvalidOperationException)
-        {
-            // The process was never started or was already disposed.
+            _ = run.End.Start();
         }
     }
 

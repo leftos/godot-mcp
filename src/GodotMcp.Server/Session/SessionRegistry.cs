@@ -450,6 +450,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             AlreadyExited = stopped.AlreadyExited,
             GameExitCode = null,
+            Warning = stopped.Warning,
         };
 
     /// <summary>

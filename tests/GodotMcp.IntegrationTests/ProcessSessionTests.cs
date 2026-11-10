@@ -132,7 +132,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         string session = started["session"]!.GetValue<string>();
         int processId = started["processId"]!.GetValue<int>();
         string log = started["log"]!.GetValue<string>();
-        int childPid = await WaitForChildPidAsync(session, null);
+        using Child child = await WaitForChildPidAsync(session, null);
 
         Assert.Equal(Session, session);
         Assert.True(processId > 0);
@@ -174,7 +174,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         Assert.Null(stopped["exitCode"]);
         Assert.False(ListSession(session, includeStopped: true)["live"]!.GetValue<bool>());
 
-        await WaitForGoneAsync(childPid);
+        await WaitForGoneAsync(child);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -185,12 +185,12 @@ public sealed class ProcessSessionTests : IAsyncDisposable
 
         JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "once", cancellationToken: cancellation))!.AsObject();
         string session = started["session"]!.GetValue<string>();
-        int childPid = await WaitForChildPidAsync(session, null);
+        using Child child = await WaitForChildPidAsync(session, null);
 
         await WaitUntilNotLiveAsync(session);
 
         Assert.False(ListSession(session, includeStopped: true)["live"]!.GetValue<bool>());
-        await WaitForGoneAsync(childPid);
+        await WaitForGoneAsync(child);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -252,9 +252,11 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         Assert.Empty(JsonNode.Parse(_project.ListSessions(includeStopped: true))!["sessions"]!.AsArray());
 
         // The ticker starts its child before its first line, so a ticker stopped earlier has no child; one that started it is ended.
-        if (ReadPid(Path.Combine(_probe.Directory, "ticker-child.pid")) is int childPid)
+        string pidFile = Path.Combine(_probe.Directory, "ticker-child.pid");
+        if (ReadPid(pidFile) is int childPid)
         {
-            await WaitForGoneAsync(childPid);
+            using var child = Child.Open(childPid, pidFile);
+            await WaitForGoneAsync(child);
         }
     }
 
@@ -289,7 +291,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "ticker", cancellationToken: cancellation))!.AsObject();
         string session = started["session"]!.GetValue<string>();
         int firstProcessId = started["processId"]!.GetValue<int>();
-        int firstChildPid = await WaitForChildPidAsync(session, null);
+        using Child firstChild = await WaitForChildPidAsync(session, null);
         await WaitForTickerLineAsync(session);
         long after = JsonNode.Parse(_project.GetDebugOutput(limit: 100, session: session))!["stdoutTotalLines"]!.GetValue<long>();
 
@@ -305,19 +307,16 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         );
         Assert.Equal(started["log"]!.GetValue<string>(), restarted["log"]!.GetValue<string>());
 
-        int secondChildPid = await WaitForChildPidAsync(session, firstChildPid);
-        await WaitForGoneAsync(firstChildPid);
-        using (var secondChild = Process.GetProcessById(secondChildPid))
-        {
-            Assert.False(secondChild.HasExited);
-        }
+        using Child secondChild = await WaitForChildPidAsync(session, firstChild.Pid);
+        await WaitForGoneAsync(firstChild);
+        Assert.True(secondChild.Process is { HasExited: false }, $"the new ticker's child {secondChild.Pid} is not running");
 
         string waited = await _runtime.WaitForAsync(new WaitCondition(Output: TickerLine, After: after), 10_000, session, cancellation);
         Assert.True(JsonNode.Parse(waited)!["met"]!.GetValue<bool>());
 
         JsonObject stopped = JsonNode.Parse(await _project.StopProjectAsync(session, cancellationToken: cancellation))!.AsObject();
         Assert.Equal("process", stopped["kind"]!.GetValue<string>());
-        await WaitForGoneAsync(secondChildPid);
+        await WaitForGoneAsync(secondChild);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -715,10 +714,11 @@ public sealed class ProcessSessionTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits for the ticker's child to write its pid, one other than <paramref name="oldPid"/> when that is given. Fails at once
-    /// when <paramref name="session"/> is given and stops first, else at the <see cref="Wait"/> guard, naming the last pid read.
+    /// Waits for the ticker's child to write its pid, one other than <paramref name="oldPid"/> when that is given, and opens it,
+    /// so a later wait for it to be gone waits on its own handle. Fails at once when <paramref name="session"/> is given and stops
+    /// first, else at the <see cref="Wait"/> guard, naming the last pid read.
     /// </summary>
-    private async Task<int> WaitForChildPidAsync(string? session, int? oldPid)
+    private async Task<Child> WaitForChildPidAsync(string? session, int? oldPid)
     {
         string pidFile = Path.Combine(_probe.Directory, "ticker-child.pid");
         var guard = Stopwatch.StartNew();
@@ -730,7 +730,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
             last = ReadPid(pidFile) ?? last;
             if (last is int pid && pid != oldPid)
             {
-                return pid;
+                return Child.Open(pid, pidFile);
             }
 
             if (stopped || guard.Elapsed >= Wait)
@@ -782,25 +782,81 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         return !sessions.Any(entry => entry!["name"]!.GetValue<string>() == session && entry!["live"]!.GetValue<bool>());
     }
 
-    private static async Task WaitForGoneAsync(int pid)
+    /// <summary>
+    /// Waits until Windows signals the child, which it does only once the child's handles (its current directory among them)
+    /// are closed: not on its exit code, which is set earlier. A child already gone when it was opened is gone.
+    /// </summary>
+    private static async Task WaitForGoneAsync(Child child)
     {
-        using CancellationTokenSource timeout = new(Wait);
-        while (true)
+        if (child.Process is { } process)
+        {
+            Assert.True(
+                await Task.Run(() => process.WaitForExit(Wait), TestContext.Current.CancellationToken),
+                $"the ticker's child {child.Pid} was not gone within its {Wait.TotalMinutes:0} min hang guard"
+            );
+        }
+    }
+
+    /// <summary>
+    /// The ticker's child, opened by its pid with its handle held, so a wait on it waits on this process whatever later takes the
+    /// pid; <see cref="Process"/> is null when no process had the pid as it was opened, or the one that had it started after the
+    /// pid file was written, so the child was already gone and its pid taken.
+    /// </summary>
+    private sealed class Child(int pid, Process? process) : IDisposable
+    {
+        public int Pid => pid;
+
+        public Process? Process => process;
+
+        /// <summary>
+        /// Opens the process from the list Windows still holds, not by <see cref="Process.GetProcessById(int)"/>, which turns down a
+        /// killed process whose exit code is set while Windows has not yet let it go; one that started after
+        /// <paramref name="pidFile"/> was written took a freed pid, as <c>RunKill.OpenIfStillRunning</c> refuses one by its start
+        /// time.
+        /// </summary>
+        public static Child Open(int pid, string pidFile)
+        {
+            DateTime written = File.GetLastWriteTime(pidFile);
+            Process? found = null;
+            foreach (Process listed in Process.GetProcesses())
+            {
+                if (found is null && listed.Id == pid)
+                {
+                    found = listed;
+                }
+                else
+                {
+                    listed.Dispose();
+                }
+            }
+
+            return new Child(pid, Pinned(found, written));
+        }
+
+        public void Dispose() => process?.Dispose();
+
+        /// <summary>
+        /// The process with its handle opened and held; null when it is gone before the handle could be opened, or it started
+        /// after <paramref name="written"/>, so it is not the child that wrote its pid then.
+        /// </summary>
+        private static Process? Pinned(Process? found, DateTime written)
         {
             try
             {
-                using var process = Process.GetProcessById(pid);
-                if (process.HasExited)
+                _ = found?.Handle;
+                if (found is not null && found.StartTime > written)
                 {
-                    return;
+                    found.Dispose();
+                    return null;
                 }
-            }
-            catch (ArgumentException)
-            {
-                return;
-            }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
+                return found;
+            }
+            catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                found?.Dispose();
+                return null;
+            }
         }
     }
 }

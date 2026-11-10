@@ -275,7 +275,15 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
 /// to end it, since that code is not the process's own), whether it was running and so killed, and whether it had already
 /// exited. The kind is always "process".
 /// </summary>
-internal sealed record ProcessStopResult(string Session, string ProjectPath, string Kind, int? ExitCode, bool Killed, bool AlreadyExited);
+internal sealed record ProcessStopResult(string Session, string ProjectPath, string Kind, int? ExitCode, bool Killed, bool AlreadyExited)
+{
+    /// <summary>
+    /// Set when a process of the session's job was still running as the stop's wait for its end ran out, naming its pid: the
+    /// files it holds stay in use until it is gone.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Warning { get; init; }
+}
 
 /// <summary>
 /// How restart_project restarted a process session: the new process, the one it replaced and that one's exit code (null when

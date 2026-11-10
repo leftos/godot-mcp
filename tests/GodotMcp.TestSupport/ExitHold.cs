@@ -20,6 +20,7 @@ public sealed partial class ExitHold : IDisposable
     private const uint NotHandled = 0x80010001;
     private const uint Breakpoint = 0x80000003;
     private readonly int _processId;
+    private readonly TimeSpan _hangGuard;
     private readonly TaskCompletionSource _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _killed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ManualResetEventSlim _release = new();
@@ -27,9 +28,10 @@ public sealed partial class ExitHold : IDisposable
     private int _breakInThread = -1;
     private volatile bool _disposed;
 
-    private ExitHold(int processId)
+    private ExitHold(int processId, TimeSpan hangGuard)
     {
         _processId = processId;
+        _hangGuard = hangGuard;
         // The debug API answers only the thread that attached, so the loop owns one thread for the hold's life.
         _loop = new Thread(Run) { IsBackground = true, Name = $"exit hold of {processId}" };
         _loop.Start();
@@ -43,11 +45,12 @@ public sealed partial class ExitHold : IDisposable
 
     /// <summary>
     /// Attaches the test's debugger to <paramref name="child"/>, returning once its break-in has been answered; a hold whose attach
-    /// fails or outlasts <paramref name="hangGuard"/> is disposed, letting the child go.
+    /// fails or outlasts <paramref name="hangGuard"/> is disposed, letting the child go. The same guard bounds
+    /// <see cref="Dispose"/>'s wait for the child's exit once its exit was held.
     /// </summary>
     public static async Task<ExitHold> AttachAsync(Process child, TimeSpan hangGuard)
     {
-        ExitHold hold = new(child.Id);
+        ExitHold hold = new(child.Id, hangGuard);
         try
         {
             await hold._attached.Task.WaitAsync(hangGuard);
@@ -63,11 +66,20 @@ public sealed partial class ExitHold : IDisposable
     /// <summary>Lets the held exit go on, so the child is gone once Windows has closed it.</summary>
     public void Release() => _release.Set();
 
+    /// <summary>
+    /// Lets the held exit go and ends the hold. Once an exit was held, the debug loop runs until the child's process exit,
+    /// waited for at most the hang guard.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The child never exited within the hang guard, so its hold could not end.</exception>
     public void Dispose()
     {
         _disposed = true;
         _release.Set();
-        _loop.Join();
+        if (!_loop.Join(_hangGuard))
+        {
+            throw new InvalidOperationException($"the exit hold of pid {_processId} never saw its process exit");
+        }
+
         _release.Dispose();
     }
 
