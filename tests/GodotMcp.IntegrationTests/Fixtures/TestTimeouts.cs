@@ -11,4 +11,10 @@ internal static class TestTimeouts
     /// in a gated run the gate's STALLED or ceiling line catches a hang as well (docs/DEVELOPMENT.md).
     /// </summary>
     public const int OwnLaunchMs = 900_000;
+
+    /// <summary>
+    /// A hang guard on the MCP server's start and first reply, which take well under a second of CPU idle and have passed 60 s
+    /// under starvation; below the test's own <see cref="OwnLaunchMs"/>, so a hung server fails at its connect.
+    /// </summary>
+    public const int ServerHandshakeMs = 300_000;
 }

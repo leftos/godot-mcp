@@ -26,7 +26,7 @@ public sealed class McpServerSmokeTests : IDisposable
     // The notification the MCP front reads and never forwards to its client (Session/FrontBusy.cs).
     private const string BusyMethod = "notifications/mcp-front/busy";
 
-    // How long a game may take to quit by itself once its server is gone: one frame to notice, then its exit work.
+    // How long a process a case kills may take to be gone, so its files are released: a cleanup wait, never asserted.
     private static readonly TimeSpan GameQuitWait = TimeSpan.FromSeconds(10);
     private readonly ProbeProject _probe = new();
 
@@ -139,7 +139,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Matches(VersionPattern, client.ServerInfo.Version);
         Assert.True(run.IsError is not true, Text(run));
         Assert.Equal(client.ServerInfo.Version, JsonDocument.Parse(Text(run)).RootElement.GetProperty("version").GetString());
-        Assert.True(sawProbe);
+        Assert.True(sawProbe, "the run printed no ready line");
         JsonElement session = Assert.Single(JsonDocument.Parse(Text(listed)).RootElement.GetProperty("sessions").EnumerateArray());
         Assert.Equal("InputProbe", session.GetProperty("name").GetString());
         Assert.Equal("run", session.GetProperty("kind").GetString());
@@ -303,6 +303,7 @@ public sealed class McpServerSmokeTests : IDisposable
         {
             await using McpClient client = await McpClient.CreateAsync(
                 new StreamClientTransport(server.StandardInput.BaseStream, wire),
+                clientOptions: ClientOptions(),
                 cancellationToken: cancellation
             );
             await using IAsyncDisposable handler = client.RegisterNotificationHandler(
@@ -385,6 +386,7 @@ public sealed class McpServerSmokeTests : IDisposable
             await using (
                 McpClient client = await McpClient.CreateAsync(
                     new StreamClientTransport(server.StandardInput.BaseStream, server.StandardOutput.BaseStream),
+                    clientOptions: ClientOptions(),
                     cancellationToken: cancellation
                 )
             )
@@ -401,9 +403,20 @@ public sealed class McpServerSmokeTests : IDisposable
                 server.Kill();
             }
 
-            bool quit = await ProcessExit.WaitUntilGoneAsync(games[0], GameQuitWait);
+            using var hangGuard = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            hangGuard.CancelAfter(TestTimeouts.ServerHandshakeMs);
+            bool quit;
+            try
+            {
+                await games[0].WaitForExitAsync(hangGuard.Token);
+                quit = true;
+            }
+            catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+            {
+                quit = false;
+            }
 
-            Assert.True(quit, $"the game (pid {games[0].Id}) was still running {GameQuitWait.TotalSeconds:0} s after its server was killed");
+            Assert.True(quit, $"the game (pid {games[0].Id}) never exited after its server was killed");
             Assert.True(File.Exists(marker), "the game was ended without running its exit work");
         }
         finally
@@ -422,6 +435,13 @@ public sealed class McpServerSmokeTests : IDisposable
 
     private static string ServerPath => Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "godot-mcp.exe" : "godot-mcp");
 
+    /// <summary>
+    /// The client's bounds are hang guards a passing run never reaches: an initialization timeout a starved server can still
+    /// pass, and no discovery probe timeout, so load never changes which protocol a case tests.
+    /// </summary>
+    private static McpClientOptions ClientOptions() =>
+        new() { InitializationTimeout = TimeSpan.FromMilliseconds(TestTimeouts.ServerHandshakeMs), DiscoverProbeTimeout = Timeout.InfiniteTimeSpan };
+
     private static Task<McpClient> ConnectAsync()
     {
         StdioClientTransport transport = new(
@@ -435,7 +455,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 EnvironmentVariables = new Dictionary<string, string?> { ["MCP_FRONT"] = "" },
             }
         );
-        return McpClient.CreateAsync(transport, cancellationToken: TestContext.Current.CancellationToken);
+        return McpClient.CreateAsync(transport, clientOptions: ClientOptions(), cancellationToken: TestContext.Current.CancellationToken);
     }
 
     /// <summary>Starts the built server over redirected stdio, as a host does, with its stderr read and dropped so it never blocks.</summary>
@@ -487,22 +507,33 @@ public sealed class McpServerSmokeTests : IDisposable
     private static Task<CallToolResult> CallAsync(McpClient client, string tool, Dictionary<string, object?> arguments) =>
         client.CallToolAsync(tool, arguments, cancellationToken: TestContext.Current.CancellationToken).AsTask();
 
+    /// <summary>
+    /// Waits for <paramref name="line"/> in the run's stdout, on the line itself, with the hang guard as its deadline: a
+    /// passing run never reaches it, and a dead server ends the wait at once with the transport's error.
+    /// </summary>
     private static async Task<bool> WaitForProbeLineAsync(McpClient client, string line)
     {
-        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (DateTime.UtcNow < deadline)
+        using var hangGuard = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        hangGuard.CancelAfter(TestTimeouts.ServerHandshakeMs);
+        try
         {
-            CallToolResult output = await CallAsync(client, "get_debug_output", new() { ["limit"] = 50 });
-            JsonElement stdout = JsonDocument.Parse(Text(output)).RootElement.GetProperty("stdout");
-            if (stdout.EnumerateArray().Any(entry => entry.GetString() == line))
+            while (true)
             {
-                return true;
+                Dictionary<string, object?> arguments = new() { ["limit"] = 50 };
+                CallToolResult output = await client.CallToolAsync("get_debug_output", arguments, cancellationToken: hangGuard.Token);
+                JsonElement stdout = JsonDocument.Parse(Text(output)).RootElement.GetProperty("stdout");
+                if (stdout.EnumerateArray().Any(entry => entry.GetString() == line))
+                {
+                    return true;
+                }
+
+                await Task.Delay(200, hangGuard.Token);
             }
-
-            await Task.Delay(200, TestContext.Current.CancellationToken);
         }
-
-        return false;
+        catch (OperationCanceledException) when (!TestContext.Current.CancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     private static string Text(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(block => block.Text));
