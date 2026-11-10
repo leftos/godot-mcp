@@ -1805,7 +1805,9 @@ try {
             $arguments = Get-TestArgumentList -Project $unitTestProject -Classes $filterClasses -NoBuild
             # The whole unit suite runs its classes in parallel across the machine; a filtered run is a class or two.
             $slot = if ($filterClasses.Count -gt 0) { 'light' } else { 'heavy' }
-            exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments -Slot $slot)
+            # A hang guard a passing run never reaches: the whole suite took 125-130 s on the build box, so 600 s leaves
+            # room for its growth; a hung test still ends at the gate's stall kill long before it.
+            exit (Invoke-Logged -Name 'test' -TimeoutSeconds 600 -Arguments $arguments -Slot $slot)
         }
         'itest' {
             if ($InGate) {
