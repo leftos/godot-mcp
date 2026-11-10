@@ -4,29 +4,24 @@
 
 ## Do first
 
+- [ ] GMCP-532 Flaky: SessionStopTests.AStopSaysHowLongTheQuitTook asserts the quit's wall-clock length · release vNext — Urgent · Singles
 - [ ] GMCP-468 Flaky: the editor itest group timed out once at its 300 s ceiling with no failed test — Urgent · Singles
 - [ ] GMCP-470 Flaky: TimeTests.WaitForNodeExists meets the node before the wait starts under load — Urgent · Singles
-- [/] GMCP-525 Flaky: ArmTests.AGameStartedBeforeTheArmIsNeverListed leaves Godot holding its project at cleanup · release vNext — Urgent · Singles
-- [ ] GMCP-526 Flaky: SessionStopTests stalls with no Godot alive under the gate's watchdog · release vNext — Urgent · Singles
+- [/] GMCP-526 Flaky: SessionStopTests stalls with no Godot alive under the gate's watchdog · release vNext — Urgent · Singles
+- [ ] GMCP-531 Flaky: the unit suite stalled once under the gate's watchdog with no test named · release vNext — Urgent · Singles
 - [ ] GMCP-239 A real-time clip loses the frames written while its encoder stalls, coming out shorter than its span — Urgent · Singles
 - [ ] GMCP-456 run_scratches: a .NET finalizer crash at quit after the exit marker is a warning, not a red scene — High · Ideas from the survey and the projects
 - [ ] GMCP-459 run_scratches: turn a shader compile error red, and let a project judge engine warnings — High · Ideas from the survey and the projects
 - [ ] GMCP-460 Quiet runs: the engine's pointer position follows injected input — High · Ideas from the survey and the projects
-- [!] GMCP-501 validate: a .cs target's Compile listing runs MSBuild outside the prepWrapper gate · release vNext — High · Singles
-- [ ] GMCP-528 Prep rebuilds a Debug assembly it did not build itself, though its inputs match · release vNext — High · Singles
 - [ ] GMCP-305 A process prep's prepWrapper runs in the process cwd, breaking project-relative wrapper paths — High · Singles
-- [ ] GMCP-496 Say what a wrapped prep step waited on when its ceiling kills it, and decide whether a gate's slot wait counts · release vNext — High · Singles
 - [ ] GMCP-311 stop_project / list_sessions: no read-only view of who holds a folder's override.cfg — High · Singles
 - [ ] GMCP-500 run_scratches: batches of one scene cannot take different ceilings — High · Singles
-- [ ] GMCP-517 run-scratches CLI: --capture-step counts from 0 while runs print steps from 1 · release vNext — High · Singles
-- [ ] GMCP-527 run_scratches: an until step's 15 s hang guard cannot be lengthened for a step measured past it at 1x · release vNext — High · Singles
-- [ ] GMCP-516 run_scratches: a step's capture is taken after the step restored its state · release vNext — High · Singles
+- [/] GMCP-516 run_scratches: a step's capture is taken after the step restored its state · release vNext — High · Singles
 - [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time — High · Singles
 - [ ] GMCP-394 run_scratches: prune old scratch shot folders beside the run logs — High · Singles
 - [ ] GMCP-506 Scratch user data: put user:// outside the project tree — High · Singles
-- [ ] GMCP-511 run_scratches: a scene that quits itself with exit code 0 inside its exit hold is clean, not red · release vNext — High · Singles
 - [ ] GMCP-513 run_scratches and --run-scratches: lift the 20-batch cap — High · Singles
-- [ ] GMCP-504 wait_for: a screenshot of a scratch scene at --resolution 1366x768 comes back 1365 wide · release vNext — High · Singles
+- [/] GMCP-504 wait_for: a screenshot of a scratch scene at --resolution 1366x768 comes back 1365 wide · release vNext — High · Singles
 - [ ] GMCP-499 crop_screenshot: refuses a tracked PNG and one outside the checkout — High · Singles
 - [ ] GMCP-457 Release notes: name the changes an agent driving a game will notice — High · Docs
 
@@ -56,7 +51,7 @@
 
 ## Singles
 
-### Tests and the itest harness (0/32 done)
+### Tests and the itest harness (2/34 done)
 - [ ] GMCP-494 Route the capture itest group as its own command so the routed itest moves to gate's hidden desktop
 - [ ] GMCP-82 Let run.ps1 drive run twice in one tree under its own log names
 - [ ] GMCP-103 Map scratch fixture changes to the scratch itest group alone
@@ -83,15 +78,14 @@
 - [ ] GMCP-388 run.ps1 gdtest: the import stamp never moves, so every run re-imports
 - [ ] GMCP-467 A prep's Godot import failed once under load; root-cause it from the next failure's full text
 - [ ] GMCP-489 BridgeConnectionTests: short real-time read and wait bounds should be hang guards
-- [ ] GMCP-515 run.ps1 itest exits 0 when the gate could not route it and no test ran · release vNext
 - [ ] GMCP-521 Unit tests: a default SessionRegistry opens the machine-wide override list
 
-### Prep and validate (0/7 done)
+### Prep and validate (3/7 done)
 - [ ] GMCP-465 Process sessions: join the own-work job or say in ARCHITECTURE.md that their CPU counts as load
 - [ ] GMCP-495 validate reports a csproj-level MSBuild error with no code as a red build with no errors
 - [ ] GMCP-520 Prep: an asset in a folder Godot skips makes an import due on every request
 
-### Session lifecycle and override.cfg (0/17 done)
+### Session lifecycle and override.cfg (0/18 done)
 - [ ] GMCP-243 Count the server-exit ShutdownCap on the load-adjusted clock
 - [ ] GMCP-253 Release this server's own override entry when a release fails or an attach is forgotten
 - [ ] GMCP-254 Decide what an override write does when the folder list stays busy past 2 s
@@ -108,8 +102,9 @@
 - [ ] GMCP-361 override-folders list: a hold past its budget runs its work unprotected, any IOException is retried, a cut rewrite empties the list
 - [ ] GMCP-362 A session stays live while Godot's console wrapper outlives its game
 - [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time'
+- [ ] GMCP-529 Session exit hardening: no process-lock reads under the registry locks, and the restart-after-exit window · release vNext+1
 
-### Scratch runner (0/18 done)
+### Scratch runner (3/18 done)
 - [ ] GMCP-149 Keep run_scratches' exit lines as short as a failing step's
 - [ ] GMCP-204 run_scratches until: clearer refusals for raw JSON errors, output/uiChanged kinds, and a paused tree
 - [ ] GMCP-316 run_scratches steps: the bridge's PlayStep refusal form, a duplicate map key, the options summary
@@ -120,7 +115,7 @@
 - [ ] GMCP-471 Prune the scratch userdata-* folders a killed server leaves, or say decision 47 does not
 - [ ] GMCP-474 --run-scratches CLI: take --session like run_scratches' options.session
 
-### Headless scene edits (0/13 done)
+### Headless scene edits (1/13 done)
 - [ ] GMCP-430 A scene named with an upper-case extension loses its uid on each in-place save
 - [ ] GMCP-435 attach_script writes a script's .uid before a refusal and never reports it
 - [ ] GMCP-436 A headless edit can lose what Godot drops with a warning
@@ -131,11 +126,11 @@
 - [ ] GMCP-296 A headless edit result can report a stale uid for a rewritten scene path
 - [ ] GMCP-300 move_node: a node moved back to its own path is judged at its old place and displaces re-added children
 - [ ] GMCP-448 stamp_uids: report and fix uids two files share
-- [ ] GMCP-522 Headless scene edits reset a TabContainer's current_tab to 0 · release vNext
 - [ ] GMCP-523 Split the scene keep logic out of headless/scene_edit.gd
 - [ ] GMCP-524 move_node: the current page moved out of a TabContainer saves as hidden
 
-### Captures and time steps (0/10 done)
+### Captures and time steps (0/11 done)
+- [ ] GMCP-530 run_scratches: step shots carry window and viewport sizes and the letterbox warning (sub-issue of GMCP-504) · release vNext
 - [ ] GMCP-106 Count capture_frames' start timeout as wait_for counts its timeout
 - [ ] GMCP-176 capture_frames: an edge start with a call is met in the call's own frame
 - [ ] GMCP-193 Capture an HDR 2D view, and resize an embedded game beside a CompositorEffect
