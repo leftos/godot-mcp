@@ -7,8 +7,9 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// The command a project's godot-mcp.json names under <c>prepWrapper</c>, which the prep runs each of its processes through
 /// (the C# build and the Godot import): the command's first element is the program, the rest its
-/// arguments, with <c>{log}</c> replaced by the step's log and <c>{ceiling}</c> by the prep's ceiling in whole seconds, and
-/// the wrapped program and its arguments appended: a program with a folder in it is absolute against its own working
+/// arguments, with <c>{log}</c> replaced by the step's log, <c>{ceiling}</c> by the prep's ceiling in whole seconds and
+/// <c>{slot}</c> by the step's slot (<see cref="HeavySlot"/> or <see cref="LightSlot"/>; a command without it keeps its own
+/// slot for every step), and the wrapped program and its arguments appended: a program with a folder in it is absolute against its own working
 /// directory, and a bare name is left for the wrapper's PATH. A wrapper that names <c>{log}</c> writes that file itself.
 /// </summary>
 /// <param name="Command">The wrapper's program, then its arguments, as the file lists them.</param>
@@ -18,6 +19,14 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     public const string LogToken = "{log}";
 
     public const string CeilingToken = "{ceiling}";
+
+    public const string SlotToken = "{slot}";
+
+    /// <summary>What <see cref="SlotToken"/> becomes for the C# build, the Godot import and a process's prep.</summary>
+    public const string HeavySlot = "heavy";
+
+    /// <summary>What <see cref="SlotToken"/> becomes for the Compile-items listing: a one-second evaluation on one core.</summary>
+    public const string LightSlot = "light";
 
     /// <summary>The prefixes of the lines a gate prints as its closing verdict.</summary>
     private static readonly string[] VerdictForms = ["gate: passed in ", "gate: FAILED (status "];
@@ -152,13 +161,18 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     /// a gate waiting for a slot uses no CPU, and though it prints a waiting line and a heartbeat every 30 s, a wrapper owes
     /// the server no output. The ceiling holds, paused while the gate waits, and a wall backstop bounds the whole step.
     /// </summary>
-    public ToolProcessRequest Wrap(ToolProcessRequest request)
+    /// <param name="request">The step's own command.</param>
+    /// <param name="slot">What <see cref="SlotToken"/> becomes: <see cref="HeavySlot"/>, or <see cref="LightSlot"/> for the Compile listing.</param>
+    public ToolProcessRequest Wrap(ToolProcessRequest request, string slot)
     {
         string ceiling = ((long)request.Ceiling.TotalSeconds).ToString(CultureInfo.InvariantCulture);
         string[] command =
         [
             .. Command.Select(element =>
-                element.Replace(LogToken, request.LogPath, StringComparison.Ordinal).Replace(CeilingToken, ceiling, StringComparison.Ordinal)
+                element
+                    .Replace(LogToken, request.LogPath, StringComparison.Ordinal)
+                    .Replace(CeilingToken, ceiling, StringComparison.Ordinal)
+                    .Replace(SlotToken, slot, StringComparison.Ordinal)
             ),
         ];
         return Watch(

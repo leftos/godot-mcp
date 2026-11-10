@@ -361,12 +361,11 @@ public sealed partial class PrepTests : IAsyncDisposable
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
-    public async Task TheCompileItemsAreListedPastAPrepWrapperThatNeverRunsItsCommand()
+    public async Task TheCompileItemsListingRunsThroughThePrepWrapper()
     {
-        // A gate held behind another session's critical request never starts the evaluation; exit 124 stands in for that wait.
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
-        WritePrepWrapper(csProbe.Directory, StoppingWrapper);
+        string marker = WritePrepWrapper(csProbe.Directory, RunningWrapper);
         string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
 
         IReadOnlyList<string> items = await ProjectPrep.CompileItemsAsync(
@@ -377,25 +376,31 @@ public sealed partial class PrepTests : IAsyncDisposable
         );
 
         Assert.Contains(csProbe.SourcePath("CsProbeNode.cs"), items, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("dotnet.exe", Assert.Single(File.ReadAllLines(marker)), ignoreCase: true);
+        // The listing's .log, .json and .wrapper.log all go once it succeeds.
         Assert.Empty(Directory.GetFiles(logFolder, "compile-items-*"));
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
-    public async Task TheCompileItemsListingNeverStartsThePrepWrapper()
+    public async Task AStoppedCompileItemsListingSaysTheWrapperStoppedIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
-        string marker = WritePrepWrapper(csProbe.Directory, RunningWrapper);
+        string marker = WritePrepWrapper(csProbe.Directory, StoppingWrapper);
+        string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
+        string csproj = Path.Combine(csProbe.Directory, "CsProbe.csproj");
 
-        IReadOnlyList<string> items = await ProjectPrep.CompileItemsAsync(
-            csProbe.Directory,
-            Path.Combine(csProbe.Directory, "CsProbe.csproj"),
-            NullLogger.Instance,
-            cancellation
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            ProjectPrep.CompileItemsAsync(csProbe.Directory, csproj, NullLogger.Instance, cancellation)
         );
 
-        Assert.Contains(csProbe.SourcePath("CsProbeNode.cs"), items, StringComparer.OrdinalIgnoreCase);
-        Assert.False(File.Exists(marker), "the listing started the prep wrapper");
+        string wrapperLog = Assert.Single(Directory.GetFiles(logFolder, "compile-items-*.wrapper.log"));
+        string log = wrapperLog[..^".wrapper.log".Length] + ".log";
+        Assert.Equal(
+            $"the prep wrapper stopped the Compile items listing of {csproj} (exit 124); its log: {log}; the wrapper's output: {wrapperLog}",
+            refused.Message
+        );
+        Assert.False(File.Exists(marker), "the stopping wrapper ran its command");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]

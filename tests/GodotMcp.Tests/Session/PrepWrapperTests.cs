@@ -25,7 +25,7 @@ public sealed class PrepWrapperTests : IDisposable
     {
         PrepWrapper wrapper = new(["gate", "run", "--log", "{log}", "--timeout", "{ceiling}", "--"], _temp.Path);
 
-        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest());
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest(), PrepWrapper.HeavySlot);
 
         Assert.Equal("gate", wrapped.FileName);
         Assert.Equal(["run", "--log", StepLog, "--timeout", "300", "--", Dotnet, "build", "Game.csproj"], wrapped.Arguments);
@@ -33,11 +33,34 @@ public sealed class PrepWrapperTests : IDisposable
     }
 
     [Fact]
+    public void TheSlotTokenIsHeavyForTheBuildAndLightForTheCompileListing()
+    {
+        PrepWrapper wrapper = new(["gate", "run", "--slot", "{slot}", "--log", "{log}", "--"], _temp.Path);
+
+        ToolProcessRequest build = wrapper.Wrap(BuildRequest(), PrepWrapper.HeavySlot);
+        ToolProcessRequest listing = wrapper.Wrap(BuildRequest(), PrepWrapper.LightSlot);
+
+        Assert.Equal(["run", "--slot", "heavy", "--log", StepLog, "--", Dotnet, "build", "Game.csproj"], build.Arguments);
+        Assert.Equal(["run", "--slot", "light", "--log", StepLog, "--", Dotnet, "build", "Game.csproj"], listing.Arguments);
+    }
+
+    [Fact]
+    public void ATemplateWithoutTheSlotTokenKeepsItsOwnSlotForEveryStep()
+    {
+        PrepWrapper wrapper = new(["gate", "run", "--slot", "heavy", "--log", "{log}", "--timeout", "{ceiling}", "--"], _temp.Path);
+
+        ToolProcessRequest listing = wrapper.Wrap(BuildRequest(), PrepWrapper.LightSlot);
+
+        Assert.Equal("gate", listing.FileName);
+        Assert.Equal(["run", "--slot", "heavy", "--log", StepLog, "--timeout", "300", "--", Dotnet, "build", "Game.csproj"], listing.Arguments);
+    }
+
+    [Fact]
     public void TheWrapperKeepsTheCeilingAndTheEnvironmentAndDropsTheStallKill()
     {
         PrepWrapper wrapper = new(["gate", "{log}"], _temp.Path);
 
-        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest());
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest(), PrepWrapper.HeavySlot);
 
         Assert.Equal(TimeSpan.FromSeconds(300), wrapped.Ceiling);
         Assert.Equal(TimeSpan.MaxValue, wrapped.StallLimit);
@@ -50,7 +73,7 @@ public sealed class PrepWrapperTests : IDisposable
     {
         PrepWrapper wrapper = new(["gate", "-Log={log}", "--ceiling={ceiling}s", "{ceiling}{ceiling}"], _temp.Path);
 
-        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest());
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest(), PrepWrapper.HeavySlot);
 
         Assert.Equal(["-Log=" + StepLog, "--ceiling=300s", "300300", Dotnet, "build", "Game.csproj"], wrapped.Arguments);
     }
@@ -60,7 +83,7 @@ public sealed class PrepWrapperTests : IDisposable
     {
         PrepWrapper wrapper = new(["gate", "-Log", "{log}"], _temp.Path);
 
-        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest());
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest(), PrepWrapper.HeavySlot);
 
         Assert.True(wrapper.OwnsLog);
         Assert.Equal(WrapperLog, wrapped.LogPath);
@@ -72,7 +95,7 @@ public sealed class PrepWrapperTests : IDisposable
     {
         PrepWrapper wrapper = new(["gate", "--ceiling", "{ceiling}"], _temp.Path);
 
-        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest() with { AppendToLog = true });
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest() with { AppendToLog = true }, PrepWrapper.HeavySlot);
 
         Assert.False(wrapper.OwnsLog);
         Assert.Equal(StepLog, wrapped.LogPath);
@@ -242,7 +265,7 @@ public sealed class PrepWrapperTests : IDisposable
         List<string> seen = [];
         PrepWrapper wrapper = new(["gate", "{log}"], _temp.Path);
 
-        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest() with { StandardErrorLine = seen.Add });
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest() with { StandardErrorLine = seen.Add }, PrepWrapper.HeavySlot);
         wrapped.StandardErrorLine!(waiting);
 
         Assert.Equal([waiting], seen);
@@ -262,7 +285,7 @@ public sealed class PrepWrapperTests : IDisposable
     {
         PrepWrapper wrapper = new([program], _temp.Path);
 
-        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest());
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest(), PrepWrapper.HeavySlot);
 
         Assert.Equal(Path.GetFullPath(Path.Combine(_temp.Path, program)), wrapped.FileName);
     }
@@ -272,8 +295,8 @@ public sealed class PrepWrapperTests : IDisposable
     {
         string rooted = Path.Combine(Path.GetTempPath(), "gate.cmd");
 
-        string bare = new PrepWrapper(["pwsh"], _temp.Path).Wrap(BuildRequest()).FileName;
-        string absolute = new PrepWrapper([rooted], _temp.Path).Wrap(BuildRequest()).FileName;
+        string bare = new PrepWrapper(["pwsh"], _temp.Path).Wrap(BuildRequest(), PrepWrapper.HeavySlot).FileName;
+        string absolute = new PrepWrapper([rooted], _temp.Path).Wrap(BuildRequest(), PrepWrapper.HeavySlot).FileName;
 
         Assert.Equal("pwsh", bare);
         Assert.Equal(rooted, absolute);
@@ -349,13 +372,13 @@ public sealed class PrepWrapperTests : IDisposable
         PrepWrapper wrapper = new(["pwsh", "-NoProfile", "-File", "prep-wrapper.ps1", "{log}", "--"], _temp.Path);
         ToolProcessRequest request = new(prep, ["--fast"], _temp.Path, log, TimeSpan.FromSeconds(300));
 
-        ToolProcessRequest wrapped = wrapper.Wrap(request);
+        ToolProcessRequest wrapped = wrapper.Wrap(request, PrepWrapper.HeavySlot);
 
         Assert.Equal("pwsh", wrapped.FileName);
         Assert.Equal(["-NoProfile", "-File", "prep-wrapper.ps1", log, "--", prep, "--fast"], wrapped.Arguments);
         Assert.Equal(
             ["-NoProfile", "-File", "prep-wrapper.ps1", log, "--", "pwsh", "--fast"],
-            wrapper.Wrap(request with { FileName = "pwsh" }).Arguments
+            wrapper.Wrap(request with { FileName = "pwsh" }, PrepWrapper.HeavySlot).Arguments
         );
         Assert.True(wrapper.OwnsLog);
         Assert.Equal("process-x.prep.wrapper.log", Path.GetFileName(PrepWrapper.WrapperLog(log)));

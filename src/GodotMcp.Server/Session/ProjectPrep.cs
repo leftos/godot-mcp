@@ -329,14 +329,17 @@ internal static partial class ProjectPrep
     /// <summary>
     /// The full paths of the csproj's <c>Compile</c> items, from MSBuild's evaluation (<c>dotnet msbuild -getItem:Compile</c>,
     /// MSBuild 17.8 and later: learn.microsoft.com/visualstudio/msbuild/evaluate-items-and-properties), with the build's
-    /// configuration and environment. dotnet runs directly, never through the prep wrapper: the evaluation takes about a second
-    /// on one core, and a wrapper that queues its commands (a gate waiting for a slot) would spend the listing's ceiling
-    /// waiting instead. MSBuild writes the item list to a JSON file of its own (<c>/getResultOutputFile</c>), which is read; the
-    /// log is read instead when MSBuild wrote no result file. Each evaluation has a log and a result file of its own
-    /// (<see cref="CompileItemsLog"/>), so evaluations on one folder at once never share them; both are deleted once read, and
-    /// kept when the evaluation failed.
+    /// configuration and environment. dotnet runs through the project's prep wrapper when it names one, as the build does, in a
+    /// <see cref="PrepWrapper.LightSlot"/> since the evaluation takes about a second on one core; the ceiling pauses while a
+    /// gate waits for that slot, and the wall backstop bounds the whole step. MSBuild writes the item list to a JSON file of
+    /// its own (<c>/getResultOutputFile</c>), which is read; the log is read instead when MSBuild wrote no result file. Each
+    /// evaluation has a log, a result file and a wrapper log of its own (<see cref="CompileItemsLog"/>), so evaluations on
+    /// one folder at once never share them; all are deleted once read, and kept when the evaluation failed.
     /// </summary>
-    /// <exception cref="SessionException">dotnet could not be started, hit its ceiling, failed, or wrote no item list.</exception>
+    /// <exception cref="SessionException">
+    /// dotnet or the wrapper could not be started, the step hit its ceiling or backstop, the wrapper stopped it, it failed, or
+    /// it wrote no item list.
+    /// </exception>
     public static async Task<IReadOnlyList<string>> CompileItemsAsync(
         string projectDir,
         string csproj,
@@ -356,14 +359,18 @@ internal static partial class ProjectPrep
             "-p:GodotTargetPlatform=windows",
             "-nologo",
         ];
-        ToolProcessResult listed = await RunToolAsync(
-            DotnetRequest(Installation.FindDotnet(), arguments, csproj, log),
-            "dotnet",
-            logger,
-            cancellationToken
-        );
+        ToolProcessRequest request = DotnetRequest(Installation.FindDotnet(), arguments, csproj, log);
+        var wrapper = PrepWrapper.Read(projectDir);
+        ToolProcessResult listed = wrapper is null
+            ? await RunToolAsync(request, "dotnet", logger, cancellationToken)
+            : await RunToolAsync(
+                wrapper.Wrap(request, PrepWrapper.LightSlot),
+                $"The prepWrapper of {ProjectProfile.FileName}",
+                logger,
+                cancellationToken
+            );
         string failure = $"dotnet msbuild -getItem:Compile on {csproj}";
-        CheckListed(listed, failure, log);
+        CheckListed(listed, failure, log, wrapper, csproj);
         string output = File.Exists(result) ? ReadLog(result) : ReadLog(log);
         IReadOnlyList<string> items;
         try
@@ -377,16 +384,25 @@ internal static partial class ProjectPrep
 
         DeleteLogged(log, logger);
         DeleteLogged(result, logger);
+        if (wrapper is { OwnsLog: true })
+        {
+            DeleteLogged(PrepWrapper.WrapperLog(log), logger);
+        }
 
         return items;
     }
 
-    /// <exception cref="SessionException">The listing hit its ceiling or failed.</exception>
-    private static void CheckListed(ToolProcessResult listed, string failure, string log)
+    /// <exception cref="SessionException">The listing hit its ceiling or backstop, the prep wrapper stopped it, or it failed.</exception>
+    private static void CheckListed(ToolProcessResult listed, string failure, string log, PrepWrapper? wrapper, string csproj)
     {
         if (listed.WasKilled)
         {
-            throw new SessionException($"{failure} did not finish {listed.KillPhrase}, so the Compile items are unknown. Its log: {log}");
+            throw new SessionException(KilledStepMessage(failure, listed, "the Compile items are unknown", log));
+        }
+
+        if (wrapper is not null && PrepWrapper.Stopped(listed))
+        {
+            throw new SessionException(wrapper.StoppedNote($"the Compile items listing of {csproj}", log));
         }
 
         if (listed.ExitCode != 0)
@@ -820,7 +836,7 @@ internal static partial class ProjectPrep
         var wrapper = PrepWrapper.Read(projectDir);
         // The wrapper runs from the project folder, so the prep's own command gets that folder back: a build's relative paths
         // and a bare script name need the process's cwd, wrapped or not.
-        ToolProcessRequest step = wrapper is null ? request : wrapper.Wrap(request) with { WorkingDirectory = cwd };
+        ToolProcessRequest step = wrapper is null ? request : wrapper.Wrap(request, PrepWrapper.HeavySlot) with { WorkingDirectory = cwd };
         string tool = wrapper is null ? $"the prep of process {session}" : $"The prepWrapper of {ProjectProfile.FileName}";
         ToolProcessResult ran = await RunToolAsync(step, tool, logger, cancellationToken);
         if (ran.WasKilled)
@@ -852,7 +868,7 @@ internal static partial class ProjectPrep
     ) =>
         wrapper is null
             ? RunToolAsync(request, tool, logger, cancellationToken)
-            : RunToolAsync(wrapper.Wrap(request), $"The prepWrapper of {ProjectProfile.FileName}", logger, cancellationToken);
+            : RunToolAsync(wrapper.Wrap(request, PrepWrapper.HeavySlot), $"The prepWrapper of {ProjectProfile.FileName}", logger, cancellationToken);
 
     /// <exception cref="SessionException">The tool could not be started.</exception>
     private static async Task<ToolProcessResult> RunToolAsync(
