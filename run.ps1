@@ -670,6 +670,30 @@ function Get-TestArgumentList {
     return $arguments
 }
 
+# The arguments of an itest run of the test project's classes: Get-TestArgumentList's --no-build ones, then Microsoft
+# Testing Platform's diagnostic file (--diagnostic, written as each message arrives). That file is the only sink that
+# keeps a hung test's name while the test is still running: under dotnet test, MTP's pipe-mode output device drops every
+# informational message xUnit sends, xUnit's "[Long Running Test]" line among them, so neither the console nor the
+# group's log carries it. The folder is this function's own one under .tmp, cleared first so a run never reads an
+# earlier run's line, and -Name is the gate log's name, whose .diag folder Show-ItestLongRunning reads.
+function Get-ItestArgumentList {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Classes,
+        [Parameter(Mandatory)] [string]$Name
+    )
+    $folder = Join-Path $logDir "$Name.diag"
+    if (Test-Path -LiteralPath $folder) {
+        Remove-Item -LiteralPath $folder -Recurse -Force
+    }
+    $arguments = Get-TestArgumentList -Project $itestProject -Classes $Classes -NoBuild
+    if ($Classes.Count -eq 0) {
+        $arguments += '--'
+    }
+    $arguments += @('--diagnostic', '--diagnostic-verbosity', 'Information', '--diagnostic-synchronous-write',
+        '--diagnostic-output-directory', $folder)
+    return $arguments
+}
+
 # Every test class the integration test project declares: a `public sealed [partial] class <Name>Tests` in one of its
 # top-level files (the Fixtures folder holds helpers, not tests).
 function Get-ItestClass {
@@ -1022,7 +1046,7 @@ function Invoke-ItestGroupProcess {
     }
     else {
         $classes = @($itestGroups[$Group] | ForEach-Object { "$itestNamespace.$_" })
-        $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild)
+        $command = Get-ItestCommand -Arguments (Get-ItestArgumentList -Classes $classes -Name "itest-$Group")
         $ceiling = $itestCeiling
     }
     $log = Join-Path $logDir "itest-$Group.log"
@@ -1067,6 +1091,30 @@ function Get-ItestFailureBlock {
         }
     }
     return $blocks.ToArray()
+}
+
+# Prints the last of xUnit's "[Long Running Test]" lines in a name's diagnostic folder: the tests still running when it
+# was written, which is where a killed run's hung test is named, since dotnet test's pipe-mode output device drops the
+# line from the console and the group's log. Nothing is printed when the folder or the line is missing.
+function Show-ItestLongRunning {
+    param([Parameter(Mandatory)] [string]$Name)
+    $folder = Join-Path $logDir "$Name.diag"
+    if (-not (Test-Path -LiteralPath $folder)) {
+        return
+    }
+    try {
+        $lines = @(Get-ChildItem -LiteralPath $folder -Filter '*.diag' -File -ErrorAction Stop |
+            Select-String -Pattern '\[Long Running Test\]' |
+            ForEach-Object { $_.Line })
+    }
+    catch {
+        Write-Host "itest ${Name}: could not read the diagnostics in ${folder}: $($_.Exception.GetBaseException().Message)"
+        return
+    }
+    if ($lines.Count -eq 0) {
+        return
+    }
+    Write-Host "itest ${Name}: still running when it was killed: $($lines[-1])"
 }
 
 # Prints, after a failed group's console output, the failure block of each failed test in its lane log, so the message
@@ -1120,6 +1168,7 @@ function Complete-ItestGroup {
         Write-Host "itest-$Group was killed by the gate: $(Get-GateKill -Log (Join-Path $logDir "itest-$Group.log"))" -ForegroundColor Yellow
     }
     if ($status -ne 0) {
+        Show-ItestLongRunning -Name "itest-$Group"
         Show-ItestFailureBlock -Group $Group -Log (Join-Path $logDir "itest-$Group.log")
     }
     return $status
@@ -1261,14 +1310,26 @@ function Invoke-ItestFiltered {
     $slot = Get-ItestFilterSlot -Filters $Filters
     if (Test-ItestFilterNeedsDotnet -Filters $Filters) {
         $command = Get-ItestCsharpCommand -Filter $Filters[0]
-        return Invoke-Gated -Name $name -TimeoutSeconds $itestCsharpCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
+        $status = Invoke-Gated -Name $name -TimeoutSeconds $itestCsharpCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
+        if ($status -ne 0) {
+            Show-ItestLongRunning -Name 'itest-csharp'
+        }
+        return $status
     }
     if (Test-ItestFilterIsVisible -Filters $Filters) {
         $command = Get-ItestCaptureCommand -Filter $Filters[0]
-        return Invoke-Gated -Name $name -TimeoutSeconds $itestCaptureCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
+        $status = Invoke-Gated -Name $name -TimeoutSeconds $itestCaptureCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
+        if ($status -ne 0) {
+            Show-ItestLongRunning -Name 'itest-capture'
+        }
+        return $status
     }
-    $arguments = Get-TestArgumentList -Project $itestProject -Classes $Filters -NoBuild
-    return Invoke-ItestGated -Name $name -Arguments $arguments -Slot $slot
+    $arguments = Get-ItestArgumentList -Classes $Filters -Name $name
+    $status = Invoke-ItestGated -Name $name -Arguments $arguments -Slot $slot
+    if ($status -ne 0) {
+        Show-ItestLongRunning -Name $name
+    }
+    return $status
 }
 
 # The integration test project's Release build for itest-csharp, whose dotnet test runs with --no-build: warnings as
@@ -1304,7 +1365,7 @@ function Invoke-ItestCsharp {
     if ($classes.Count -eq 0) {
         $classes = @($itestGroups['csharp'] | ForEach-Object { "$itestNamespace.$_" })
     }
-    $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild)
+    $command = Get-ItestCommand -Arguments (Get-ItestArgumentList -Classes $classes -Name 'itest-csharp')
     & $command.Program @($command.Arguments) | Out-Host
     return $LASTEXITCODE
 }
@@ -1324,7 +1385,7 @@ function Invoke-ItestCapture {
     if ($classes.Count -eq 0) {
         $classes = @($itestVisibleGroups | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
     }
-    $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild) -Visible
+    $command = Get-ItestCommand -Arguments (Get-ItestArgumentList -Classes $classes -Name 'itest-capture') -Visible
     & $command.Program @($command.Arguments) | Out-Host
     return $LASTEXITCODE
 }

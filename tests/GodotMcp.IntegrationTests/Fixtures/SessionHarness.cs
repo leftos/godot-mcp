@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.IntegrationTests.Fixtures;
@@ -21,6 +22,12 @@ internal sealed class SessionHarness : IAsyncDisposable
     // set below: a launch's handshake and an attach's wait run load-adjusted, and the warm host's request floor and the
     // stop's graces are hang guards.
     private readonly LoadClock _wallClock = new(TimeProvider.System, new NoLoadSource());
+
+    // The listener's log goes to stderr, as the server's own does, so a group's log keeps what the listener refused and
+    // why: a hello that matched no waiting session among them.
+    private readonly ILoggerFactory _logging = LoggerFactory.Create(builder =>
+        builder.SetMinimumLevel(LogLevel.Information).AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace)
+    );
     private readonly BridgeListener _listener;
     private readonly CancellationTokenSource _stopRestoring = new();
     private readonly Task _restoring = Task.CompletedTask;
@@ -45,7 +52,7 @@ internal sealed class SessionHarness : IAsyncDisposable
     /// </param>
     public SessionHarness(bool launchesUnfocused, bool productionGraces, TimeSpan? scratchUntilGuard = null)
     {
-        _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
+        _listener = new(_logging.CreateLogger<BridgeListener>()) { Clock = _wallClock };
         Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
         {
             LaunchClock = LoadClock.Shared,
@@ -144,6 +151,7 @@ internal sealed class SessionHarness : IAsyncDisposable
 
         Sessions.Dispose();
         _listener.Dispose();
+        _logging.Dispose();
         _wallClock.Dispose();
     }
 
