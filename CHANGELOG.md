@@ -8,6 +8,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - A background scratch run's progress line names the step index `--capture-step` and `--steps` take, then its position: `step 20 open (21 of 72)`.
 
+### Fixed
+
+- A headless scene edit keeps a TabContainer's saved `current_tab`, so the game still opens on that page instead of the first.
+
 ## 0.38.0 - 2026-11-10
 
 ### Changed
