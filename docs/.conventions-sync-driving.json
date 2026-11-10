@@ -9,8 +9,8 @@
       "user": "c926ca623a872aa1"
     },
     "build-before-launch": {
-      "repo": "3c4fb49efa876644",
-      "user": "b379c34bac572167"
+      "repo": "b576067dc9370b0d",
+      "user": "65124acf63e83d8b"
     },
     "cancel-timed-out-requests": {
       "repo": "d136e241d12296fa",
@@ -105,8 +105,8 @@
       "user": "f5d059f2475ecb67"
     },
     "name-out-of-reach-ui": {
-      "repo": "27f3f0235a8c7a07",
-      "user": "e01672b5229d4d44"
+      "repo": "447b7e355b07b369",
+      "user": "9d5aac881fd43a0c"
     },
     "never-block-main-thread": {
       "repo": "45f340eefb9ad593",
@@ -153,8 +153,8 @@
       "user": "ebfaa4da3ea3e159"
     },
     "quiet-by-default": {
-      "repo": "69751e2ae440cbac",
-      "user": "818b37ebe7468676"
+      "repo": "e0af3cb7c22ae5a1",
+      "user": "edea6a589bf0d7e2"
     },
     "real-app-over-frontend-only": {
       "repo": "701e74eae3278523",
@@ -253,5 +253,5 @@
       "user": "e8eee86351ab5f92"
     }
   },
-  "user_revision": 17
+  "user_revision": 19
 }

@@ -313,7 +313,7 @@ Source: no FileDialog handling anywhere in bridge/ or src/ (searched); bridge/go
 ### Name what the driver cannot reach, and the route for each
 <!-- rule: name-out-of-reach-ui -->
 
-The bridge reaches only what the engine draws and routes input to. Name each surface it cannot reach, and refuse it as such rather than failing obscurely: a native menu is refused as "an OS window of its own" with the settings that would embed it, and a world node in a native window is refused since input reaches only the root and its embedded windows. A refusal is a named error returned before any input is sent, never a half-sent gesture (the bridge's reach checks run before the first event).
+The bridge reaches only what the engine draws and routes input to. Name each surface it cannot reach, and refuse it as such rather than failing obscurely: a native menu is refused as "an OS window of its own" with the settings that would embed it, and a world node in a native window is refused since input reaches only the root and its embedded windows. A refusal is a named error returned before any input is sent, never a half-sent gesture (the bridge's reach checks run before the first event). Where the refused surface still has a working route, the refusal names it: the native-menu refusal names the settings that keep a popup embedded (`gui_embed_subwindows` on, `force_native` off), where the bridge can reach it.
 
 Where the game can avoid opening a native surface while driven, it does, and a tool answers in its place: a native file dialog takes a path the agent queued instead of opening.
 
