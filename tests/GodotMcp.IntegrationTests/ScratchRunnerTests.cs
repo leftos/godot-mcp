@@ -357,12 +357,12 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         return scene["log"]!.GetValue<string>();
     }
 
-    // The proof a step ended at its until and not its pace: met, with the game time the bridge counted under the pace's
-    // milliseconds (each fixture's until holds 0.6 s of game time or less into a pace of 1 s or 2 s); game time, so load-proof.
-    internal static void AssertUntilMetInGameTime(JsonNode step, int paceMs)
+    // A step ended at its until, met, with the game time the bridge counted under boundMs, the harness's until hang guard in game
+    // milliseconds: a hang guard, not a timing assertion, since a met until ends however long past its pace its condition holds.
+    internal static void AssertUntilMetInGameTime(JsonNode step, int boundMs)
     {
         Assert.True(step["until"]!["met"]!.GetValue<bool>(), step.ToJsonString());
-        Assert.InRange(step["until"]!["gameMs"]!.GetValue<int>(), 0, paceMs - 1);
+        Assert.InRange(step["until"]!["gameMs"]!.GetValue<int>(), 0, boundMs - 1);
         Assert.Null(step["gameMs"]);
     }
 

@@ -1,6 +1,6 @@
 extends "res://scratch/scratch_probe.gd"
-## Two steps whose until is a signal the scene never emits: the first is not met within its 1 s
-## pace, so run_scratches turns it red and never plays the second, keepGoing or not.
+## Two steps whose until is a signal the scene never emits: the first hangs at its until's hang
+## guard, so run_scratches turns it red and never plays the second, keepGoing or not.
 
 @warning_ignore("unused_signal")
 signal never_fired

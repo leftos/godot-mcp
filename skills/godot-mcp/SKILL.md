@@ -86,7 +86,7 @@ A project whose scratch scenes implement `PlayStep(int)`, `GetStepCount()`, `Get
 
 A scene whose root also has a public `GetStepUntil(int)` returns, per step, a `wait_for` condition (an empty dictionary, or null, for a paced step): the step is then played inside one `wait_for` on it, `PlayStep` as its `options.call`, and ends when the condition holds instead of after the full pace.
 
-The pace is the most load-adjusted time such a step may take (at the scene's time scale, so a loaded machine that draws fewer frames gives it more time): a condition not met in it is red and stops the scene, even with `options.keepGoing`, and the step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`.
+Such a step ignores its pace: it waits for its condition, and a condition that has not held after 15 s of load-adjusted time (so a loaded machine that draws fewer frames gets more game time) is hung, red and stops the scene, even with `options.keepGoing`, and the step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`.
 
 A step whose work runs on after `PlayStep` returns (an awaited task, a tween) needs a `GetStepUntil` condition: a paced step's next `PlayStep` comes one pace later whether or not that work is done, `keepGoing` or not. Only errors (`push_error`, `GD.PushError`, a throw from `PlayStep`) and lines the scene's patterns match turn a step red; `GetStatus()` text and `printerr` never do.
 
@@ -94,9 +94,9 @@ For a windowed look at one moment, run the scene with `run_project` and play its
 
 `options.timeScale` (0.01 to 100, default 1) runs every scene's game that many times faster: a pace stays game time and takes pace / timeScale s of wall time (the wait after the last step lasts the longer of its pace in game time and in wall time), and the kill bound scales with it.
 
-A scene whose exit wait needs a length of its own (an until step's pace is also its limit, so it cannot be lowered for the wait) sets `"exitHold": <seconds>` (above 0, at most 120) in its profile pace object: it replaces the last played step's pace for that wait only, counts the same way, and a bare-number pace cannot carry it.
+A scene whose exit wait needs a length of its own (the last step's pace is the wait, and an until step's pace is otherwise ignored) sets `"exitHold": <seconds>` (above 0, at most 120) in its profile pace object: it replaces the last played step's pace for that wait only, counts the same way, and a bare-number pace cannot carry it.
 
-An until that counts frames or physics ticks (`frames`, `settled`) sees that many times fewer frames per pace, and at a high scale one frame's delta can exceed a short pace, so such a scene may need a longer pace. A game that sets `Engine.time_scale` itself overrides the launch's scale and has its long steps cut short with a "clock stood still" error: that scene opts out with `"timeScale": 1` in its profile pace object (`{seconds, reason, timeScale: 1}`).
+An until that counts frames or physics ticks (`frames`, `settled`) sees that many times fewer frames per second of game time, and at a high scale one frame's delta can exceed a short span it counts, so such a scene may need a longer span. A game that sets `Engine.time_scale` itself overrides the launch's scale and has its long steps cut short with a "clock stood still" error: that scene opts out with `"timeScale": 1` in its profile pace object (`{seconds, reason, timeScale: 1}`).
 
 Its folder, paces, ceilings, setup steps (`setup {"<scene>": [step, ...]}`, an index or an exact step name, for a partial run whose selected steps need earlier ones; `{"always": [...], "steps": {"<step>": [...]}}` instead keys the list per selected step), known-red scenes, patterns and the lines a scene must print (`expect`, `expectFor {"<scene>": [...]}`; a scene whose steps are green but whose output lacks one is red, `exit.missing` naming it) live in `godot-mcp.json`'s `scratch` section (a scene is killed at a ceiling derived from its paces; `options.ceilings` or `scratch.ceilings` `{"<scene>": seconds}` gives a scene its own, in load-adjusted seconds from its first step, not scaled by `timeScale`, the call's winning; `options.memoryCeilings` or `scratch.memoryCeilings` `{"<scene>": megabytes}` kills a scene whose game's private memory passes that many megabytes while its steps play); `get_debug_output {session}` with the scene's `session` reads its whole output afterwards.
 
@@ -112,7 +112,7 @@ Wait with `scratch_status {projectPath, runId, waitSeconds}` (1 to 600): it hold
 
 Or wait on its log with a `Monitor` running `timeout <limit> tail -n +1 -F <logFile>` and matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`).
 
-The Monitor's limit is the scenes' paces (each divided by the time scale, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two: a server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
+The Monitor's limit is the scenes' paces (each divided by the time scale, an until step's 15 s hang guard in place of its pace, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two: a server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
 
 Never drop the `timeout`: on Windows a bare `tail -F` outlives the Monitor's shell when the Monitor ends, and runs on for good.
 

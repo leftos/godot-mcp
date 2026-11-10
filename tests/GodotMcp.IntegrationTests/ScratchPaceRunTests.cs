@@ -17,6 +17,9 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
 {
     private CsProbeProject? _csProbe;
 
+    /// <summary>The harness's until guard in game milliseconds: the hang guard an until met in game time stays under.</summary>
+    private int UntilGuardMs => (int)_harness.Sessions.ScratchUntilGuard.TotalMilliseconds;
+
     public override async ValueTask DisposeAsync()
     {
         try
@@ -108,7 +111,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Contains("error in the last step's pace after it", scene["exit"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
-    // ScratchExitHold's last step is an until step met at once, its 30 s pace only its limit, then the 3 s exit hold: its timer's
+    // ScratchExitHold's last step is an until step met at once, its 30 s pace only its default wait, then the 3 s exit hold: its timer's
     // line at 2 s of game time falls inside the hold, which the profile expects, and its error at 10 s falls past it, inside the
     // 30 s the step's pace would have waited.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -122,7 +125,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Equal(3, scene["exitHold"]!.GetValue<double>());
         JsonArray details = scene["details"]!.AsArray();
         Assert.Equal(100, details[0]!["gameMs"]!.GetValue<int>());
-        AssertUntilMetInGameTime(details[1]!, 30000);
+        AssertUntilMetInGameTime(details[1]!, UntilGuardMs);
         Assert.Null(scene["exit"]!["error"]);
         Assert.Null(scene["exit"]!["missing"]);
     }
@@ -182,21 +185,25 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         CsProbeProject csProbe = _csProbe = CsProbeProject.Unbuilt();
         CopyFolder(Path.Combine(RepoPaths.Root, "tests", "fixtures", "CsProbe", "Scratch"), Path.Combine(csProbe.Directory, "Scratch"));
 
-        JsonObject result = await RunAsync(
-            csProbe.Directory,
-            [
-                "res://Scratch/ScratchThrow.tscn",
-                "res://Scratch/ScratchBootThrow.tscn",
-                "res://Scratch/ScratchUntil.tscn",
-                "res://Scratch/ScratchUntilThrow.tscn",
-            ],
-            new ScratchOptions(Pace: 2, Details: FullDetails),
-            TestContext.Current.CancellationToken
-        );
+        // ScratchUntilThrow's until never holds, so the scenes play on a harness of the test's own whose until guard is 3 s: the
+        // bridge ends that wait at 15 s of game time, 5 times the guard, before the server's release on the 10-minute floor.
+        await using SessionHarness harness = new(launchesUnfocused: false, productionGraces: false, TimeSpan.FromSeconds(3));
+        ScratchTools scratch = new(harness.Sessions, TestCSharp.Unused());
+        string[] played =
+        [
+            "res://Scratch/ScratchThrow.tscn",
+            "res://Scratch/ScratchBootThrow.tscn",
+            "res://Scratch/ScratchUntil.tscn",
+            "res://Scratch/ScratchUntilThrow.tscn",
+        ];
+        ScratchOptions options = new(Pace: 2, Details: FullDetails);
+        JsonObject result = JsonNode
+            .Parse(await scratch.RunScratchesAsync(csProbe.Directory, played, options, TestContext.Current.CancellationToken))!
+            .AsObject();
 
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.Equal(4, scenes.Count);
-        AssertCSharpUntils(scenes[2]!, scenes[3]!);
+        AssertCSharpUntils(scenes[2]!, scenes[3]!, harness.Sessions.ScratchUntilGuard);
         Assert.Null(scenes[0]!["details"]![0]!["until"]);
         JsonNode step = scenes[0]!;
         JsonNode stepFailedAt = step["failedAt"]!;
@@ -218,15 +225,16 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Equal(0, boot["steps"]!["played"]!.GetValue<int>());
     }
 
-    // ScratchUntil's signal until, a 0.3 s timer, ends its step inside the 2 s pace of game time the run gives every scene: a
+    // ScratchUntil's signal until, a 0.3 s timer, ends its step inside its guard: a
     // headless frame's delta is its real frame time, and the C# helper loads in the first frame. ScratchUntilThrow's PlayStep throws
-    // inside its until's wait, which reads as its feed entry's message, file and line, and stops the scene before its second step.
-    private static void AssertCSharpUntils(JsonNode until, JsonNode thrown)
+    // inside its until's wait, so its until never holds and the wait ends at the game-time limit; the step reads as its feed
+    // entry's message, file and line, and stops the scene before its second step.
+    private static void AssertCSharpUntils(JsonNode until, JsonNode thrown, TimeSpan guard)
     {
         Assert.True(until["verdict"]!.GetValue<string>() == "green", until.ToJsonString());
         JsonNode waited = Assert.Single(until["details"]!.AsArray())!;
         Assert.Equal("ended", Status(waited));
-        AssertUntilMetInGameTime(waited, 2000);
+        AssertUntilMetInGameTime(waited, (int)guard.TotalMilliseconds);
 
         Assert.Equal("red", thrown["verdict"]!.GetValue<string>());
         Assert.Equal((1, 2), (thrown["steps"]!["played"]!.GetValue<int>(), thrown["steps"]!["total"]!.GetValue<int>()));

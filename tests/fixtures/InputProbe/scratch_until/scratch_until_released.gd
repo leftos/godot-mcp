@@ -1,8 +1,8 @@
 extends "res://scratch/scratch_probe.gd"
 ## Two steps: the first's until is an expression on the root's released property, which a frame
 ## sets once the release file a test writes in the project's .godot folder exists, so the scene
-## holds that step, and its scratch session stays live, until the test releases it; the step's
-## pace in godot-mcp.json is only its cap. The second only leaves a note.
+## holds that step, and its scratch session stays live, until the test releases it, within the
+## until's hang guard. The second only leaves a note.
 
 const RELEASE := "res://.godot/scratch_released.marker"
 

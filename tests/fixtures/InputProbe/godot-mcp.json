@@ -9,7 +9,10 @@
         "reason": "its first step only leaves a note",
         "exitHold": 3,
         "steps": {
-          "arm": { "seconds": 30, "reason": "its until holds at once; the pace is only its limit" }
+          "arm": {
+            "seconds": 30,
+            "reason": "its until holds at once; the pace is only the step's default wait (the scene's exit hold is 3 s), the until's bound is its guard"
+          }
         }
       },
       "ScratchLateError": 2,
@@ -38,14 +41,22 @@
       },
       "ScratchUntilNever": 1,
       "ScratchUntilRaises": 2,
+      "ScratchUntilReadRaises": 0.1,
       "ScratchUntilReleased": {
         "seconds": 0.5,
         "reason": "its last step only leaves a note",
         "steps": {
-          "hold": { "seconds": 120, "reason": "its until holds once the test writes the release file; the pace is only its cap" }
+          "hold": {
+            "seconds": 120,
+            "reason": "its until holds once the test writes the release file; its pace is only the default wait, its bound the guard"
+          }
         }
       },
-      "ScratchUntilSignal": 2
+      "ScratchUntilSignal": 2,
+      "ScratchUntilSlow": {
+        "seconds": 0.1,
+        "reason": "its until holds a second of game time after the step starts; the pace is only its default wait and exit hold"
+      }
     },
     "expectFor": {
       "ScratchExitHold": [{ "pattern": "^inside the exit hold$", "reason": "its timer prints it inside the exit hold" }]

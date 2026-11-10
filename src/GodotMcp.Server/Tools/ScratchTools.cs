@@ -80,8 +80,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "(GetStepCount, GetStepName(i), then per step "
             + "PlayStep(i), a wait of the pace in game time, GetStatus). A root that also has a public GetStepUntil(i) gives each step a "
             + "wait_for condition (an empty dictionary, or null, for a paced step): such a step is played inside one wait_for on it, "
-            + "PlayStep(i) as the wait's options.call, until the condition holds or its pace has passed in game time; a condition not "
-            + "met in that time, or refused, is red and stops the scene, even with options.keepGoing; the step's details carry until "
+            + "PlayStep(i) as the wait's options.call, until the condition holds; a condition that has not held after 15 s of "
+            + "load-adjusted time fails the step: such a step, or one whose condition is refused, is red and stops the scene, even "
+            + "with options.keepGoing; the step's details carry until "
             + "{met, gameMs, elapsedMs, frames} in place of gameMs. A scene stops at its first failed step unless "
             + "options.keepGoing; options.steps [3, \"name\", \"2-5\"] (or a lone token, \"2-5\") plays only those steps, by index, "
             + "name or inclusive range, in ascending order, and never runs the others beyond the setup steps its profile's "
@@ -1368,9 +1369,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time every step plays before the next, above 0 and at most 120, its scratch.pace steps entries "
-            + "included; else the profile's scratch.pace for the step, else for the scene, else 0.5. For a step whose scene gives a "
-            + "GetStepUntil condition, the pace is the most load-adjusted time, at the scene's time scale, the step waits for its "
-            + "condition to hold."
+            + "included; else the profile's scratch.pace for the step, else for the scene, else 0.5. A step whose scene gives a "
+            + "GetStepUntil condition ignores its pace: it waits for its condition, and fails as hung once 15 s of load-adjusted time "
+            + "pass without it."
     )]
         double? Pace = null,
     [property: Description(

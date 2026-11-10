@@ -644,7 +644,7 @@ internal static class ScratchCommand
         /// </summary>
         private JsonElement BatchSteps()
         {
-            JsonObject steps = new();
+            JsonObject steps = [];
             foreach ((string scene, List<string> tokens) in Batches)
             {
                 if (!steps.ContainsKey(scene))

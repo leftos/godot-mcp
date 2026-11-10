@@ -98,9 +98,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// The least each bound a scratch scene's walk holds its game to is given: its call timeouts, its marker waits, its pace
     /// waits' release and the ceiling its paces give, each its own value unless set, as the itest harness sets it to a hang
     /// guard in minutes, since the gate starts Godot at BelowNormal and the harness's listener clock is wall time. A ceiling
-    /// the call or the profile gives is the caller's and is never floored.
+    /// the call or the profile gives is the caller's and is never floored. An until's hang guard is
+    /// <see cref="ScratchUntilGuard"/> and is never floored, though the server's release of an until wait is.
     /// </summary>
     internal TimeSpan ScratchBoundFloor { get; init; } = TimeSpan.Zero;
+
+    /// <summary>
+    /// The hang guard of a scratch step's until, in load-adjusted time: the wait ends when its condition holds, and only a
+    /// condition that never holds reaches the guard. <see cref="ScratchRun.UntilHangGuard"/> unless set; it is its own value, never
+    /// floored by <see cref="ScratchBoundFloor"/>, and a ceiling the walk derives counts an until step at it.
+    /// </summary>
+    internal TimeSpan ScratchUntilGuard { get; init; } = ScratchRun.UntilHangGuard;
 
     /// <summary>
     /// Whether a launch whose Godot exited with <see cref="GodotSession.BootCrashExitCode"/> before its bridge connected is

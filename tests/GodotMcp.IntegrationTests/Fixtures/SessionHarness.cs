@@ -25,6 +25,9 @@ internal sealed class SessionHarness : IAsyncDisposable
     private readonly CancellationTokenSource _stopRestoring = new();
     private readonly Task _restoring = Task.CompletedTask;
 
+    /// <summary>The hang guard a scratch scene's walk is floored to, and a scratch until's guard unless a test gives one.</summary>
+    private static readonly TimeSpan ScratchHangGuard = TimeSpan.FromMinutes(10);
+
     public SessionHarness()
         : this(launchesUnfocused: false, productionGraces: false) { }
 
@@ -36,7 +39,11 @@ internal sealed class SessionHarness : IAsyncDisposable
     /// Whether a stop keeps the server's own exit and teardown graces, for the tests of the grace kill itself; else each is a
     /// hang guard in minutes.
     /// </param>
-    public SessionHarness(bool launchesUnfocused, bool productionGraces)
+    /// <param name="scratchUntilGuard">
+    /// A scratch until's hang guard (<see cref="SessionRegistry.ScratchUntilGuard"/>), for the tests of an until that never
+    /// holds; null gives the harness's 10 min one.
+    /// </param>
+    public SessionHarness(bool launchesUnfocused, bool productionGraces, TimeSpan? scratchUntilGuard = null)
     {
         _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
         Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
@@ -54,7 +61,13 @@ internal sealed class SessionHarness : IAsyncDisposable
             // derived ceiling of a scene's walk runs on the listener's clock, which is wall time here. A test that needs a
             // scene killed at its ceiling gives the scene one (options.ceilings), which is never floored. It is under the xUnit
             // hang guard of a test that plays a scene (TestTimeouts.OwnLaunchMs).
-            ScratchBoundFloor = TimeSpan.FromMinutes(10),
+            ScratchBoundFloor = ScratchHangGuard,
+            // A hang guard in minutes, not a bound a starved scratch game's until must beat. The floor above floors only the
+            // server's release of an until's wait, never the guard, so the bridge's game-time limit stays 5 times the guard in
+            // game time. A test of an until that never holds gives a guard of seconds: the bridge then ends the wait in game
+            // time while the server's release waits on the floor. It is under the xUnit hang guard of a test that plays a scene
+            // (TestTimeouts.OwnLaunchMs).
+            ScratchUntilGuard = scratchUntilGuard ?? ScratchHangGuard,
             // One retry of a launch whose Godot crashed at boot with 0xC06D007F inside the GPU driver's OpenGL start-up, before
             // the bridge connected, seen on two machines and gone on rerun; any other early exit fails the launch.
             RetryBootCrashOnce = true,

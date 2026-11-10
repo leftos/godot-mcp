@@ -888,26 +888,29 @@ public sealed class ScratchVerdictTests
 
     [Fact]
     public void TheCeilingBudgetsEachStepThePaceAfterAndTheMarkers() =>
-        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling([0.5, 0.5, 0.5], 1, null));
+        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling([0.5, 0.5, 0.5], [false, false, false], TimeSpan.Zero, 1, null));
 
     [Fact]
     public void TheCeilingSumsEachStepsOwnPaceAndWaitsTheLastStepsPaceAfter()
     {
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 30 + 10), ScratchRun.Ceiling([0.5, 30], 1, null));
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 10.5 + 0.5 + 10), ScratchRun.Ceiling([0.5, 30, 0.5], 1, null));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 30 + 10), ScratchRun.Ceiling([0.5, 30], [false, false], TimeSpan.Zero, 1, null));
+        Assert.Equal(
+            TimeSpan.FromSeconds(10.5 + 40 + 10.5 + 0.5 + 10),
+            ScratchRun.Ceiling([0.5, 30, 0.5], [false, false, false], TimeSpan.Zero, 1, null)
+        );
     }
 
     [Fact]
     public void AtATimeScaleTheCeilingDividesTheStepPacesButNotThePaceAfter() =>
-        Assert.Equal(TimeSpan.FromSeconds(72), ScratchRun.Ceiling([8, 32], 4, null));
+        Assert.Equal(TimeSpan.FromSeconds(72), ScratchRun.Ceiling([8, 32], [false, false], TimeSpan.Zero, 4, null));
 
     [Fact]
     public void TheCeilingCountsAnExitHoldInPlaceOfTheLastStepsPaceAfterAtEachTimeScale()
     {
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 2 + 10), ScratchRun.Ceiling([0.5, 30], 1, 2));
-        Assert.Equal(TimeSpan.FromSeconds(12 + 18 + 2 + 10), ScratchRun.Ceiling([8, 32], 4, 2));
-        Assert.Equal(TimeSpan.FromSeconds(14 + 2 + 10), ScratchRun.Ceiling([2], 0.5, 1));
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 5 + 10), ScratchRun.Ceiling([0.5], 1, 5));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 2 + 10), ScratchRun.Ceiling([0.5, 30], [false, false], TimeSpan.Zero, 1, 2));
+        Assert.Equal(TimeSpan.FromSeconds(12 + 18 + 2 + 10), ScratchRun.Ceiling([8, 32], [false, false], TimeSpan.Zero, 4, 2));
+        Assert.Equal(TimeSpan.FromSeconds(14 + 2 + 10), ScratchRun.Ceiling([2], [false], TimeSpan.Zero, 0.5, 1));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 5 + 10), ScratchRun.Ceiling([0.5], [false], TimeSpan.Zero, 1, 5));
     }
 
     [Fact]

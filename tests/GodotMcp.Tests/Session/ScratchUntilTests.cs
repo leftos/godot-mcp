@@ -12,7 +12,9 @@ namespace GodotMcp.Tests.Session;
 public sealed class ScratchUntilTests
 {
     private const string Root = "/root/ScratchScene";
-    private static readonly ScratchRun.UntilPlay Play = new(Root, Screenshot: false);
+    private static readonly ScratchRun.UntilPlay Play = new(Root, Screenshot: false, ScratchRun.UntilHangGuard, TimeScale: 1);
+    private static readonly double GuardSeconds = ScratchRun.UntilHangGuard.TotalSeconds;
+    private static readonly int GuardMs = (int)ScratchRun.UntilHangGuard.TotalMilliseconds;
 
     [Theory]
     [InlineData("true", true)]
@@ -46,7 +48,7 @@ public sealed class ScratchUntilTests
     }
 
     [Fact]
-    public void AConditionIsSentAsOneWaitWithThePaceAsItsTimeoutAndGameLimitAndPlayStepAsItsCall()
+    public void AConditionIsSentAsOneWaitWithThePaceAsItsTimeoutFiveTimesTheGuardAsItsGameLimitAndPlayStepAsItsCall()
     {
         (JsonObject? wait, string? error) = ScratchRun.UntilWait(
             JsonNode.Parse("{\"node\": \"Dice\", \"signal\": \"Settled\"}"),
@@ -60,7 +62,7 @@ public sealed class ScratchUntilTests
         Assert.Equal("signal", wait!["kind"]!.GetValue<string>());
         Assert.Equal(("Dice", "Settled"), (wait["node"]!.GetValue<string>(), wait["signal"]!.GetValue<string>()));
         Assert.Equal(5000, wait["timeoutMs"]!.GetValue<int>());
-        Assert.Equal(5000 * LoadClock.BackstopFactor, wait["limitGameMs"]!.GetValue<int>());
+        Assert.Equal(GuardMs * LoadClock.BackstopFactor, wait["limitGameMs"]!.GetValue<int>());
         Assert.Equal("{\"node\":\"/root/ScratchScene\",\"method\":\"PlayStep\",\"args\":[2]}", wait["call"]!.ToJsonString());
     }
 
@@ -69,7 +71,13 @@ public sealed class ScratchUntilTests
     {
         JsonNode condition = JsonNode.Parse("{\"node\": \"Dice\", \"signal\": \"Settled\"}")!;
 
-        (JsonObject? captured, _) = ScratchRun.UntilWait(condition, 2, "roll", 5000, new ScratchRun.UntilPlay(Root, Screenshot: true));
+        (JsonObject? captured, _) = ScratchRun.UntilWait(
+            condition,
+            2,
+            "roll",
+            5000,
+            new ScratchRun.UntilPlay(Root, Screenshot: true, ScratchRun.UntilHangGuard, TimeScale: 1)
+        );
         (JsonObject? plain, _) = ScratchRun.UntilWait(condition, 2, "roll", 5000, Play);
 
         Assert.True(captured!["screenshot"]!.GetValue<bool>());
@@ -93,55 +101,90 @@ public sealed class ScratchUntilTests
         Assert.StartsWith("step 1 'roll': its until was refused: " + refusal, error, StringComparison.Ordinal);
     }
 
+    // The server's release is the guard, floored by the registry's floor as the harness floors it to 10 minutes; the guard
+    // itself, and so the bridge's game-time limit, never is.
     [Fact]
-    public void AnUntilNotMetSaysWhichStepItsPaceAndWhatToDo()
+    public void AnUntilsReleaseIsItsHangGuardNotItsPaceFlooredOnlyOnTheServer()
     {
-        Assert.Equal(
-            "step 0 'wait': its until was not met within its pace of 0.25 s of load-adjusted time; give it a longer scratch.pace, or "
-                + "check the condition GetStepUntil gives",
-            ScratchRun.UntilNotMet(0, "wait", 0.25, 1, 0.25)
+        Assert.Equal(ScratchRun.UntilHangGuard, new ScratchBounds(TimeSpan.Zero, ScratchRun.UntilHangGuard).UntilRelease);
+        Assert.Equal(TimeSpan.FromMinutes(10), new ScratchBounds(TimeSpan.FromMinutes(10), ScratchRun.UntilHangGuard).UntilRelease);
+        Assert.Equal(ScratchRun.UntilHangGuard, new ScratchBounds(TimeSpan.FromMinutes(10), ScratchRun.UntilHangGuard).UntilGuard);
+    }
+
+    // The bridge's game-time limit is a backstop behind the load-adjusted release: 5 times the guard in game time at the scene's
+    // time scale, so neither a loaded machine nor a time scale above 1 reaches it first. 15 s is the server's guard; 3 s the
+    // never-met itests' harness guard.
+    [Theory]
+    [InlineData(15, 1, 75000)]
+    [InlineData(15, 10, 750000)]
+    [InlineData(15, 0.5, 37500)]
+    [InlineData(3, 1, 15000)]
+    public void AnUntilsGameLimitIsFiveTimesItsGuardInGameTimeAtTheScenesTimeScale(double guardSeconds, double timeScale, int limitGameMs)
+    {
+        (JsonObject? wait, string? error) = ScratchRun.UntilWait(
+            JsonNode.Parse("{\"node\": \"Dice\", \"signal\": \"Settled\"}"),
+            0,
+            "roll",
+            500,
+            new ScratchRun.UntilPlay(Root, Screenshot: false, TimeSpan.FromSeconds(guardSeconds), timeScale)
         );
-        Assert.Equal(
-            "step 0 'wait': its until was not met within its pace of 1 s, 0.5 s of load-adjusted time at time scale 2; give it a "
-                + "longer scratch.pace, or check the condition GetStepUntil gives",
-            ScratchRun.UntilNotMet(0, "wait", 1, 2, 0.5)
-        );
+
+        Assert.Null(error);
+        Assert.Equal(limitGameMs, wait!["limitGameMs"]!.GetValue<int>());
+        Assert.Equal(500, wait["timeoutMs"]!.GetValue<int>());
     }
 
     [Fact]
-    public void AnUnmetUntilEndedByItsReleaseWithGameTimePastItsPaceIsNotMet() =>
+    public void TheServersUntilGuardIsFifteenSeconds() => Assert.Equal(TimeSpan.FromSeconds(15), ScratchRun.UntilHangGuard);
+
+    [Fact]
+    public void AnUntilThatHungSaysWhichStepItsGuardAndWhatToDo() =>
         Assert.Equal(
-            ScratchRun.UntilNotMet(0, "wait", 0.5, 1, 0.5),
-            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 500, 510, 30), 0.5, 1, 0.5)
+            "step 0 'wait': its until hung at its guard of 20 s of load-adjusted time (its condition never held); check the condition "
+                + "GetStepUntil gives",
+            ScratchRun.UntilNotMet(0, "wait", 20)
         );
 
     [Fact]
-    public void AnUnmetUntilEndedByItsReleaseWithGameTimeBetweenHalfThePaceAndThePaceIsNotMet() =>
+    public void AnUnmetUntilEndedByItsGuardWithGameTimePastItsPaceHungAtItsGuard() =>
         Assert.Equal(
-            ScratchRun.UntilNotMet(0, "wait", 0.5, 1, 0.5),
-            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 300, 1010, 60), 0.5, 1, 0.5)
+            ScratchRun.UntilNotMet(0, "wait", GuardSeconds),
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, GuardMs, GuardMs + 10, 60), GuardSeconds, 1)
         );
+
+    [Fact]
+    public void AnUnmetUntilWithGameTimeAtHalfItsGuardHungAtItsGuard() =>
+        Assert.Equal(
+            ScratchRun.UntilNotMet(0, "wait", GuardSeconds),
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 7500, 15010, 900), GuardSeconds, 1)
+        );
+
+    [Fact]
+    public void AnUnmetUntilWithGameTimeJustUnderHalfItsGuardIsTheStoodStillText() =>
+        Assert.Equal(
+            "step 0 'wait': its until was not met within 15 s: the game's clock stood still (is it paused?)",
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 7499, 15010, 900), GuardSeconds, 1)
+        );
+
+    // The pace is a step's default wait, not its until's bound: a step paced 120 s whose until ran its 15 s guard in game time
+    // hung, however short of its pace the game time is.
+    [Fact]
+    public void AnUnmetUntilWithAPaceLongerThanItsGuardHungAtItsGuard() =>
+        Assert.Equal(
+            "step 0 'wait': its until hung at its guard of 15 s of load-adjusted time (its condition never held); check the condition "
+                + "GetStepUntil gives",
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 15000, 15010, 900), 15, 1)
+        );
+
+    [Fact]
+    public void AnUnmetUntilThatRanPastHalfTheHarnessGuardHungAtThatGuard() =>
+        Assert.Equal(ScratchRun.UntilNotMet(0, "wait", 3), ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 15000, 15010, 900), 3, 1));
 
     [Fact]
     public void AnUnmetUntilWhoseGamesClockStoodStillIsTheStoodStillText() =>
         Assert.Equal(
             "step 0 'wait': its until was not met within 10.5 s: the game's clock stood still (is it paused?)",
-            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 16, 10520, 600), 0.5, 1, 10.5)
-        );
-
-    [Fact]
-    public void AnUnmetUntilEndedByItsGameTimeBackstopIsNotMet() =>
-        Assert.Equal(
-            ScratchRun.UntilNotMet(0, "wait", 0.5, 1, 0.5),
-            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 2500, 2600, 150), 0.5, 1, 0.5)
-        );
-
-    [Fact]
-    public void AnUnmetUntilAtTimeScaleTwoSaysItsReleaseSecondsAndTheTimeScale() =>
-        Assert.Equal(
-            "step 0 'wait': its until was not met within its pace of 1 s, 0.5 s of load-adjusted time at time scale 2; give it a "
-                + "longer scratch.pace, or check the condition GetStepUntil gives",
-            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 600, 1010, 60), 1, 2, 0.5)
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 16, 10520, 600), 10.5, 1)
         );
 
     [Fact]
@@ -238,7 +281,7 @@ public sealed class ScratchUntilTests
     {
         ScratchStep step = new(0, "wait", 1000)
         {
-            CallError = ScratchRun.UntilNotMet(0, "wait", 1, 1, 1),
+            CallError = ScratchRun.UntilNotMet(0, "wait", GuardSeconds),
             Until = new ScratchUntil(false, 1000, 1004, 60),
         };
 
@@ -308,7 +351,7 @@ public sealed class ScratchUntilTests
     {
         ErrorEntry raised = Entry(ErrorFeed.ErrorType, "scratch until step threw");
         ScratchUntil unmet = new(false, 2000, 2004, 60);
-        string notMet = ScratchRun.UntilMissed(0, "throws", unmet, 2, 1, 2);
+        string notMet = ScratchRun.UntilMissed(0, "throws", unmet, GuardSeconds, 1);
 
         (string? error, ErrorEntry? entry) = ScratchRun.UnmetFailure(unmet, notMet, [raised]);
 
