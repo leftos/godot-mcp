@@ -21,6 +21,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - The prep takes a Debug assembly Godot's own build just wrote as up to date instead of building it again.
 - `validate` lists a `.cs` target's Compile items through the `prepWrapper`, whose new `{slot}` token is `light` for that listing.
 - Two games stopped together, a stop, or the server's exit no longer hang when the games' exits are seen at once.
+- A `run_scratches` scene whose C# game crashes at quit in .NET's finalizer after its last step is judged by its steps, with a warning.
 
 ## 0.38.0 - 2026-11-10
 

@@ -564,10 +564,16 @@ internal static partial class ScratchVerdict
         };
     }
 
-    /// <summary>The scene's own warnings, then each step's in the order played; null when there are none.</summary>
+    /// <summary>The scene's own warnings and its late finalizer crash, then each step's in the order played; null when there are none.</summary>
     private static List<string>? SceneWarnings(ScratchObservation seen)
     {
-        List<string> warnings = [.. seen.Warnings, .. seen.Steps.Select(step => step.Warning).OfType<string>()];
+        List<string> warnings = [.. seen.Warnings];
+        if (LateFinalizerCrash(seen))
+        {
+            warnings.Add(FinalizerCrashWarning(seen.ExitCode!.Value));
+        }
+
+        warnings.AddRange(seen.Steps.Select(step => step.Warning).OfType<string>());
         return warnings.Count > 0 ? warnings : null;
     }
 
@@ -800,15 +806,36 @@ internal static partial class ScratchVerdict
     /// <summary>Whether options.steps selected fewer than all of the scene's steps.</summary>
     private static bool PlayedInPart(ScratchObservation seen) => seen.Selected is { } selected && selected.Count < seen.Total;
 
+    /// <summary>The Windows exit code of an access violation in .NET's finalizer thread at quit: 0xC0000005.</summary>
+    internal const int FinalizerAccessViolation = unchecked((int)0xC0000005);
+
+    /// <summary>The Windows exit code of an illegal instruction in .NET's finalizer thread at quit: 0xC000001D.</summary>
+    internal const int FinalizerIllegalInstruction = unchecked((int)0xC000001D);
+
+    /// <summary>
+    /// Whether the game's exit was the .NET finalizer race Godot 4.7.2 has at quit after the scene's work was known done: the wait
+    /// after the last step ended clean with both pace-end markers seen, the stop did not kill the game, and the code is one of the
+    /// race's. Every other non-zero code stays a failure, and so does a crash with no marker that proves the work finished.
+    /// </summary>
+    internal static bool LateFinalizerCrash(ScratchObservation seen) =>
+        seen.AfterError is null && seen.StopKillReason is null && seen.ExitCode is FinalizerAccessViolation or FinalizerIllegalInstruction;
+
+    /// <summary>The scene's warning for a tolerated late finalizer crash: the code in hex, the engine race, and who judges the scene.</summary>
+    internal static string FinalizerCrashWarning(int code) =>
+        "the game crashed at quit after its last step with exit 0x"
+        + ((uint)code).ToString("X8", CultureInfo.InvariantCulture)
+        + ", the .NET finalizer race Godot 4.7.2 has at quit (it frees the C# bindings while .NET's finalizer thread runs on); "
+        + "the scene is judged by its steps";
+
     /// <summary>
     /// Whether the exit turns a scene with every step green red: an error in the pace after the last step (except the game closing
-    /// the connection and exiting 0), a kill by the stop, a non-zero code, a leak, a matching line after the steps, or an expected
-    /// line its output never held.
+    /// the connection and exiting 0), a kill by the stop, a non-zero code other than a late .NET finalizer crash, a leak, a matching
+    /// line after the steps, or an expected line its output never held.
     /// </summary>
     private static bool ExitFails(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns, List<string>? missing) =>
         (seen.AfterError is not null && !ClosedCleanly(seen))
         || seen.StopKillReason is not null
-        || seen.ExitCode is not (null or 0)
+        || (seen.ExitCode is not (null or 0) && !LateFinalizerCrash(seen))
         || Leaked(seen.ExitLines) is not null
         || seen.ExitLines.Any(line => Matches(line, patterns))
         || missing is not null;

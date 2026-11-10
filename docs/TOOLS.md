@@ -791,6 +791,8 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   An error or a failed wait in the pace (or `exitHold`) after the last step, or a stop that had to kill the game, turns an otherwise green scene red, with the reason in `exit`. The exception is a game that closes the bridge connection during that wait and exits with code 0: that is a clean exit, so the scene stays green with `exit.code` 0 and no `exit.error`. The same close with a non-zero or missing exit code, a feed error in that wait, and a close during a step stay red.
 
+  A game that crashes at quit with exit 0xC0000005 or 0xC000001D after both pace-end markers were seen, and which the stop did not kill, is judged by its steps: the scene is green, or red for its own step, leak, pattern or missing-line failures, with a `warnings` entry naming the code and the .NET finalizer race Godot 4.7.2 has at quit. `exit.code` keeps the crash code and `exit.error` stays null. Every other non-zero code, a missing marker, a kill by the stop, and a connection the game closed in the wait with a crash code stay red; the prep import and the cold headless runs are judged as before.
+
   A pattern that takes over 1 s on a line fails that step naming the pattern. A project with `application/run/flush_stdout_on_print.debug` off buffers stdout, so the markers never arrive: the error says so. `--scratch-auto` is refused in any user arguments: the server walks the steps. It cannot run inside `batch_drive`.
 
 ### `scratch_status`

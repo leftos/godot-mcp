@@ -350,6 +350,105 @@ public sealed class ScratchVerdictTests
         );
     }
 
+    [Theory]
+    [InlineData(unchecked((int)0xC0000005), "C0000005")]
+    [InlineData(unchecked((int)0xC000001D), "C000001D")]
+    public void AFinalizerCrashAtQuitAfterTheLastStepLeavesTheSceneGreenWithAWarning(int code, string hex)
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0), Step(1)) with { ExitCode = code }, Plain);
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Equal(code, result.Exit.Code);
+        Assert.Null(result.Exit.Error);
+        Assert.Equal([FinalizerCrashWarning(hex)], result.Warnings);
+    }
+
+    [Fact]
+    public void TheFinalizerCrashWarningSaysWhatCrashedAndThatTheStepsJudgeTheScene() =>
+        Assert.Equal(
+            "the game crashed at quit after its last step with exit 0xC0000005, the .NET finalizer race Godot 4.7.2 has at quit "
+                + "(it frees the C# bindings while .NET's finalizer thread runs on); the scene is judged by its steps",
+            ScratchVerdict.Judge(Seen(Step(0)) with { ExitCode = unchecked((int)0xC0000005) }, Plain).Warnings![0]
+        );
+
+    [Fact]
+    public void AnotherCrashCodeAtQuitTurnsAGreenSceneRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0), Step(1)) with { ExitCode = unchecked((int)0xC0000409) }, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+    }
+
+    [Fact]
+    public void AFinalizerCrashWithNoPaceEndMarkerStaysRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0), Step(1)) with
+            {
+                AfterError = "the pace end marker never came",
+                ExitCode = unchecked((int)0xC0000005),
+            },
+            Plain
+        );
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+    }
+
+    [Fact]
+    public void AFinalizerCrashAfterTheStopKilledTheGameStaysRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0), Step(1)) with
+            {
+                ExitCode = unchecked((int)0xC0000005),
+                StopKillReason = "killed",
+            },
+            Plain
+        );
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+    }
+
+    [Fact]
+    public void AClosedConnectionInTheHoldWithAFinalizerCrashCodeStaysRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Closed(exitCode: unchecked((int)0xC0000005)), Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+    }
+
+    [Fact]
+    public void AFinalizerCrashAtQuitLeavesAFailingStepRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0) with { CallError = "gone" }, Step(1)) with
+            {
+                ExitCode = unchecked((int)0xC0000005),
+            },
+            Plain
+        );
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(0, result.FailedAt!.Index);
+    }
+
+    [Fact]
+    public void AFinalizerCrashAtQuitLeavesALeakRedAndKeepsTheWarning()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0), Step(1)) with
+            {
+                ExitCode = unchecked((int)0xC0000005),
+                ExitLines = ["WARNING: 1 ObjectDB instance was leaked at exit"],
+            },
+            Plain
+        );
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal("1 ObjectDB instance", result.Exit.Leaked);
+        Assert.Equal([FinalizerCrashWarning("C0000005")], result.Warnings);
+    }
+
     [Fact]
     public void AKilledSceneFailsTheRun()
     {
@@ -2403,6 +2502,11 @@ public sealed class ScratchVerdictTests
         new("Scene", "probe.scratch-Scene", 0.5, steps.Length) { Steps = steps, ExitCode = 0 };
 
     private const string ClosedError = "wait_for 3000 game ms failed: The bridge closed the connection.";
+
+    /// <summary>The scene warning a tolerated late finalizer crash carries, with the exit code in the hex digits given.</summary>
+    private static string FinalizerCrashWarning(string hex) =>
+        $"the game crashed at quit after its last step with exit 0x{hex}, the .NET finalizer race Godot 4.7.2 has at quit "
+        + "(it frees the C# bindings while .NET's finalizer thread runs on); the scene is judged by its steps";
 
     /// <summary>A scene whose every step is green and whose game closed the connection in the wait after its last step.</summary>
     private static ScratchObservation Closed(int? exitCode) =>
