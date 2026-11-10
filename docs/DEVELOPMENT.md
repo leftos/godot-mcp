@@ -541,7 +541,9 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   `ClassDB` builds a class's defaults from a parentless instance (`class_db.cpp` L2184-2196), so every Control subclass has a `layout_mode` default of 3 (uncontrolled, `control.cpp` L978-982), while `Control` itself registers 0 (L4911-4912); a `ColorRect` under a Control in position mode reads 0 and `pack` stores `layout_mode = 0`, which the editor writes too and which loads identically.
 
-  So `SceneEdit.keep_source_set` drops, after the native-value rewrite, each pair the source's record did not store whose value equals what the source node reads (instantiating the source again, so its scripts' `_init` runs once more), then instantiates the result and, for each node where a dropped property would load differently, keeps Godot's pack form of that node alone with a `warning` naming its path and the values (`<path>.<prop> would load as <v>, not <v>`); only a trimmed scene that cannot be instantiated keeps the pack form of the whole scene. Object values are never dropped: a dropped one would stay among the packed variants and still be written.
+  So `SceneEdit.keep_source_set` drops, after the native-value rewrite, each pair the source's record did not store whose value equals what the source node reads (instantiating the source again, so its scripts' `_init` runs once more).
+
+  It then instantiates the result and, for each node where a dropped property would load differently, keeps Godot's pack form of that node alone with a `warning` naming its path and the values (`<path>.<prop> would load as <v>, not <v>`). Only a trimmed scene that cannot be instantiated keeps the pack form of the whole scene. Object values are never dropped: a dropped one would stay among the packed variants and still be written.
 
   The put-back of a line the source stored that the pack drops reverts the same way, per node, with the restore warning (`<scene>: left out lines the source stored for <paths> that Godot's pack drops, since keeping them would change how they load: <reasons>`); a node that kept the pack form gets no restored lines.
 

@@ -121,7 +121,11 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   An edited node's header keeps its `unique_id` as it was (none in a scene that has none); only an added node gets one. The tool description says what a node that cannot be kept costs: "a node whose lines cannot be left out without changing how it loads is saved in Godot's pack form, and the warning names it".
 
-  An in-place `save_scene` writes the full form: use it to bring a file to 4.7's form on purpose; a `save_scene` save-as splices against the source like an edit. No save adds a property line the source did not store for a node when the node loads the same without it (Godot's own pack writes `layout_mode = 0` on a Control subclass in position mode); when leaving such a line out would change the loaded scene, the save keeps Godot's pack form of that node alone, and the result's `warning` names it: `<scene>: kept Godot's pack form for <paths>, since leaving out lines the source did not store would change how they load: <path>.<prop> would load as <v>, not <v>; …`.
+  An in-place `save_scene` writes the full form: use it to bring a file to 4.7's form on purpose; a `save_scene` save-as splices against the source like an edit.
+
+  No save adds a property line the source did not store for a node when the node loads the same without it (Godot's own pack writes `layout_mode = 0` on a Control subclass in position mode).
+
+  When leaving such a line out would change the loaded scene, the save keeps Godot's pack form of that node alone, and the result's `warning` names it: `<scene>: kept Godot's pack form for <paths>, since leaving out lines the source did not store would change how they load: <path>.<prop> would load as <v>, not <v>; …`.
 
   Every other node keeps its source text; only a trimmed scene that cannot be loaded at all keeps the pack form throughout, and the warning then names every path.
 
@@ -1719,7 +1723,9 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 - **Use:** `options {parent, properties, position}`: parent path from the root (default `.`), `{name: value}` set once the node is under its parent (a name may be a `:` path, as `set_node_properties` takes it), as the editor sets them (so a Control's `layout_mode` takes 0 or 1 under a Control, is 2 under a Container and 3 with no Control parent; `anchors_preset` and a non-zero `anchor_*` need `layout_mode` 1, which is applied first), and a position among its new siblings as `move_node` takes it (default last; in 2D, sibling order is draw order). An instance of a format no loader reads ends with the no-loader hint.
 
   A script path (`res://Foo.cs`, `res://foo.gd`, no `class_name` or `[GlobalClass]` needed) makes a node of the script's base class with the script attached; `type` is that base class and `script` the path.
-- **Edges:** a sibling name clash, a parent inside an instanced scene (an instance's own root may be the parent), and a scene instancing itself are refused; a property that does not take adds nothing. Under a `TabContainer`, a `position` (as `move_node`'s and `duplicate_node`'s) moves the page with its title, icon and disabled state; `options.properties` refuses `metadata/_tab_index` (see `set_node_properties`). A script that does not compile or does not extend a Node class is refused, and a `.cs` script while the project's C# build fails, as `attach_script` refuses it.
+- **Edges:** a sibling name clash, a parent inside an instanced scene (an instance's own root may be the parent), and a scene instancing itself are refused; a property that does not take adds nothing. Under a `TabContainer`, a `position` (as `move_node`'s and `duplicate_node`'s) moves the page with its title, icon and disabled state; `options.properties` refuses `metadata/_tab_index` (see `set_node_properties`).
+
+A script that does not compile or does not extend a Node class is refused, and a `.cs` script while the project's C# build fails, as `attach_script` refuses it.
 
 ### `delete_nodes`
 
