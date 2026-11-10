@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
 using ModelContextProtocol.Protocol;
@@ -20,6 +22,17 @@ public sealed class ScratchLookRunTests : ScratchRunBase
 
     /// <summary>The eight bytes every PNG file starts with.</summary>
     private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    /// <summary>The scratch_shot fixture files the shot condition tests copy into the probe.</summary>
+    private static readonly string[] ShotFixtures =
+    [
+        "scratch_shot_paced.gd",
+        "scratch_shot_until.gd",
+        "scratch_shot_never.gd",
+        "ScratchShotPaced.tscn",
+        "ScratchShotUntil.tscn",
+        "ScratchShotNever.tscn",
+    ];
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AWatchArmedBeforeTheFirstStepSeesTheNoteBeforeItAndEveryStepsNote()
@@ -150,6 +163,75 @@ public sealed class ScratchLookRunTests : ScratchRunBase
             Assert.True(png.Length > PngSignature.Length, $"{shot} holds {png.Length} bytes");
             Assert.Equal(PngSignature, png[..PngSignature.Length]);
         }
+    }
+
+    // ScratchShotPaced's first paced step turns a full-screen rect red, holds it 0.5 s of game time and turns it blue again, inside
+    // its 2 s pace, and its second reports the game ms since the first's PlayStep; ScratchShotUntil is the same steps with a
+    // GetStepShotUntil condition on the red state. The second step's figure, at least the pace less one frame, shows the rest of
+    // the pace after a met shot condition was waited.
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
+    [InlineData("ScratchShotUntil", new byte[] { 255, 0, 0 })]
+    [InlineData("ScratchShotPaced", new byte[] { 0, 0, 255 })]
+    public async Task APacedStepWithAShotConditionIsShotWhereItHoldsAndOneWithoutAtTheEndOfItsPace(string name, byte[] centre)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CopyShotFixtures();
+
+        JsonObject scene = ScratchRunnerTests.Single(await RunAsync(_probe.Directory, [name], ShotStepZero(), cancellation));
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.Null(scene["warnings"]);
+        JsonArray details = scene["details"]!.AsArray();
+        string shot = StepDetail(details, 0)["screenshot"]!.GetValue<string>();
+        var image = PngImage.Decode(await File.ReadAllBytesAsync(shot, cancellation), shot);
+        int at = ((image.Height / 2 * image.Width) + (image.Width / 2)) * image.Channels;
+        Assert.Equal(centre, image.Pixels[at..(at + 3)]);
+        AssertWaitedTheWholePace(StepDetail(details, 1));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AShotConditionThatNeverHoldsLeavesTheStepUnshotWithAWarningAndWaitsItsWholePace()
+    {
+        CopyShotFixtures();
+
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(_probe.Directory, ["ScratchShotNever"], ShotStepZero(), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        string warning = Assert.Single(scene["warnings"]!.AsArray())!.GetValue<string>();
+        Assert.Equal(ScratchVerdict.ShotFailed(0, "flash", ScratchRun.ShotNotHeld), warning);
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.Null(StepDetail(details, 0)["screenshot"]);
+        AssertWaitedTheWholePace(StepDetail(details, 1));
+    }
+
+    /// <summary>Copies the scratch_shot fixtures into the probe's scratch folder.</summary>
+    private void CopyShotFixtures()
+    {
+        foreach (string file in ShotFixtures)
+        {
+            File.Copy(Path.Combine(RepoPaths.InputProbe, "scratch_shot", file), Path.Combine(_probe.Directory, "scratch", file));
+        }
+    }
+
+    /// <summary>A windowed run that shoots step 0 and lists every step's full detail.</summary>
+    private static ScratchOptions ShotStepZero() =>
+        new(
+            Windowed: true,
+            Capture: new ScratchCaptureOptions(Steps: JsonSerializer.SerializeToElement(new object[] { 0 }), Screenshot: true),
+            Details: ScratchRunnerTests.FullDetails
+        );
+
+    /// <summary>The details entry of the step at <paramref name="index"/>.</summary>
+    private static JsonNode StepDetail(JsonArray details, int index) => details.Single(step => step!["index"]!.GetValue<int>() == index)!;
+
+    /// <summary>Asserts the scratch_shot elapsed step's status is at least the 2000 ms pace less one 16 ms frame.</summary>
+    private static void AssertWaitedTheWholePace(JsonNode elapsed)
+    {
+        string status = ScratchRunnerTests.Status(elapsed);
+        Assert.True(int.TryParse(status, NumberStyles.Integer, CultureInfo.InvariantCulture, out int gameMs), status);
+        Assert.True(gameMs >= 1984, status);
     }
 
     /// <summary>Reads the run's status until <paramref name="holds"/>, failing once the run ends without it.</summary>

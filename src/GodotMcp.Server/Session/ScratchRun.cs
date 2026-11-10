@@ -410,6 +410,12 @@ internal sealed class ScratchRun
     internal const string UntilMethod = "GetStepUntil";
 
     /// <summary>
+    /// The protocol's optional shot method: a root that has it gives a paced step options.capture shoots a wait_for condition
+    /// (null or empty for a shot at the end of its pace), and the runner shoots the frame it first holds within the pace.
+    /// </summary>
+    internal const string ShotUntilMethod = "GetStepShotUntil";
+
+    /// <summary>
     /// The protocol's other optional method: a root that has it answers, per step, whether the step is hidden, which marks the
     /// step in the scene's step list and changes nothing else.
     /// </summary>
@@ -512,6 +518,7 @@ internal sealed class ScratchRun
     private bool _afterClosed;
     private long _feedMark;
     private bool _hasUntil;
+    private bool _hasShotUntil;
     private bool _hasHidden;
     private bool _watching;
     private JsonObject? _watch;
@@ -899,16 +906,12 @@ internal sealed class ScratchRun
 
         if (answer is not JsonObject condition)
         {
-            return (null, $"{UntilMethod}({index}) returned {answer.ToJsonString()}, not a wait_for condition");
+            return (null, NotACondition(UntilMethod, index, answer));
         }
 
         try
         {
-            WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
-            MethodCall call = new(play.RootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
-            WaitOptions options = new(Screenshot: play.Screenshot ? true : null, Call: call);
-            JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, options);
-            wait.Remove(PreviewMaxWidthField);
+            JsonObject wait = PlayStepWait(condition, index, paceMs, play.RootPath, play.Screenshot);
             wait[LimitGameMsField] = GameMs(play.Guard.TotalSeconds * LoadClock.BackstopFactor * play.TimeScale);
             return (wait, null);
         }
@@ -916,6 +919,68 @@ internal sealed class ScratchRun
         {
             return (null, UntilRefused(index, name, e.Message));
         }
+    }
+
+    /// <summary>
+    /// The bridge's wait_for parameters for step <paramref name="index"/>'s GetStepShotUntil answer, for a paced step
+    /// options.capture shoots: its condition checked as wait_for checks one, PlayStep(index) on <paramref name="rootPath"/> its
+    /// call, options.screenshot set so the frame the condition first holds is the step's shot, and the step's pace of
+    /// <paramref name="paceMs"/> game ms both its timeoutMs and its limitGameMs, so the bridge ends the wait unmet once the
+    /// pace has run in game time from PlayStep, as a paced step's wait does. Neither parameters nor a refusal for null or an
+    /// empty dictionary, a step shot at the end of its pace; the refusal, the shot's failure, for any other answer or a
+    /// condition wait_for refuses.
+    /// </summary>
+    internal static (JsonObject? Wait, string? Refusal) ShotUntilWait(JsonNode? answer, int index, int paceMs, string rootPath)
+    {
+        if (answer is null || answer is JsonObject { Count: 0 })
+        {
+            return (null, null);
+        }
+
+        if (answer is not JsonObject condition)
+        {
+            return (null, NotACondition(ShotUntilMethod, index, answer));
+        }
+
+        try
+        {
+            JsonObject wait = PlayStepWait(condition, index, paceMs, rootPath, screenshot: true);
+            wait[LimitGameMsField] = paceMs;
+            return (wait, null);
+        }
+        catch (Exception e) when (e is McpException or JsonException)
+        {
+            return (null, $"{ShotUntilMethod}({index}) was refused: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The game ms still to wait of a paced step's pace of <paramref name="paceMs"/> after its shot condition held: the pace less
+    /// the game time the met wait_for <paramref name="reply"/> ran from PlayStep (its gameMs); 0 when none is left.
+    /// </summary>
+    internal static int ShotRemainderMs(JsonNode? reply, int paceMs) => Math.Max(0, paceMs - UntilFigures(reply).GameMs);
+
+    /// <summary>Why a step's shot failed when its shot condition did not hold before its pace had run.</summary>
+    internal const string ShotNotHeld = "its shot condition did not hold within its pace";
+
+    /// <summary>A step method's refusal of an answer that is not a wait_for condition.</summary>
+    private static string NotACondition(string method, int index, JsonNode answer) =>
+        $"{method}({index}) returned {answer.ToJsonString()}, not a wait_for condition";
+
+    /// <summary>
+    /// wait_for parameters for <paramref name="condition"/> with PlayStep(index) on <paramref name="rootPath"/> as its call,
+    /// <paramref name="paceMs"/> its timeoutMs and options.screenshot when <paramref name="screenshot"/>, without a preview.
+    /// </summary>
+    /// <exception cref="McpException">wait_for refuses the condition.</exception>
+    /// <exception cref="JsonException">The condition does not read as one.</exception>
+    private static JsonObject PlayStepWait(JsonObject condition, int index, int paceMs, string rootPath, bool screenshot)
+    {
+        WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
+        MethodCall call = new(rootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
+        WaitOptions options = new(Screenshot: screenshot ? true : null, Call: call);
+        JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, options);
+        wait.Remove(PreviewMaxWidthField);
+        return wait;
     }
 
     /// <summary>
@@ -1053,6 +1118,14 @@ internal sealed class ScratchRun
     /// <summary>Why a step failed when its until's wait failed on the connection or the session rather than a refusal.</summary>
     internal static string UntilWaitFailed(int index, string name, string message) => $"step {index} '{name}': its until's wait failed: {message}";
 
+    /// <summary>Why a step failed when the bridge refused its shot condition's wait.</summary>
+    internal static string ShotRefused(int index, string name, string refusal) =>
+        $"step {index} '{name}': its shot condition's wait was refused: {refusal}";
+
+    /// <summary>Why a step failed when its shot condition's wait failed on the connection or the session rather than a refusal.</summary>
+    internal static string ShotWaitFailed(int index, string name, string message) =>
+        $"step {index} '{name}': its shot condition's wait failed: {message}";
+
     /// <summary>
     /// Why a step failed when the bridge refused its until's wait with <paramref name="error"/>: when the step's feed
     /// <paramref name="errors"/> logged that same error (PlayStep, the wait's call, raised it), that feed entry as a paced step's
@@ -1060,11 +1133,26 @@ internal sealed class ScratchRun
     /// wrapper cut from the text.
     /// </summary>
     /// <returns>The step's error, and the feed entry it was read from, or null when it is the until's refusal.</returns>
-    internal static (string Error, ErrorEntry? Raised) UntilFailure(int index, string name, string error, IReadOnlyList<ErrorEntry> errors)
+    internal static (string Error, ErrorEntry? Raised) UntilFailure(int index, string name, string error, IReadOnlyList<ErrorEntry> errors) =>
+        RefusalFailure(error, errors, said => UntilRefused(index, name, said));
+
+    /// <summary>
+    /// Why a step failed when the bridge refused its shot condition's wait with <paramref name="error"/>, judged as an until's
+    /// refusal is (<see cref="UntilFailure"/>): the feed entry that logged the same error, else the shot condition's refusal.
+    /// </summary>
+    /// <returns>The step's error, and the feed entry it was read from, or null when it is the shot condition's refusal.</returns>
+    internal static (string Error, ErrorEntry? Raised) ShotWaitFailure(int index, string name, string error, IReadOnlyList<ErrorEntry> errors) =>
+        RefusalFailure(error, errors, said => ShotRefused(index, name, said));
+
+    /// <summary>
+    /// A wait's refusal <paramref name="error"/>, the bridge's wrapper cut: the feed entry in <paramref name="errors"/> that
+    /// logged that same error, as a paced step's thrown PlayStep reads; else <paramref name="refused"/> of the cut text.
+    /// </summary>
+    private static (string Error, ErrorEntry? Raised) RefusalFailure(string error, IReadOnlyList<ErrorEntry> errors, Func<string, string> refused)
     {
         string said = error.StartsWith(BridgeRefusalPrefix, StringComparison.Ordinal) ? error[BridgeRefusalPrefix.Length..] : error;
         ErrorEntry? raised = errors.FirstOrDefault(entry => entry.IsError && entry.Message == said);
-        return raised is null ? (UntilRefused(index, name, said), null) : (ScratchVerdict.FeedError([raised])!, raised);
+        return raised is null ? (refused(said), null) : (ScratchVerdict.FeedError([raised])!, raised);
     }
 
     /// <summary>
@@ -1084,6 +1172,14 @@ internal sealed class ScratchRun
     /// </summary>
     internal static (string? Error, string? Refusal) UntilCaught(int index, string name, Exception e) =>
         e is ObjectDisposedException or IOException or SessionException ? (UntilWaitFailed(index, name, e.Message), null) : (null, e.Message);
+
+    /// <summary>
+    /// An exception from the shot condition's wait as the step's play takes it: a connection or session failure (a disposed
+    /// connection included) as why the step failed (<see cref="ShotWaitFailed"/>); any other refusal as the bridge's text, which
+    /// the caller judges once the step's feed entries are in (<see cref="ShotWaitFailure"/>).
+    /// </summary>
+    internal static (string? Error, string? Refusal) ShotCaught(int index, string name, Exception e) =>
+        e is ObjectDisposedException or IOException or SessionException ? (ShotWaitFailed(index, name, e.Message), null) : (null, e.Message);
 
     /// <summary>A met or timed-out wait_for reply's figures as a step's until carries them.</summary>
     internal static ScratchUntil UntilFigures(JsonNode? reply) =>
@@ -1455,8 +1551,8 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Null when the scene's root has every protocol method, noting whether it also has GetStepUntil and GetStepHidden; else why not, naming the
-    /// root and what it lacks.
+    /// Null when the scene's root has every protocol method, noting whether it also has GetStepUntil, GetStepShotUntil (asked only
+    /// for a run that captures) and GetStepHidden; else why not, naming the root and what it lacks.
     /// </summary>
     private async Task<string?> CheckProtocolAsync(GodotSession session, CancellationToken cancellationToken)
     {
@@ -1485,6 +1581,15 @@ internal sealed class ScratchRun
         if (untilError is not null)
         {
             return untilError;
+        }
+
+        if (_plan.Capture is not null)
+        {
+            (_hasShotUntil, string? shotUntilError) = await HasMethodAsync(session, ShotUntilMethod, cancellationToken);
+            if (shotUntilError is not null)
+            {
+                return shotUntilError;
+            }
         }
 
         (_hasHidden, string? hiddenError) = await HasMethodAsync(session, HiddenMethod, cancellationToken);
@@ -1724,9 +1829,10 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Plays one step: paced (PlayStep, then a wait of its pace in game time), or for a step whose GetStepUntil gives a condition,
-    /// inside one wait_for on it; then GetStatus and the window. The bridge's refusal of the until's wait is judged once the
-    /// step's feed entries are in (<see cref="UntilFailure"/>); a connection or session failure is the step's error at once.
+    /// Plays one step: paced (PlayStep, then a wait of its pace in game time; for a shot step with a shot condition, inside one
+    /// wait_for on it), or for a step whose GetStepUntil gives a condition, inside one wait_for on it; then GetStatus and the
+    /// window. The bridge's refusal of either wait is judged once the step's feed entries are in (<see cref="UntilFailure"/>,
+    /// <see cref="ShotWaitFailure"/>); a connection or session failure is the step's error at once.
     /// </summary>
     private async Task<ScratchStep> PlayStepAsync(GodotSession session, int index, CancellationToken limit)
     {
@@ -1734,15 +1840,16 @@ internal sealed class ScratchRun
         (JsonObject? wait, string? untilError) = _hasUntil ? await ReadUntilAsync(session, index, gameMs, limit) : (null, null);
         StepPlay played =
             untilError is not null ? new StepPlay(untilError, null, null)
-            : wait is null ? new StepPlay(await PlayPacedAsync(session, index, gameMs, limit), null, null)
+            : wait is null ? await PlayPacedStepAsync(session, index, gameMs, limit)
             : await PlayInsideUntilAsync(session, index, wait, limit);
         (string? screenshot, string? shotWarning) = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
         IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
-        (string? error, ErrorEntry? raised) = played.BridgeError is { } bridgeError
-            ? UntilFailure(index, _names[index], bridgeError, errors)
-            : UnmetFailure(played.Until, played.Error, errors);
+        (string? error, ErrorEntry? raised) =
+            played.BridgeError is not { } bridgeError ? UnmetFailure(played.Until, played.Error, errors)
+            : played.ShotWaited ? ShotWaitFailure(index, _names[index], bridgeError, errors)
+            : UntilFailure(index, _names[index], bridgeError, errors);
         string statusLine = StatusLine(status);
         RecordStatus(session, index, statusLine);
         return new ScratchStep(index, _names[index], gameMs)
@@ -1773,9 +1880,10 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// The shot of a step options.capture names whose play went through: an until's met frame, which its wait_for captured, or
-    /// for a paced step the frame after its pace, taken as take_screenshot takes one; copied to the run's folder
-    /// (<see cref="ShotPath"/>). Its path, or the step's warning when it failed; neither for a step not shot.
+    /// The shot of a step options.capture names whose play went through: an until's or a shot condition's met frame, which its
+    /// wait_for captured, or for a paced step the frame after its pace, taken as take_screenshot takes one; copied to the run's
+    /// folder (<see cref="ShotPath"/>). Its path, or the step's warning when it failed, the shot failure its play already gave
+    /// included; neither for a step not shot.
     /// </summary>
     private async Task<(string? Path, string? Warning)> ShotAsync(GodotSession session, int index, StepPlay played, CancellationToken limit)
     {
@@ -1784,7 +1892,7 @@ internal sealed class ScratchRun
             return (null, null);
         }
 
-        (string? capture, string? reason) = played.Until is null ? await PacedShotAsync(session, limit) : UntilShot(played.Reply);
+        (string? capture, string? reason) = await CaptureAsync(session, played, limit);
         if (capture is null)
         {
             return (null, ScratchVerdict.ShotFailed(index, _names[index], reason!));
@@ -1803,6 +1911,16 @@ internal sealed class ScratchRun
         }
     }
 
+    /// <summary>
+    /// A shot step's capture, or why there is none: the failure its play already gave its shot (a shot condition refused or not
+    /// held within the pace); the met frame its until's or its shot condition's wait_for captured; else, for a paced step, the
+    /// frame after its pace (<see cref="PacedShotAsync"/>).
+    /// </summary>
+    private async Task<(string? Capture, string? Reason)> CaptureAsync(GodotSession session, StepPlay played, CancellationToken limit) =>
+        played.ShotFailure is { } failed ? (null, failed)
+        : played.Until is null && played.Reply is null ? await PacedShotAsync(session, limit)
+        : UntilShot(played.Reply);
+
     /// <summary>The bridge's screenshot of the next drawn frame, as take_screenshot asks for it: the capture's path, or why it failed.</summary>
     private async Task<(string? Capture, string? Reason)> PacedShotAsync(GodotSession session, CancellationToken limit)
     {
@@ -1817,6 +1935,73 @@ internal sealed class ScratchRun
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
         {
             return (null, e.Message);
+        }
+    }
+
+    /// <summary>
+    /// A paced step's play: for a step options.capture shoots whose root's GetStepShotUntil gives a condition, inside one wait_for
+    /// on it (<see cref="PlayToShotAsync"/>); else PlayStep and its pace (<see cref="PlayPacedAsync"/>), a shot condition the
+    /// runner refused, or a failed read of it, then being the shot's failure.
+    /// </summary>
+    private async Task<StepPlay> PlayPacedStepAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
+    {
+        (JsonObject? shotWait, string? refusal) =
+            _hasShotUntil && _shots.Contains(index) ? await ReadShotUntilAsync(session, index, gameMs, limit) : (null, null);
+        if (shotWait is not null)
+        {
+            return await PlayToShotAsync(session, index, gameMs, shotWait, limit);
+        }
+
+        return new StepPlay(await PlayPacedAsync(session, index, gameMs, limit), null, null) { ShotFailure = refusal };
+    }
+
+    /// <summary>
+    /// GetStepShotUntil(index) as the shot wait's parameters (<see cref="ShotUntilWait"/>), with the C# helper a state condition
+    /// reads a C# node's state with, as wait_for adds it; neither for a step shot at the end of its pace; or why the read failed
+    /// or the answer was refused.
+    /// </summary>
+    private async Task<(JsonObject? Wait, string? Refusal)> ReadShotUntilAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
+    {
+        (JsonNode? answer, string? error) = await CallAsync(session, ShotUntilMethod, [index], limit);
+        if (error is not null)
+        {
+            return (null, error);
+        }
+
+        (JsonObject? wait, string? refusal) = ShotUntilWait(answer, index, gameMs, _rootPath);
+        RuntimeTools.AddConditionStateHelper(wait, _csharp, session.ProjectDir);
+        return (wait, refusal);
+    }
+
+    /// <summary>
+    /// One wait_for on a paced step's shot condition, PlayStep its call, ended when the condition holds, whose met frame is the
+    /// shot, or once the step's pace has run in game time, released as the pace's own wait is: when met, the rest of the pace is
+    /// waited (<see cref="ShotRemainderMs"/>); when not, the shot fails (<see cref="ShotNotHeld"/>), and a game clock that did
+    /// not run the pace fails the step as a paced step's wait does. A wait that failed on the connection or the session is the
+    /// step's error (<see cref="ShotWaitFailed"/>); the bridge's refusal of it is judged once the step's feed entries are in
+    /// (<see cref="ShotWaitFailure"/>).
+    /// </summary>
+    private async Task<StepPlay> PlayToShotAsync(GodotSession session, int index, int gameMs, JsonObject wait, CancellationToken limit)
+    {
+        TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
+        try
+        {
+            JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
+            ScratchUntil figures = UntilFigures(reply);
+            if (!figures.Met)
+            {
+                string? stoodStill = figures.GameMs < gameMs ? PaceNotMet(gameMs, release) : null;
+                return new StepPlay(stoodStill, null, null) { ShotFailure = ShotNotHeld, ShotWaited = true };
+            }
+
+            int remaining = ShotRemainderMs(reply, gameMs);
+            string? waitError = remaining > 0 ? (await WaitAsync(session, remaining, limit)).Error : null;
+            return new StepPlay(waitError, null, null) { Reply = reply, ShotWaited = true };
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
+        {
+            (string? error, string? refusal) = ShotCaught(index, _names[index], e);
+            return new StepPlay(error, refusal, null) { ShotWaited = true };
         }
     }
 
@@ -1955,12 +2140,18 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// How a step's play went: why it failed, or the bridge's refusal of its until's wait, the until's figures, and its wait_for
-    /// reply, which holds the met frame's screenshot for a captured step.
+    /// How a step's play went: why it failed, or the bridge's refusal of its until's wait or its shot condition's wait, the
+    /// until's figures, its wait_for reply, which holds the met frame's screenshot for a captured step (its until's, or its shot
+    /// condition's), why its shot already failed in the play, and whether the play waited on its shot condition, which says
+    /// whose wait a refusal is.
     /// </summary>
     private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until)
     {
         public JsonNode? Reply { get; init; }
+
+        public string? ShotFailure { get; init; }
+
+        public bool ShotWaited { get; init; }
     }
 
     /// <summary>
@@ -2098,22 +2289,24 @@ internal sealed class ScratchRun
         try
         {
             JsonNode? reply = await session.SendAsync("wait_for", parameters, release + ReplyAllowance, limit, release);
-            return (
-                reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet
-                    ? $"wait_for {gameMs} game ms was not met within {release.TotalSeconds:0.#} s: the game's clock stood still (is it paused?)"
-                    : null,
-                false
-            );
+            return (reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet ? PaceNotMet(gameMs, release) : null, false);
         }
         catch (IOException e)
         {
-            return ($"wait_for {gameMs} game ms failed: {e.Message}", true);
+            return (PaceFailed(gameMs, e.Message), true);
         }
         catch (Exception e) when (e is InvalidOperationException or SessionException)
         {
-            return ($"wait_for {gameMs} game ms failed: {e.Message}", false);
+            return (PaceFailed(gameMs, e.Message), false);
         }
     }
+
+    /// <summary>Why a step failed when the game's clock did not run its pace of <paramref name="gameMs"/> before its release.</summary>
+    private static string PaceNotMet(int gameMs, TimeSpan release) =>
+        $"wait_for {gameMs} game ms was not met within {release.TotalSeconds:0.#} s: the game's clock stood still (is it paused?)";
+
+    /// <summary>Why a step failed when the wait of its pace of <paramref name="gameMs"/> failed with <paramref name="message"/>.</summary>
+    private static string PaceFailed(int gameMs, string message) => $"wait_for {gameMs} game ms failed: {message}";
 
     private string KillReason(Exception e)
     {

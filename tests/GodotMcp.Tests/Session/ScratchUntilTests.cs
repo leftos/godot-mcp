@@ -167,6 +167,78 @@ public sealed class ScratchUntilTests
         );
     }
 
+    // A paced step options.capture shoots, whose GetStepShotUntil gives a condition, is played inside one wait_for on it, shot at
+    // the met frame and bounded by its pace in game time, counted from PlayStep, as a paced step's wait is.
+    [Fact]
+    public void AShotConditionIsSentAsOneShotWaitWithPlayStepAsItsCallAndThePaceAsItsTimeoutAndGameLimit()
+    {
+        (JsonObject? wait, string? refusal) = ScratchRun.ShotUntilWait(
+            JsonNode.Parse("{\"node\": \"Globe\", \"property\": \"shot_ready\", \"equals\": true}"),
+            2,
+            2000,
+            Root
+        );
+
+        Assert.Null(refusal);
+        Assert.Equal("property", wait!["kind"]!.GetValue<string>());
+        Assert.Equal(("Globe", "shot_ready"), (wait["node"]!.GetValue<string>(), wait["property"]!.GetValue<string>()));
+        Assert.True(wait["screenshot"]!.GetValue<bool>());
+        Assert.False(wait.ContainsKey("previewMaxWidth"), wait.ToJsonString());
+        Assert.Equal(2000, wait["timeoutMs"]!.GetValue<int>());
+        Assert.Equal(2000, wait["limitGameMs"]!.GetValue<int>());
+        Assert.Equal("{\"node\":\"/root/ScratchScene\",\"method\":\"PlayStep\",\"args\":[2]}", wait["call"]!.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    public void NullOrAnEmptyDictionaryShotConditionLeavesTheStepShotAtTheEndOfItsPace(string answer) =>
+        Assert.Equal(((JsonObject?)null, (string?)null), ScratchRun.ShotUntilWait(JsonNode.Parse(answer), 0, 2000, Root));
+
+    [Theory]
+    [InlineData("\"soon\"", "the screenshot at step 2 'roll' failed: GetStepShotUntil(2) returned \"soon\", not a wait_for condition")]
+    [InlineData("[1]", "the screenshot at step 2 'roll' failed: GetStepShotUntil(2) returned [1], not a wait_for condition")]
+    [InlineData("true", "the screenshot at step 2 'roll' failed: GetStepShotUntil(2) returned true, not a wait_for condition")]
+    public void AShotConditionAnswerNeitherADictionaryNorNullIsTheShotsWarning(string answer, string warning)
+    {
+        (JsonObject? wait, string? refusal) = ScratchRun.ShotUntilWait(JsonNode.Parse(answer), 2, 2000, Root);
+
+        Assert.Null(wait);
+        Assert.Equal(warning, ScratchVerdict.ShotFailed(2, "roll", refusal!));
+    }
+
+    [Fact]
+    public void AShotConditionWaitForRefusesIsTheShotsWarning()
+    {
+        (JsonObject? wait, string? refusal) = ScratchRun.ShotUntilWait(
+            JsonNode.Parse("{\"node\": \"Globe\", \"signal\": \"Settled\", \"expression\": \"true\"}"),
+            1,
+            2000,
+            Root
+        );
+
+        Assert.Null(wait);
+        Assert.StartsWith(
+            "the screenshot at step 1 'roll' failed: GetStepShotUntil(1) was refused: condition needs exactly one of: ",
+            ScratchVerdict.ShotFailed(1, "roll", refusal!),
+            StringComparison.Ordinal
+        );
+    }
+
+    [Theory]
+    [InlineData("{\"met\":true,\"gameMs\":16,\"elapsedMs\":17,\"frames\":1}", 2000, 1984)]
+    [InlineData("{\"met\":true,\"gameMs\":2000,\"elapsedMs\":2001,\"frames\":120}", 2000, 0)]
+    [InlineData("{\"met\":true,\"gameMs\":2016,\"elapsedMs\":2017,\"frames\":121}", 2000, 0)]
+    public void AMetShotConditionLeavesThePaceLessTheGameTimeItRanToWait(string reply, int paceMs, int remainingMs) =>
+        Assert.Equal(remainingMs, ScratchRun.ShotRemainderMs(JsonNode.Parse(reply), paceMs));
+
+    [Fact]
+    public void AShotConditionThatDidNotHoldWithinItsPaceIsTheShotsWarning() =>
+        Assert.Equal(
+            "the screenshot at step 3 'spin' failed: its shot condition did not hold within its pace",
+            ScratchVerdict.ShotFailed(3, "spin", ScratchRun.ShotNotHeld)
+        );
+
     [Fact]
     public void TheServersUntilGuardIsFifteenSeconds() => Assert.Equal(TimeSpan.FromSeconds(15), ScratchRun.UntilHangGuard);
 
@@ -276,6 +348,49 @@ public sealed class ScratchUntilTests
         Assert.Equal(
             ("step 3 'roll': its until was refused: the node left", (ErrorEntry?)null),
             ScratchRun.UntilFailure(3, "roll", "the node left", [])
+        );
+    }
+
+    [Fact]
+    public void AShotConditionsWaitTheBridgeRefusedIsTheShotConditionsRefusalWithoutTheBridgesWrapper()
+    {
+        IReadOnlyList<ErrorEntry> errors = [Entry("warning", "No node 'Globe'"), Entry("error", "something else")];
+
+        Assert.Equal(
+            ("step 3 'spin': its shot condition's wait was refused: No node 'Globe'", (ErrorEntry?)null),
+            ScratchRun.ShotWaitFailure(3, "spin", "The bridge refused 'wait_for': No node 'Globe'", errors)
+        );
+        Assert.Equal("step 3 'spin': its shot condition's wait was refused: no", ScratchRun.ShotRefused(3, "spin", "no"));
+    }
+
+    [Fact]
+    public void AShotConditionsWaitRefusalThatTheStepsFeedAlsoLoggedReadsAsThatFeedEntryWithItsFileAndLine()
+    {
+        IReadOnlyList<ErrorEntry> errors = [Entry("error", "scratch step threw")];
+
+        Assert.Equal(
+            ("scratch step threw (res://scene.gd:3)", errors[0]),
+            ScratchRun.ShotWaitFailure(0, "throws", "The bridge refused 'wait_for': scratch step threw", errors)
+        );
+    }
+
+    [Fact]
+    public void AConnectionOrSessionFailureDuringTheShotConditionsWaitIsItsWaitsFailure() =>
+        Assert.Equal(
+            "step 3 'spin': its shot condition's wait failed: the connection ended",
+            ScratchRun.ShotWaitFailed(3, "spin", "the connection ended")
+        );
+
+    [Fact]
+    public void ADisposedConnectionIsTheShotConditionsWaitFailureAndAnyOtherInvalidOperationIsARefusal()
+    {
+        Assert.Equal(
+            ((string?)"step 3 'spin': its shot condition's wait failed: Cannot access a disposed object.", (string?)null),
+            ScratchRun.ShotCaught(3, "spin", new ObjectDisposedException(null, "Cannot access a disposed object."))
+        );
+        Assert.Equal(
+            ((string?)null, (string?)"The bridge refused 'wait_for': no"),
+            ScratchRun.ShotCaught(3, "spin", new InvalidOperationException("The bridge refused 'wait_for': no"))
         );
     }
 

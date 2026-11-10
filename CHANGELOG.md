@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - A `scratch.pace` scene or step entry takes `guard` (above 15, at most 120 s), lengthening its until steps' hang guard for an event measured to land later.
+- A paced scratch step can be shot at its own moment: when the root's `GetStepShotUntil(i)` gives a condition, `options.capture` shoots the first frame it holds.
 
 ### Changed
 
