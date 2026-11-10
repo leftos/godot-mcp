@@ -7,7 +7,7 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// run_scratches over the whole scratch folder of the InputProbe fixture, in the real Godot, three scenes at once: every scene to
-/// the same verdict as one at a time, reported in the folder's order, and which scenes ran alone. The fact plays all 21 scenes,
+/// the same verdict as one at a time, reported in the folder's order, and which scenes ran alone. The fact plays all 22 scenes,
 /// so the class is a group of its own, apart from <see cref="ScratchFolderTests"/>, whose folder, verdicts and probe setup it
 /// shares.
 /// </summary>

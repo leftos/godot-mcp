@@ -486,6 +486,7 @@ internal sealed class ScratchRun
     private readonly List<string> _warnings = [];
     private List<string> _paceLines = [];
     private string? _afterError;
+    private bool _afterClosed;
     private long _feedMark;
     private bool _hasUntil;
     private bool _hasHidden;
@@ -1803,7 +1804,7 @@ internal sealed class ScratchRun
     private async Task<string?> PlayPacedAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
     {
         (_, string? error) = await CallAsync(session, "PlayStep", [index], limit);
-        return error ?? await WaitAsync(session, gameMs, limit);
+        return error ?? (await WaitAsync(session, gameMs, limit)).Error;
     }
 
     /// <summary>
@@ -1947,9 +1948,12 @@ internal sealed class ScratchRun
     /// </summary>
     private async Task PaceAfterAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
-        string? waitError = await WaitAsync(session, gameMs, limit);
+        (string? waitError, bool closed) = await WaitAsync(session, gameMs, limit);
         (_paceLines, _, string? markerError) = await CloseWindowAsync(session, "pace", limit);
-        _afterError = ScratchVerdict.FeedError(TakeErrors(session.Errors, ref _feedMark)) ?? waitError ?? markerError;
+        string? feedError = ScratchVerdict.FeedError(TakeErrors(session.Errors, ref _feedMark));
+        _afterClosed = closed && feedError is null;
+        // A closed connection's wait error comes before the marker's, which then fails only because the game is gone.
+        _afterError = feedError ?? waitError ?? markerError;
     }
 
     /// <summary>
@@ -2058,10 +2062,10 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// wait_for {gameMs}: null once the game's clock has run that long; else why it did not. Released at that game time at the
-    /// scene's time scale plus the step allowance.
+    /// wait_for {gameMs}: null once the game's clock has run that long; else why it did not, and whether that was the game closing
+    /// the bridge connection. Released at that game time at the scene's time scale plus the step allowance.
     /// </summary>
-    private async Task<string?> WaitAsync(GodotSession session, int gameMs, CancellationToken limit)
+    private async Task<(string? Error, bool Closed)> WaitAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
         TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
         JsonObject parameters = new()
@@ -2073,13 +2077,20 @@ internal sealed class ScratchRun
         try
         {
             JsonNode? reply = await session.SendAsync("wait_for", parameters, release + ReplyAllowance, limit, release);
-            return reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet
-                ? $"wait_for {gameMs} game ms was not met within {release.TotalSeconds:0.#} s: the game's clock stood still (is it paused?)"
-                : null;
+            return (
+                reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet
+                    ? $"wait_for {gameMs} game ms was not met within {release.TotalSeconds:0.#} s: the game's clock stood still (is it paused?)"
+                    : null,
+                false
+            );
         }
-        catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
+        catch (IOException e)
         {
-            return $"wait_for {gameMs} game ms failed: {e.Message}";
+            return ($"wait_for {gameMs} game ms failed: {e.Message}", true);
+        }
+        catch (Exception e) when (e is InvalidOperationException or SessionException)
+        {
+            return ($"wait_for {gameMs} game ms failed: {e.Message}", false);
         }
     }
 
@@ -2107,6 +2118,7 @@ internal sealed class ScratchRun
             Steps = _steps,
             StepPaceReasons = [.. _walk.Paces.Select(pace => pace.Reason)],
             AfterError = _afterError,
+            AfterClosed = _afterClosed,
             Selected = _selected,
             Setup = _setupOnly.Length == 0 ? null : _setupOnly,
             StepNames = NamedSteps,

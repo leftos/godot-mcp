@@ -17,6 +17,7 @@
       },
       "ScratchLateError": 2,
       "ScratchMarker": 2,
+      "ScratchQuitInHold": { "seconds": 0.1, "reason": "its steps only leave a note and arm the quit", "exitHold": 3 },
       "ScratchStepPace": {
         "seconds": 0.25,
         "reason": "its steps only leave a note",

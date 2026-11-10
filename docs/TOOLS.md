@@ -781,7 +781,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A scene given a ceiling by `options.ceilings` or `scratch.ceilings` is killed at that many seconds of load-adjusted time from its first step instead, and the kill reason reads `the scene passed its ceiling of <N> s of load-adjusted time, set by options.ceilings, so its game was stopped` (`set by the profile's scratch.ceilings` for the profile's; the backstop clause comes before `, so its game was stopped` when the backstop fired). The derived ceiling's reason is unchanged.
 
-  An error or a failed wait in the pace (or `exitHold`) after the last step, or a stop that had to kill the game, turns an otherwise green scene red, with the reason in `exit`.
+  An error or a failed wait in the pace (or `exitHold`) after the last step, or a stop that had to kill the game, turns an otherwise green scene red, with the reason in `exit`. The exception is a game that closes the bridge connection during that wait and exits with code 0: that is a clean exit, so the scene stays green with `exit.code` 0 and no `exit.error`. The same close with a non-zero or missing exit code, a feed error in that wait, and a close during a step stay red.
 
   A pattern that takes over 1 s on a line fails that step naming the pattern. A project with `application/run/flush_stdout_on_print.debug` off buffers stdout, so the markers never arrive: the error says so. `--scratch-auto` is refused in any user arguments: the server walks the steps. It cannot run inside `batch_drive`.
 

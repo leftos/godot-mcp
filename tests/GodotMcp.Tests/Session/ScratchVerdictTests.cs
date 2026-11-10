@@ -304,6 +304,32 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void AGameThatClosesTheConnectionAndExitsZeroAfterItsLastStepIsGreen()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Closed(exitCode: 0), Plain);
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Null(result.Exit.Error);
+    }
+
+    [Fact]
+    public void AClosedConnectionWithANonZeroCodeStaysRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Closed(exitCode: 3), Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(ClosedError, result.Exit.Error);
+    }
+
+    [Fact]
+    public void AClosedConnectionWithNoExitCodeStaysRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Closed(exitCode: null), Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+    }
+
+    [Fact]
     public void AKillByTheStopTurnsAGreenSceneRed()
     {
         ScratchSceneResult result = ScratchVerdict.Judge(
@@ -2378,6 +2404,17 @@ public sealed class ScratchVerdictTests
 
     private static ScratchObservation Seen(params ScratchStep[] steps) =>
         new("Scene", "probe.scratch-Scene", 0.5, steps.Length) { Steps = steps, ExitCode = 0 };
+
+    private const string ClosedError = "wait_for 3000 game ms failed: The bridge closed the connection.";
+
+    /// <summary>A scene whose every step is green and whose game closed the connection in the wait after its last step.</summary>
+    private static ScratchObservation Closed(int? exitCode) =>
+        Seen(Step(0), Step(1)) with
+        {
+            AfterError = ClosedError,
+            AfterClosed = true,
+            ExitCode = exitCode,
+        };
 
     private static ScratchStep Step(int index) => new(index, $"step{index}", 500);
 

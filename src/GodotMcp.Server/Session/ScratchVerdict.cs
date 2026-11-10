@@ -101,6 +101,12 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 
     public string? AfterError { get; init; }
 
+    /// <summary>
+    /// Whether the after-error is the game closing the bridge connection in the wait after the last step; false when a feed
+    /// error in that wait took its place.
+    /// </summary>
+    public bool AfterClosed { get; init; }
+
     public int? ExitCode { get; init; }
 
     public string? StopKillReason { get; init; }
@@ -795,16 +801,23 @@ internal static partial class ScratchVerdict
     private static bool PlayedInPart(ScratchObservation seen) => seen.Selected is { } selected && selected.Count < seen.Total;
 
     /// <summary>
-    /// Whether the exit turns a scene with every step green red: an error in the pace after the last step, a kill by the stop, a
-    /// non-zero code, a leak, a matching line after the steps, or an expected line its output never held.
+    /// Whether the exit turns a scene with every step green red: an error in the pace after the last step (except the game closing
+    /// the connection and exiting 0), a kill by the stop, a non-zero code, a leak, a matching line after the steps, or an expected
+    /// line its output never held.
     /// </summary>
     private static bool ExitFails(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns, List<string>? missing) =>
-        seen.AfterError is not null
+        (seen.AfterError is not null && !ClosedCleanly(seen))
         || seen.StopKillReason is not null
         || seen.ExitCode is not (null or 0)
         || Leaked(seen.ExitLines) is not null
         || seen.ExitLines.Any(line => Matches(line, patterns))
         || missing is not null;
+
+    /// <summary>
+    /// Whether the game closed the connection in the wait after the last step and exited with code 0: a clean exit, not an
+    /// error of the wait.
+    /// </summary>
+    private static bool ClosedCleanly(ScratchObservation seen) => seen.AfterClosed && seen.ExitCode == 0;
 
     private static ScratchExit ExitOf(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns, List<string>? missing)
     {
@@ -813,7 +826,7 @@ internal static partial class ScratchVerdict
         {
             Leaked = Leaked(seen.ExitLines),
             Lines = matched.Count > 0 ? Capped(matched, MaxLines) : null,
-            Error = seen.AfterError,
+            Error = ClosedCleanly(seen) ? null : seen.AfterError,
             Killed = seen.StopKillReason is null ? null : true,
             KillReason = seen.StopKillReason,
             Warning = seen.StopWarning,

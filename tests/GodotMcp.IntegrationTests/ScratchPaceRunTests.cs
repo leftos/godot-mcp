@@ -130,6 +130,20 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Null(scene["exit"]!["missing"]);
     }
 
+    // ScratchQuitInHold's last step arms a timer that quits the game with code 0 after 1 s of game time, inside its 3 s exit hold:
+    // the game closes the bridge connection in the wait after its last step, a clean exit, not an error of that wait.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ASceneThatQuitsWithCodeZeroInsideItsExitHoldIsGreen()
+    {
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchQuitInHold"], new ScratchOptions(Details: FullDetails), TestContext.Current.CancellationToken)
+        );
+
+        Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
+        Assert.Equal(0, scene["exit"]!["code"]!.GetValue<int>());
+        Assert.Null(scene["exit"]!["error"]);
+    }
+
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepPaceKeyThatMatchesNoStepIsAWarningAndTheScenePlaysOn()
     {
