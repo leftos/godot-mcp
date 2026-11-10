@@ -355,6 +355,18 @@ internal readonly record struct LineMark(long Stdout, long Stderr);
 internal sealed record ScratchSelection(int[]? Selected, int[] Setup, int[] Played);
 
 /// <summary>
+/// A step shot's reply as its sizes and warning read it: the window's and the viewport's size it names, and the warning a shot
+/// that is not its window's size gives; each null for a reply that names none.
+/// </summary>
+internal sealed record StepShotSizes(CaptureSize? Window, CaptureSize? Viewport, string? Warning);
+
+/// <summary>
+/// A step's shot: its path in the run's folder, the window's and the viewport's size it was taken in, and the warning it gave
+/// or why it was not kept; all null for a step that took none.
+/// </summary>
+internal sealed record StepShot(string? Path, CaptureSize? Window, CaptureSize? Viewport, string? Warning);
+
+/// <summary>
 /// A scene's step names by index, and the indices its root's optional GetStepHidden marks hidden: a mark only, a hidden step
 /// keeping its index and playing by index or name as any other. A collection expression builds names none of which is hidden.
 /// </summary>
@@ -1092,6 +1104,29 @@ internal sealed class ScratchRun
             reply?["warning"] is JsonValue warning && warning.TryGetValue(out string? text) ? text : "the until's reply carried no screenshot"
         );
     }
+
+    /// <summary>
+    /// A step shot's sizes and warning: the window's and the viewport's size its reply names, and for a shot that is not its
+    /// window's size <see cref="PreviewTools.DescribeLetterbox"/> as <see cref="ScratchVerdict.ShotLetterboxed"/> says it. A step
+    /// shot is never cropped or scaled, so no crop or scale check applies; all three are null for a reply that names none.
+    /// </summary>
+    internal static StepShotSizes ShotSizes(JsonNode? shot, int index, string name)
+    {
+        CaptureSize? window = RuntimeTools.ReadSize(shot?["window"]);
+        return new StepShotSizes(window, RuntimeTools.ReadSize(shot?["viewport"]), LetterboxWarning(shot, window, index, name));
+    }
+
+    /// <summary>
+    /// The warning of a step shot that is not its window's size, as <see cref="ScratchVerdict.ShotLetterboxed"/> says it; null
+    /// when the reply names no window or no size, or the shot is the window's.
+    /// </summary>
+    private static string? LetterboxWarning(JsonNode? shot, CaptureSize? window, int index, string name) =>
+        window is { } size
+        && RuntimeTools.ReadInt(shot?["width"]) is { } width
+        && RuntimeTools.ReadInt(shot?["height"]) is { } height
+        && PreviewTools.DescribeLetterbox(width, height, size.Width, size.Height) is { } letterbox
+            ? ScratchVerdict.ShotLetterboxed(index, name, letterbox)
+            : null;
 
     /// <summary>
     /// Why a step failed when its until hung: its condition never held before its hang guard of <paramref name="guardSeconds"/>
@@ -1842,7 +1877,7 @@ internal sealed class ScratchRun
             untilError is not null ? new StepPlay(untilError, null, null)
             : wait is null ? await PlayPacedStepAsync(session, index, gameMs, limit)
             : await PlayInsideUntilAsync(session, index, wait, limit);
-        (string? screenshot, string? shotWarning) = await ShotAsync(session, index, played, limit);
+        StepShot shot = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
         IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
@@ -1862,8 +1897,10 @@ internal sealed class ScratchRun
             Errors = errors,
             Lines = lines,
             Dropped = dropped,
-            Screenshot = screenshot,
-            Warning = shotWarning,
+            Screenshot = shot.Path,
+            Window = shot.Window,
+            Viewport = shot.Viewport,
+            Warning = shot.Warning,
         };
     }
 
@@ -1882,59 +1919,74 @@ internal sealed class ScratchRun
     /// <summary>
     /// The shot of a step options.capture names whose play went through: an until's or a shot condition's met frame, which its
     /// wait_for captured, or for a paced step the frame after its pace, taken as take_screenshot takes one; copied to the run's
-    /// folder (<see cref="ShotPath"/>). Its path, or the step's warning when it failed, the shot failure its play already gave
-    /// included; neither for a step not shot.
+    /// folder (<see cref="ShotPath"/>). Its path with the window's and the viewport's size and the warning they give, or the
+    /// step's warning when it failed, the shot failure its play already gave included; nothing for a step not shot.
     /// </summary>
-    private async Task<(string? Path, string? Warning)> ShotAsync(GodotSession session, int index, StepPlay played, CancellationToken limit)
+    private async Task<StepShot> ShotAsync(GodotSession session, int index, StepPlay played, CancellationToken limit)
     {
         if (!_shots.Contains(index) || played.Error is not null || played.BridgeError is not null)
         {
-            return (null, null);
+            return new StepShot(null, null, null, null);
         }
 
-        (string? capture, string? reason) = await CaptureAsync(session, played, limit);
+        (string? capture, JsonNode? reply, string? reason) = await CaptureAsync(session, played, limit);
         if (capture is null)
         {
-            return (null, ScratchVerdict.ShotFailed(index, _names[index], reason!));
+            return new StepShot(null, null, null, ScratchVerdict.ShotFailed(index, _names[index], reason!));
         }
 
+        StepShotSizes sizes = ShotSizes(reply, index, _names[index]);
         string destination = ShotPath(ProjectPrep.LogFolder(_plan.ProjectDir), _runId, _shotFolder, index, _names[index]);
         try
         {
             _places ??= OutputPlaces.Find(_plan.ProjectDir, _registry.Logger);
             ScreenshotTarget.SaveToRunFolder(capture, destination, _places);
-            return (destination, null);
+            return new StepShot(destination, sizes.Window, sizes.Viewport, sizes.Warning);
         }
         catch (McpException e)
         {
-            return (null, ScratchVerdict.ShotFailed(index, _names[index], ScreenshotTarget.ReasonOf(e)));
+            return new StepShot(null, null, null, ScratchVerdict.ShotFailed(index, _names[index], ScreenshotTarget.ReasonOf(e)));
         }
     }
 
     /// <summary>
-    /// A shot step's capture, or why there is none: the failure its play already gave its shot (a shot condition refused or not
-    /// held within the pace); the met frame its until's or its shot condition's wait_for captured; else, for a paced step, the
-    /// frame after its pace (<see cref="PacedShotAsync"/>).
+    /// A shot step's capture and the reply that holds it, or why there is none: the failure its play already gave its shot (a
+    /// shot condition refused or not held within the pace); the met frame its until's or its shot condition's wait_for captured;
+    /// else, for a paced step, the frame after its pace (<see cref="PacedShotAsync"/>).
     /// </summary>
-    private async Task<(string? Capture, string? Reason)> CaptureAsync(GodotSession session, StepPlay played, CancellationToken limit) =>
-        played.ShotFailure is { } failed ? (null, failed)
-        : played.Until is null && played.Reply is null ? await PacedShotAsync(session, limit)
-        : UntilShot(played.Reply);
+    private async Task<(string? Capture, JsonNode? Shot, string? Reason)> CaptureAsync(GodotSession session, StepPlay played, CancellationToken limit)
+    {
+        if (played.ShotFailure is { } failed)
+        {
+            return (null, null, failed);
+        }
 
-    /// <summary>The bridge's screenshot of the next drawn frame, as take_screenshot asks for it: the capture's path, or why it failed.</summary>
-    private async Task<(string? Capture, string? Reason)> PacedShotAsync(GodotSession session, CancellationToken limit)
+        if (played.Until is null && played.Reply is null)
+        {
+            return await PacedShotAsync(session, limit);
+        }
+
+        (string? capture, string? reason) = UntilShot(played.Reply);
+        return (capture, played.Reply?["screenshot"], reason);
+    }
+
+    /// <summary>
+    /// The bridge's screenshot of the next drawn frame, as take_screenshot asks for it: the capture's path and the reply that holds
+    /// it, or why it failed.
+    /// </summary>
+    private async Task<(string? Capture, JsonNode? Shot, string? Reason)> PacedShotAsync(GodotSession session, CancellationToken limit)
     {
         JsonObject parameters = RuntimeTools.BuildScreenshotParameters(ScreenshotMode.PathOnly, null, 0);
         try
         {
             JsonNode? reply = await session.SendAsync("screenshot", parameters, _bounds.Call + ReplyAllowance, limit, _bounds.Call);
             return reply?["path"] is JsonValue path && path.TryGetValue(out string? capture)
-                ? (capture, null)
-                : (null, $"the screenshot reply names no file: {reply?.ToJsonString() ?? "null"}");
+                ? (capture, reply, null)
+                : (null, null, $"the screenshot reply names no file: {reply?.ToJsonString() ?? "null"}");
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
         {
-            return (null, e.Message);
+            return (null, null, e.Message);
         }
     }
 

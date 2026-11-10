@@ -736,7 +736,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     }
 
     /// <summary>A reply's {width, height}; null when it is not an object with both.</summary>
-    private static CaptureSize? ReadSize(JsonNode? node) =>
+    internal static CaptureSize? ReadSize(JsonNode? node) =>
         node is JsonObject size && ReadInt(size["width"]) is { } width && ReadInt(size["height"]) is { } height
             ? new CaptureSize(width, height)
             : null;
@@ -784,7 +784,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     }
 
     // GDScript's JSON reads and writes every number it parsed as a float, so an integer may arrive as 640.0.
-    private static int? ReadInt(JsonNode? node) => node is JsonValue value && value.TryGetValue(out double number) ? (int)number : null;
+    internal static int? ReadInt(JsonNode? node) => node is JsonValue value && value.TryGetValue(out double number) ? (int)number : null;
 
     /// <summary>
     /// One request to the bridge: the tool it serves (for messages), the bridge command, its parameters, its reply timeout and,

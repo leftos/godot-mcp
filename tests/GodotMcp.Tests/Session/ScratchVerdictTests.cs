@@ -2477,6 +2477,49 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void AStepsShotCarriesItsWindowAndViewportSizes()
+    {
+        const string path = @"C:\game\.godot\godot-mcp\scratch-20261101T000000-abcd\Scene\1-step1.png";
+        ScratchStep shot = Step(1) with { Screenshot = path, Window = new CaptureSize(1366, 768), Viewport = new CaptureSize(1920, 1080) };
+
+        JsonArray details = Json(ScratchVerdict.Judge(Seen(Step(0), shot), Plain))["details"]!.AsArray();
+        string listed = details[1]!.ToJsonString();
+
+        Assert.Contains("\"window\":{\"width\":1366,\"height\":768}", listed, StringComparison.Ordinal);
+        Assert.Contains("\"viewport\":{\"width\":1920,\"height\":1080}", listed, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ALetterboxedShotWarnsOnTheSceneAndTheStepStaysGreen()
+    {
+        const string path = @"C:\game\.godot\godot-mcp\scratch-20261101T000000-abcd\Scene\1-step1.png";
+        string letterboxed = ScratchVerdict.ShotLetterboxed(1, "step1", PreviewTools.DescribeLetterbox(1365, 768, 1366, 768)!);
+        ScratchStep shot = Step(1) with
+        {
+            Screenshot = path,
+            Window = new CaptureSize(1366, 768),
+            Viewport = new CaptureSize(1920, 1080),
+            Warning = letterboxed,
+        };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0), shot), Plain);
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Equal([letterboxed], Json(result)["warnings"]!.AsArray().Select(item => item!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void AStepWithoutAShotGivesItsDetailsNeitherSize()
+    {
+        const string path = @"C:\game\.godot\godot-mcp\scratch-20261101T000000-abcd\Scene\0-step0.png";
+
+        JsonArray details = Json(ScratchVerdict.Judge(Seen(Step(0) with { Screenshot = path }, Step(1)), Plain))["details"]!.AsArray();
+
+        Assert.False(details[1]!.AsObject().ContainsKey("window"), details[1]!.ToJsonString());
+        Assert.False(details[1]!.AsObject().ContainsKey("viewport"), details[1]!.ToJsonString());
+    }
+
+    [Fact]
     public void AShotThatFailedIsAWarningOnTheSceneAndTheStepStaysGreen()
     {
         ScratchStep warned = Step(1) with { Warning = ScratchVerdict.ShotFailed(1, "step1", "the frame was not drawn") };

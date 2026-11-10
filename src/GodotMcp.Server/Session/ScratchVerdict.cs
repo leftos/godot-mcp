@@ -41,6 +41,12 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
     /// <summary>The absolute path of the step's shot in the run's folder, for a step options.capture names; else null.</summary>
     public string? Screenshot { get; init; }
 
+    /// <summary>The window's size the step's shot was taken in; null when it took none, or the reply names none.</summary>
+    public CaptureSize? Window { get; init; }
+
+    /// <summary>The viewport's size the step's shot was taken in; null when it took none, or the reply names none.</summary>
+    public CaptureSize? Viewport { get; init; }
+
     /// <summary>What went wrong with the step that did not fail it (its shot, <see cref="ScratchVerdict.ShotFailed"/>); else null.</summary>
     public string? Warning { get; init; }
 }
@@ -244,6 +250,14 @@ internal sealed record ScratchStepResult(
     /// <summary>The absolute path of the step's shot (options.capture); null when it took none.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Screenshot { get; init; }
+
+    /// <summary>The window's size the step's shot was taken in; null when it took none, or the reply names none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CaptureSize? Window { get; init; }
+
+    /// <summary>The viewport's size the step's shot was taken in; null when it took none, or the reply names none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CaptureSize? Viewport { get; init; }
 
     /// <summary>Why the detail lost lines or errors from its end, and where the full log is; null when it fit.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -580,6 +594,10 @@ internal static partial class ScratchVerdict
     /// <summary>The warning of a step whose shot failed: the step's index and name, and why.</summary>
     internal static string ShotFailed(int index, string step, string reason) =>
         string.Create(CultureInfo.InvariantCulture, $"the screenshot at step {index} '{step}' failed: {reason}");
+
+    /// <summary>The warning of a step whose shot is not its window's size: the step's index and name, and why.</summary>
+    internal static string ShotLetterboxed(int index, string step, string letterbox) =>
+        string.Create(CultureInfo.InvariantCulture, $"the screenshot at step {index} '{step}': {letterbox}");
 
     /// <summary>
     /// Every step that failed, in the order played, with why cut to <paramref name="max"/> characters, then the step a kill cut
@@ -936,6 +954,8 @@ internal static partial class ScratchVerdict
         {
             UntilRan = UntilRan(step),
             Screenshot = step.Screenshot,
+            Window = step.Window,
+            Viewport = step.Viewport,
         };
         if (error is null && rules.Details != ScratchDetails.Full)
         {

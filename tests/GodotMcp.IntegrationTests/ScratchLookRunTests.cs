@@ -159,9 +159,18 @@ public sealed class ScratchLookRunTests : ScratchRunBase
             string shot = step!["screenshot"]!.GetValue<string>();
             Assert.Equal(Path.GetFullPath(Path.Combine(folder, name)), Path.GetFullPath(shot));
             Assert.True(File.Exists(shot), shot);
+            JsonObject window = step!["window"]!.AsObject();
+            JsonObject viewport = step["viewport"]!.AsObject();
+            Assert.True(window["width"]!.GetValue<int>() > 0, step!.ToJsonString());
+            Assert.True(window["height"]!.GetValue<int>() > 0, step.ToJsonString());
+            Assert.True(viewport["width"]!.GetValue<int>() > 0, step.ToJsonString());
+            Assert.True(viewport["height"]!.GetValue<int>() > 0, step.ToJsonString());
             byte[] png = await File.ReadAllBytesAsync(shot, cancellation);
             Assert.True(png.Length > PngSignature.Length, $"{shot} holds {png.Length} bytes");
             Assert.Equal(PngSignature, png[..PngSignature.Length]);
+            int pngWidth = (png[16] << 24) | (png[17] << 16) | (png[18] << 8) | png[19];
+            int pngHeight = (png[20] << 24) | (png[21] << 16) | (png[22] << 8) | png[23];
+            Assert.Equal((window["width"]!.GetValue<int>(), window["height"]!.GetValue<int>()), (pngWidth, pngHeight));
         }
     }
 

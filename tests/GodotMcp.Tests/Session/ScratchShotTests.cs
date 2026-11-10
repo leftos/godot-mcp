@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging;
 
@@ -122,6 +123,48 @@ public sealed class ScratchShotTests
             ("C:/game/.godot/godot-mcp/screenshots/a.png", (string?)null),
             ScratchRun.UntilShot(JsonNode.Parse("""{"met": true, "screenshot": {"path": "C:/game/.godot/godot-mcp/screenshots/a.png"}}"""))
         );
+
+    [Fact]
+    public void AShotsWindowAndViewportAreReadFromItsReply()
+    {
+        StepShotSizes sizes = ScratchRun.ShotSizes(
+            JsonNode.Parse(
+                """{"path":"a.png","width":1366,"height":768,"window":{"width":1366,"height":768},"viewport":{"width":1920,"height":1080}}"""
+            ),
+            0,
+            "hold"
+        );
+
+        Assert.Equal(new CaptureSize(1366, 768), sizes.Window);
+        Assert.Equal(new CaptureSize(1920, 1080), sizes.Viewport);
+        Assert.Null(sizes.Warning);
+    }
+
+    [Fact]
+    public void ALetterboxedShotWarnsWithItsStep()
+    {
+        StepShotSizes sizes = ScratchRun.ShotSizes(
+            JsonNode.Parse("""{"path":"a.png","width":1365,"height":768,"window":{"width":1366,"height":768}}"""),
+            2,
+            "hit"
+        );
+
+        Assert.Equal("the screenshot at step 2 'hit': " + PreviewTools.DescribeLetterbox(1365, 768, 1366, 768), sizes.Warning);
+    }
+
+    [Fact]
+    public void AShotWithoutSizesGivesNone()
+    {
+        StepShotSizes pathOnly = ScratchRun.ShotSizes(JsonNode.Parse("""{"path":"a.png"}"""), 0, "x");
+        StepShotSizes none = ScratchRun.ShotSizes(null, 0, "x");
+
+        Assert.Null(pathOnly.Window);
+        Assert.Null(pathOnly.Viewport);
+        Assert.Null(pathOnly.Warning);
+        Assert.Null(none.Window);
+        Assert.Null(none.Viewport);
+        Assert.Null(none.Warning);
+    }
 
     [Fact]
     public void CapturedStepsTheRunDoesNotPlayAreNamedAscending() =>
