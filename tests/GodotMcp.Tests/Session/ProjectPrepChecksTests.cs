@@ -447,7 +447,7 @@ public sealed class ProjectPrepChecksTests : IDisposable
     {
         string game = ProjectPrepFixtures.CreateGame(_temp, null);
         File.WriteAllText(Path.Combine(game, "block.glb"), "glb");
-        PrepContext context = new(game, NullLogger.Instance, () => ["game"], () => { });
+        PrepContext context = new(game, NullLogger.Instance, () => ["game"], () => { }) { RetryBootCrashOnce = false };
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             ProjectPrep.RunAsync(context, TestContext.Current.CancellationToken)
