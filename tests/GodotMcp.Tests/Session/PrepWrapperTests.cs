@@ -79,6 +79,28 @@ public sealed class PrepWrapperTests : IDisposable
     }
 
     [Fact]
+    public void TheCwdTokenIsTheStepsOwnWorkingDirectoryAndTheWrapperStaysInTheProjectFolder()
+    {
+        string step = Path.Combine(_temp.Path, "nested", "src") + Path.DirectorySeparatorChar;
+        PrepWrapper wrapper = new(["gate", "run", "--cd", "{cwd}", "--log={log}", "--"], _temp.Path);
+
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest() with { WorkingDirectory = step }, PrepWrapper.HeavySlot);
+
+        Assert.Equal(
+            ["run", "--cd", Path.Combine(_temp.Path, "nested", "src"), "--log=" + StepLog, "--", Dotnet, "build", "Game.csproj"],
+            wrapped.Arguments
+        );
+        Assert.Equal(_temp.Path, wrapped.WorkingDirectory);
+    }
+
+    [Fact]
+    public void OnlyAWrapperNamingTheCwdTokenUsesIt()
+    {
+        Assert.True(new PrepWrapper(["gate", "--cd={cwd}"], _temp.Path).UsesCwd);
+        Assert.False(new PrepWrapper(["gate", "--log", "{log}"], _temp.Path).UsesCwd);
+    }
+
+    [Fact]
     public void AWrapperNamingTheLogOwnsItAndItsOutputGoesBesideIt()
     {
         PrepWrapper wrapper = new(["gate", "-Log", "{log}"], _temp.Path);

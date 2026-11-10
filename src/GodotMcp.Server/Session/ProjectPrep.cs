@@ -808,7 +808,8 @@ internal static partial class ProjectPrep
     /// <summary>
     /// A process's <c>prep</c>: the command run once, through the project's prepWrapper when it names one, before the process
     /// starts, with the build's ceiling and a log of its own beside the process's. Wrapped or not, it runs in the process's own
-    /// folder and with the variables the profile sets for the process.
+    /// folder and with the variables the profile sets for the process: a wrapper that names <c>{cwd}</c> starts in the project
+    /// folder and hands the process's own folder on as <c>{cwd}</c>, a wrapper without it starts in the process's folder.
     /// </summary>
     /// <param name="projectDir">The folder holding the godot-mcp.json: the prep's log folder and its wrapper's working directory.</param>
     /// <param name="session">The process session the prep runs before, as its log and its refusals name it.</param>
@@ -834,9 +835,7 @@ internal static partial class ProjectPrep
         IReadOnlyList<string> argv = [PrepWrapper.ResolveProgram(command[0], projectDir), .. command.Skip(1)];
         ToolProcessRequest request = new(argv[0], [.. argv.Skip(1)], cwd, log, Ceiling) { SetVariables = env };
         var wrapper = PrepWrapper.Read(projectDir);
-        // The wrapper runs from the project folder, so the prep's own command gets that folder back: a build's relative paths
-        // and a bare script name need the process's cwd, wrapped or not.
-        ToolProcessRequest step = wrapper is null ? request : wrapper.Wrap(request, PrepWrapper.HeavySlot) with { WorkingDirectory = cwd };
+        ToolProcessRequest step = wrapper is null ? request : WrappedPrep(wrapper, request);
         string tool = wrapper is null ? $"the prep of process {session}" : $"The prepWrapper of {ProjectProfile.FileName}";
         ToolProcessResult ran = await RunToolAsync(step, tool, logger, cancellationToken);
         if (ran.WasKilled)
@@ -855,6 +854,18 @@ internal static partial class ProjectPrep
         }
 
         return new ProcessPrepResult(argv, ran.ExitCode, (long)ran.Elapsed.TotalMilliseconds, log) { Gate = GateVerdictOf(wrapper, log, logger) };
+    }
+
+    /// <summary>
+    /// A prep's command run through <paramref name="wrapper"/>: the wrapper starts in the project folder and hands the
+    /// process's own folder on as <c>{cwd}</c> when it names that token, and starts in the process's folder itself when it
+    /// names none, which is what it always did. A build's relative paths and a bare script name need the process's folder
+    /// either way.
+    /// </summary>
+    private static ToolProcessRequest WrappedPrep(PrepWrapper wrapper, ToolProcessRequest request)
+    {
+        ToolProcessRequest wrapped = wrapper.Wrap(request, PrepWrapper.HeavySlot);
+        return wrapper.UsesCwd ? wrapped : wrapped with { WorkingDirectory = request.WorkingDirectory };
     }
 
     /// <summary>Runs a prep process, through the prep wrapper when the project names one.</summary>

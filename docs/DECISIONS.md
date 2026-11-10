@@ -570,6 +570,8 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
         - GMCP-220, an orchestrator decision, not an owner ruling: it closes when the run's output ends (and on cancel, by the time `stop_project` returns, and at dispose), so a stopped session never pins its project folder.
     - **A process may declare a `prep` command** (GMCP-219, an orchestrator decision, not an owner ruling). It is shaped like `command`, runs once before the process starts and again on `restart_project`, and goes through the project's `prepWrapper` (unwrapped when there is none).
 
+      A `{cwd}` token in the wrapper's arguments is the step's own working directory (the csproj's folder for the build and the listing, the project folder for the import, the process's `cwd` for a process prep). A process prep whose wrapper holds `{cwd}` starts the wrapper in the project folder, so a project-relative wrapper script resolves, and the wrapper passes `{cwd}` on (a gate's `--cd {cwd}`) so the command runs in the process's folder. A wrapper without `{cwd}` keeps the old rule: the wrapper and the command both start in the process's `cwd`, and its script must be named by an absolute path.
+
       Only the prep is wrapped, never the process: a wrapped server would hold a gate slot for its whole life, so this gates the build without gating the server. A non-zero exit refuses the start. `options.prepare` still means nothing for a process session.
     - **A process session is reached by few tools.** `list_sessions`, `get_debug_output`, `stop_project`, `restart_project` and `wait_for {output}` reach it, a `batch_drive` tool step on it is refused at validation, and any other runtime tool is refused naming those.
 

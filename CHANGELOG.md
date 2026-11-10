@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A paced scratch step can be shot at its own moment: when the root's `GetStepShotUntil(i)` gives a condition, `options.capture` shoots the first frame it holds.
 - Every screenshot and captured frame reports the `window` and `viewport` sizes it was taken in, and warns when a letterboxed window made it smaller.
 - A project's `scratch.warnings: "red"` makes `run_scratches` fail a boot, step or exit on a warning the game logs, as on an error.
+- A `prepWrapper` takes `{cwd}`, the step's own folder, so a process prep's wrapper can name its script relative to the project.
 
 ### Changed
 

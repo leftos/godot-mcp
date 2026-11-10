@@ -48,6 +48,18 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
         + "exit $LASTEXITCODE\n";
 
+    // A prep wrapper named relative to the project folder, taking {log}, then {cwd}, then "--", then the command: it records
+    // the folder it started in, runs the command in the folder it was handed, and exits with its code.
+    private const string CwdPrepWrapperScript =
+        "$log = $args[0]\n"
+        + "$cwd = $args[1]\n"
+        + "$command = @($args | Select-Object -Skip 2)\n"
+        + "if ($command.Count -gt 0 -and $command[0] -eq '--') { $command = @($command | Select-Object -Skip 1) }\n"
+        + "Set-Content -LiteralPath (Join-Path $PSScriptRoot 'wrapper-cwd.txt') -Value (Get-Location).Path\n"
+        + "Set-Location -LiteralPath $cwd\n"
+        + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
+        + "exit $LASTEXITCODE\n";
+
     // A prep that leaves its process's marker where its own folder points, holding the variable the profile sets for the
     // process; once the test writes the file it names, its next run fails instead, so a restart's prep can be made to fail.
     private const string PrepStepScript =
@@ -458,6 +470,40 @@ public sealed class ProcessSessionTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APrepWrapperTakingTheCwdStartsInTheProjectFolderAndRunsThePrepInTheProcessCwd()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WriteCwdWrapperPreppingProfile();
+        string folder = Path.Combine(_probe.Directory, "server");
+        string marker = Path.Combine(folder, "prep-marker.txt");
+        string wrapperCwd = Path.Combine(_probe.Directory, "wrapper-cwd.txt");
+        string wrapperLog = Path.Combine(ProjectPrep.LogFolder(_probe.Directory), $"process-{Session}.prep.wrapper.log");
+
+        JsonObject started = JsonNode
+            .Parse(
+                await _process.RunProcessAsync(
+                    _probe.Directory,
+                    "prepped",
+                    options: new ProcessRunOptions(Session: Session),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+
+        Assert.Equal("prep-marker: yes", started["ready"]!["line"]!.GetValue<string>());
+        Assert.Equal(0, started["prep"]!["exit"]!.GetValue<int>());
+        // The project-relative wrapper started in the project folder, and its prep ran in the process's own folder.
+        Assert.True(File.Exists(wrapperCwd), $"the wrapper wrote no cwd in {_probe.Directory}");
+        string startedIn = File.ReadAllText(wrapperCwd).Trim();
+        Assert.True(ProjectPaths.AreSame(_probe.Directory, startedIn), $"the wrapper started in {startedIn}");
+        Assert.True(File.Exists(marker), $"the prep wrote no marker in {folder}");
+        Assert.False(File.Exists(Path.Combine(_probe.Directory, "prep-marker.txt")), "the prep ran in the project folder, not in the process's cwd");
+        Assert.True(File.Exists(wrapperLog), $"the wrapper's own log {wrapperLog} was not written");
+
+        await _project.StopProjectAsync(Session, cancellationToken: cancellation);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task APrepWithoutAPrepWrapperRunsUnwrapped()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -595,6 +641,35 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         File.WriteAllText(Path.Combine(folder, "prep-step.ps1"), PrepStepScript);
         File.WriteAllText(Path.Combine(folder, "prep-check.ps1"), PrepCheckScript);
         File.WriteAllText(Path.Combine(folder, "prep-fails.ps1"), PrepFailsScript);
+    }
+
+    // A profile whose prep runs through a wrapper named relative to the project folder that takes {cwd}: the wrapper's own
+    // folder and the prep's folder are each pinned by a file it writes there.
+    private void WriteCwdWrapperPreppingProfile()
+    {
+        string folder = Path.Combine(_probe.Directory, "server");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(
+            Path.Combine(_probe.Directory, ProjectProfile.FileName),
+            """
+            {
+              "prepWrapper": ["pwsh", "-NoProfile", "-File", "./prep-wrapper-cwd.ps1", "{log}", "{cwd}", "--"],
+              "processes": {
+                "prepped": {
+                  "command": ["pwsh", "-NoProfile", "-File", "prep-check.ps1"],
+                  "cwd": "server",
+                  "env": {"PREP_ENV": "from-profile"},
+                  "prep": ["pwsh", "-NoProfile", "-File", "prep-step.ps1"],
+                  "ready": {"output": "prep-marker: (yes|no)"},
+                  "description": "prints whether its prep ran before it started"
+                }
+              }
+            }
+            """
+        );
+        File.WriteAllText(Path.Combine(_probe.Directory, "prep-wrapper-cwd.ps1"), CwdPrepWrapperScript);
+        File.WriteAllText(Path.Combine(folder, "prep-step.ps1"), PrepStepScript);
+        File.WriteAllText(Path.Combine(folder, "prep-check.ps1"), PrepCheckScript);
     }
 
     private async Task WaitUntilNotLiveAsync(string session)

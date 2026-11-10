@@ -7,10 +7,13 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// The command a project's godot-mcp.json names under <c>prepWrapper</c>, which the prep runs each of its processes through
 /// (the C# build and the Godot import): the command's first element is the program, the rest its
-/// arguments, with <c>{log}</c> replaced by the step's log, <c>{ceiling}</c> by the prep's ceiling in whole seconds and
+/// arguments, with <c>{log}</c> replaced by the step's log, <c>{ceiling}</c> by the prep's ceiling in whole seconds,
 /// <c>{slot}</c> by the step's slot (<see cref="HeavySlot"/> or <see cref="LightSlot"/>; a command without it keeps its own
-/// slot for every step), and the wrapped program and its arguments appended: a program with a folder in it is absolute against its own working
-/// directory, and a bare name is left for the wrapper's PATH. A wrapper that names <c>{log}</c> writes that file itself.
+/// slot for every step) and <c>{cwd}</c> by the folder the step's own command runs in, absolute; and the wrapped program and
+/// its arguments appended: a program with a folder in it is absolute against its own working
+/// directory, and a bare name is left for the wrapper's PATH. The wrapper starts in the project folder; a caller that needs
+/// it elsewhere moves the request it gets back, as a process prep does when its wrapper names no <c>{cwd}</c>.
+/// A wrapper that names <c>{log}</c> writes that file itself.
 /// </summary>
 /// <param name="Command">The wrapper's program, then its arguments, as the file lists them.</param>
 /// <param name="ProjectDir">The folder holding the godot-mcp.json: the wrapper's working directory.</param>
@@ -21,6 +24,9 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     public const string CeilingToken = "{ceiling}";
 
     public const string SlotToken = "{slot}";
+
+    /// <summary>What the folder the step's own command runs in becomes: absolute, as <see cref="ProjectPaths.Normalise"/> gives it.</summary>
+    public const string CwdToken = "{cwd}";
 
     /// <summary>What <see cref="SlotToken"/> becomes for the C# build, the Godot import and a process's prep.</summary>
     public const string HeavySlot = "heavy";
@@ -54,6 +60,9 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
 
     /// <summary>Whether an element names the step's log, so the wrapper writes it and its own output goes to a file beside it.</summary>
     public bool OwnsLog => Command.Any(element => element.Contains(LogToken, StringComparison.Ordinal));
+
+    /// <summary>Whether an element names the folder the step's own command runs in, so the wrapper can pass it on.</summary>
+    public bool UsesCwd => Command.Any(element => element.Contains(CwdToken, StringComparison.Ordinal));
 
     /// <summary>What the prep's note says when a process ran through the wrapper.</summary>
     public string Note => $"ran through prepWrapper ({Program})";
@@ -156,16 +165,19 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
         lines.LastOrDefault(line => forms.Any(form => line.StartsWith(form, StringComparison.Ordinal)));
 
     /// <summary>
-    /// <paramref name="request"/> run through the wrapper, from the project folder, with its output captured into
+    /// <paramref name="request"/> run through the wrapper, which starts in the project folder, with its output captured into
     /// <see cref="CaptureLog"/>, its console watched for a gate's wait for a slot (<see cref="Watch"/>), and no stall kill:
     /// a gate waiting for a slot uses no CPU, and though it prints a waiting line and a heartbeat every 30 s, a wrapper owes
     /// the server no output. The ceiling holds, paused while the gate waits, and a wall backstop bounds the whole step.
+    /// The result starts in the project folder too; a caller that needs the wrapper elsewhere moves its
+    /// <c>WorkingDirectory</c>, and <c>{cwd}</c> still names the step's own folder.
     /// </summary>
     /// <param name="request">The step's own command.</param>
     /// <param name="slot">What <see cref="SlotToken"/> becomes: <see cref="HeavySlot"/>, or <see cref="LightSlot"/> for the Compile listing.</param>
     public ToolProcessRequest Wrap(ToolProcessRequest request, string slot)
     {
         string ceiling = ((long)request.Ceiling.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        string cwd = ProjectPaths.Normalise(request.WorkingDirectory);
         string[] command =
         [
             .. Command.Select(element =>
@@ -173,6 +185,7 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
                     .Replace(LogToken, request.LogPath, StringComparison.Ordinal)
                     .Replace(CeilingToken, ceiling, StringComparison.Ordinal)
                     .Replace(SlotToken, slot, StringComparison.Ordinal)
+                    .Replace(CwdToken, cwd, StringComparison.Ordinal)
             ),
         ];
         return Watch(
