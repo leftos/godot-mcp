@@ -33,6 +33,8 @@ ALL_GROUPS = [
     "scratchparallel",
     "scratchuntil",
     "scratchbackground",
+    "editor",
+    "editorcs",
 ]
 # Every group a rule's 'all' selects: all of them but the visible-desktop ones.
 ALL_BUT_VISIBLE = [group for group in ALL_GROUPS if group != "capture"]
