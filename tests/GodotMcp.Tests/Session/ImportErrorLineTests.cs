@@ -21,6 +21,8 @@ public sealed class ImportErrorLineTests : IDisposable
     [InlineData("2026-01-01T00:00:00 out note: ERROR: in the middle", false)]
     [InlineData("   at: _foo (editor/x.cpp:1)", false)]
     [InlineData("[12:00:01] ERROR: x", false)]
+    [InlineData("2026-01-01T00:00:00 out 2026-01-01T00:00:00 out ERROR: x", false)]
+    [InlineData("2026-01-01T00:00:00 out", false)]
     public void TheLineIsAnImportErrorOnlyWhenTheEngineTextStartsIt(string line, bool expected) =>
         Assert.Equal(expected, ProjectPrep.IsImportError(line));
 

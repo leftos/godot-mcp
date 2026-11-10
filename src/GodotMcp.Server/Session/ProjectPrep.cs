@@ -578,8 +578,10 @@ internal static partial class ProjectPrep
     [GeneratedRegex(@"^(?:\S+ (?:out|err) )?ERROR:", RegexOptions.CultureInvariant)]
     private static partial Regex ImportErrorPattern();
 
-    /// <summary>Whether a line of the import's log is an engine error: <c>ERROR:</c> at its start, or after the
-    /// <c>&lt;stamp&gt; out|err </c> a gate puts before each line it logs.</summary>
+    /// <summary>
+    /// Whether a line of the import's log is an engine error: <c>ERROR:</c> at its start, or after the
+    /// <c>&lt;stamp&gt; out|err </c> a gate puts before each line it logs.
+    /// </summary>
     internal static bool IsImportError(string line) => ImportErrorPattern().IsMatch(line);
 
     /// <summary>Whether the class cache names a <c>[GlobalClass]</c> after an import that it did not name before it.</summary>
