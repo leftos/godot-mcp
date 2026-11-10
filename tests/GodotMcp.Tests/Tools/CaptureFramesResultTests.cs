@@ -158,6 +158,46 @@ public sealed class CaptureFramesResultTests
 
     private static IEnumerable<string> Names(JsonObject result) => result["files"]!.AsArray().Select(name => name!.GetValue<string>());
 
+    [Fact]
+    public void AFirstFrameAPixelShortOfItsWindowCarriesTheLetterboxWarning()
+    {
+        JsonObject result = RuntimeTools.ShapeFrames(Wire(KeepFrame(First, 0.1), KeepFrame(Second, 0.2)), cropped: false, deliver: null);
+
+        Assert.Equal(PreviewTools.DescribeLetterbox(1365, 768, 1366, 768), result["warning"]?.GetValue<string>());
+        Assert.Equal("""{"width":1366,"height":768}""", result["window"]?.ToJsonString());
+        Assert.Equal("""{"width":640,"height":360}""", result["viewport"]?.ToJsonString());
+    }
+
+    [Fact]
+    public void ACroppedCaptureCarriesNoLetterboxWarning() =>
+        Assert.Null(RuntimeTools.ShapeFrames(Wire(KeepFrame(First, 0.1)), cropped: true, deliver: null)["warning"]);
+
+    [Fact]
+    public void AFailedCopysWarningComesBeforeTheLetterboxWarning()
+    {
+        JsonObject result = RuntimeTools.ShapeFrames(
+            Wire(KeepFrame(First, 0.1)),
+            cropped: false,
+            deliver: shaped => shaped["warning"] = "copy failed"
+        );
+
+        Assert.Equal($"copy failed; {PreviewTools.DescribeLetterbox(1365, 768, 1366, 768)}", result["warning"]?.GetValue<string>());
+    }
+
+    /// <summary>The reply as the server reads it off the wire, its numbers parsed from JSON text as the bridge's are.</summary>
+    private static JsonObject Wire(params JsonObject[] frames) => JsonNode.Parse(Reply(frames).ToJsonString())!.AsObject();
+
+    /// <summary>A frame entry taken in a 1366x768 window that keep draws 1365 wide around a 640x360 viewport.</summary>
+    private static JsonObject KeepFrame(string path, double at)
+    {
+        JsonObject frame = Frame(path, at);
+        frame["width"] = 1365;
+        frame["height"] = 768;
+        frame["window"] = new JsonObject { ["width"] = 1366, ["height"] = 768 };
+        frame["viewport"] = new JsonObject { ["width"] = 640, ["height"] = 360 };
+        return frame;
+    }
+
     private static int Shared(params JsonObject[] frames) => RuntimeTools.CompactFrames(Reply(frames))["shared"]!.GetValue<int>();
 
     private static JsonObject Reply(params JsonObject[] frames) => new() { ["frames"] = new JsonArray([.. frames]) };

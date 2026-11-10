@@ -417,8 +417,9 @@ static func due_points(points: Array, taken: int, elapsed: float) -> Array:
 
 
 ## One entry per due point, all sharing saved's file: {at, frame, gameSeconds, late, path, width,
-## height}, with late the seconds gameSeconds passed at by, to the millisecond, and the frame's
-## read, {values, trackErrors?} (the watch's read_values) or {}, merged in.
+## height, window?, viewport?}, window and viewport when saved has them, with late the seconds
+## gameSeconds passed at by, to the millisecond, and the frame's read, {values, trackErrors?} (the
+## watch's read_values) or {}, merged in.
 static func frame_entries(
 	due: Array, saved: Dictionary, frame: int, elapsed: float, read: Dictionary
 ) -> Array:
@@ -433,6 +434,9 @@ static func frame_entries(
 			"width": saved["width"],
 			"height": saved["height"],
 		}
+		for size: String in ["window", "viewport"]:
+			if saved.has(size):
+				entry[size] = saved[size]
 		entry.merge(read)
 		entries.append(entry)
 	return entries

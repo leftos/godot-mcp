@@ -290,6 +290,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         ];
 
         Assert.Equal((120.0, 80.0), PngSize(Image(blocks)));
+        Assert.Null(JsonNode.Parse(Text(blocks))!["warning"]);
     }
 
     [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -339,6 +340,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
 
         Assert.Equal(Size(plain), Size(after));
         Assert.Null(plain["scale"]);
+        Assert.Equal(plain["window"]?.ToJsonString(), scaled["window"]?.ToJsonString());
     }
 
     [Fact(Timeout = TestTimeoutMs)]

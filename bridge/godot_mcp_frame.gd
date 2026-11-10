@@ -12,6 +12,8 @@ extends Node
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
 ## What a capture answers when a drawing game's viewport has no image.
 const NO_IMAGE := "the viewport returned no image"
+## The meta key of the {window, viewport} sizes stamp_sizes records on a grabbed image.
+const SIZES_META := &"godot_mcp_sizes"
 ## What a frame-reading tool answers on a headless game (headless_refusal).
 const HEADLESS_REFUSAL := (
 	"a headless game draws no frames, so there is nothing to capture; read state with "
@@ -93,14 +95,18 @@ static func headless_warning() -> String:
 ## of a project that turns embed_subwindows off, an OS window of its own) pasted on it at its place
 ## in the frame, in the order the display server lists them; null when the viewport has no
 ## image, and on a headless game, whose viewport is never read. Embedded windows are already in
-## the root viewport's image.
+## the root viewport's image. The image is stamped (stamp_sizes) with the root's window and
+## viewport sizes, read with the texture.
 func grab_frame() -> Image:
 	if is_headless():
 		return null
 	var canvas: Image = get_viewport().get_texture().get_image()
 	if canvas == null:
 		return null
-	return paste_windows(canvas, _native_window_images())
+	var frame: Image = paste_windows(canvas, _native_window_images())
+	var sizes: Array[Vector2i] = _root_sizes()
+	stamp_sizes(frame, sizes[0], sizes[1])
+	return frame
 
 
 ## canvas with each {image: Image, rect: Rect2i} of windows alpha-blended on it in order: the image
@@ -166,9 +172,9 @@ static func _rect_through(transform: Transform2D, rect: Rect2) -> Rect2i:
 
 ## Saves image (cropped when params.crop is set) as a PNG under the project's .godot/ folder,
 ## which projects keep out of git, and a scaled-down copy when the image is wider than
-## params.previewMaxWidth. Returns {path, width, height[, previewPath, previewWidth,
-## previewHeight]}, or a String saying why it could not: on a headless game, with no image,
-## HEADLESS_REFUSAL.
+## params.previewMaxWidth. Returns {path, width, height, window, viewport[, previewPath,
+## previewWidth, previewHeight]}, window and viewport the sizes of the frame the image was grabbed
+## in, or a String saying why it could not: on a headless game, with no image, HEADLESS_REFUSAL.
 func save_screenshot(image: Image, params: Dictionary) -> Variant:
 	var prepared: Variant = _prepare_screenshot(image, params, "")
 	if prepared is String:
@@ -180,8 +186,8 @@ func save_screenshot(image: Image, params: Dictionary) -> Variant:
 ## named for the frame too (<stamp>-<pid>-<frame>.png), so two frames saved in one millisecond
 ## never share a path. While fewer than MAX_SAVES_IN_FLIGHT saves run, it only crops and names the
 ## file here and hands the PNG's encode and write to a WorkerThreadPool task, which finish_saves
-## collects; at the cap it saves here. Returns {path, width, height}, the file still being written
-## when a task has it, or a String as save_screenshot.
+## collects; at the cap it saves here. Returns {path, width, height, window, viewport}, the file
+## still being written when a task has it, or a String as save_screenshot.
 func save_screenshot_off_thread(image: Image, params: Dictionary) -> Variant:
 	var tag: String = "-%d" % Engine.get_process_frames()
 	var prepared: Variant = _prepare_screenshot(image, params, tag)
@@ -285,10 +291,57 @@ func _write_screenshot(prepared: Dictionary, params: Dictionary) -> Variant:
 	return result
 
 
-## A save's {path, width, height} from _prepare_screenshot's result.
+## A save's {path, width, height} from _prepare_screenshot's result, with the window's and the
+## root viewport's size it was taken in as {width, height}: under stretch aspect keep the capture
+## is the window less its letterbox bars, so the two can differ. The sizes are the ones stamped on
+## the image at its grab; an image without them gets the root's sizes now (_root_sizes), read
+## from the main loop so a save works on a node outside the tree too.
 static func _saved(prepared: Dictionary) -> Dictionary:
 	var image: Image = prepared["image"]
-	return {"path": prepared["path"], "width": image.get_width(), "height": image.get_height()}
+	var sizes: Dictionary
+	if image.has_meta(SIZES_META):
+		sizes = image.get_meta(SIZES_META)
+	else:
+		var now: Array[Vector2i] = _root_sizes()
+		sizes = _sizes_entry(now[0], now[1])
+	return {
+		"path": prepared["path"],
+		"width": image.get_width(),
+		"height": image.get_height(),
+		"window": sizes["window"],
+		"viewport": sizes["viewport"],
+	}
+
+
+## Records on image the window's and the root viewport's size of the frame it was grabbed in, which
+## _saved reports in place of the sizes at the save.
+static func stamp_sizes(image: Image, window: Vector2i, viewport: Vector2i) -> void:
+	image.set_meta(SIZES_META, _sizes_entry(window, viewport))
+
+
+## window and viewport as the {window, viewport} entry of {width, height} sizes a save reports.
+static func _sizes_entry(window: Vector2i, viewport: Vector2i) -> Dictionary:
+	return {"window": _size_of(window), "viewport": _size_of(viewport)}
+
+
+## target with source's stamped sizes copied on it when source has them; get_region gives a new
+## Image without its source's meta.
+static func _with_sizes_of(source: Image, target: Image) -> Image:
+	if source.has_meta(SIZES_META):
+		target.set_meta(SIZES_META, source.get_meta(SIZES_META))
+	return target
+
+
+## The main loop's root window's size, the one Godot computes the frame from (scene/main/window.cpp
+## L1329-1333 in 4.7.2), and its visible rect's size rounded: [window, viewport].
+static func _root_sizes() -> Array[Vector2i]:
+	var root: Window = (Engine.get_main_loop() as SceneTree).root
+	return [root.size, Vector2i(root.get_visible_rect().size.round())]
+
+
+## size as a reply's {width, height}.
+static func _size_of(size: Vector2i) -> Dictionary:
+	return {"width": size.x, "height": size.y}
 
 
 ## A save task's work, on a worker thread: image encoded and written as a PNG at path, its Error
@@ -300,7 +353,7 @@ static func _encode(image: Image, path: String, outcome: Array[Error]) -> void:
 ## The part of image, a frame of the root viewport, inside the crop {x, y, width, height}, or a
 ## String when none of it is. The crop is in viewport coordinates and is mapped to the frame's
 ## pixels through _viewport_to_frame, never less than a pixel a side, so a stretched window's
-## crop keeps the same content at the frame's scale.
+## crop keeps the same content at the frame's scale. The part keeps image's stamped sizes.
 func crop(image: Image, region: Dictionary) -> Variant:
 	var wanted := Rect2i(
 		int(region.get("x", 0)),
@@ -312,7 +365,7 @@ func crop(image: Image, region: Dictionary) -> Variant:
 	if not inside.has_area():
 		var viewport_size := Vector2i(get_viewport().get_visible_rect().size)
 		return "the crop %s lies outside the %s viewport" % [wanted, viewport_size]
-	return image.get_region(inside)
+	return _with_sizes_of(image, image.get_region(inside))
 
 
 ## The part of a frame of frame_size inside wanted, a rect in viewport coordinates mapped to frame
@@ -324,7 +377,8 @@ static func crop_rect(to_frame: Transform2D, wanted: Rect2i, frame_size: Vector2
 
 
 ## Saves the next drawn frame as save_screenshot does; with params.scale above 1, the frame
-## grab_scaled takes, its reply adding scale and any warning.
+## grab_scaled takes, its reply adding scale and any warning, its window and viewport those before
+## the window grew, stamped on the image.
 func capture_screenshot(params: Dictionary) -> Variant:
 	var scale: float = float(params.get("scale", 1.0))
 	if scale <= 1.0:
@@ -338,7 +392,7 @@ func capture_screenshot(params: Dictionary) -> Variant:
 	var saved: Variant = save_screenshot(shot["image"], uncropped)
 	if saved is Dictionary:
 		shot.erase("image")
-		saved.merge(shot)
+		saved.merge(shot, true)
 	return saved
 
 
@@ -359,7 +413,8 @@ static func scale_refusal(stretch_mode: int, window_mode: int, movie_path: Strin
 ## The root window grown to scale times its size for one drawn frame, that frame grabbed (cropped to
 ## region, a viewport rect, through the grown frame's own transform when region is a Dictionary),
 ## and the window restored: {image, scale[, warning]} as scaled_shot gives it, or a String saying
-## why not. The refusals come before any resize.
+## why not. The image is stamped (stamp_sizes) with the window and viewport sizes before the grow.
+## The refusals come before any resize.
 func grab_scaled(scale: float, region: Variant) -> Variant:
 	var root: Window = get_tree().root
 	var refusal: String = scale_refusal(
@@ -368,12 +423,15 @@ func grab_scaled(scale: float, region: Variant) -> Variant:
 	if not refusal.is_empty():
 		return refusal
 	var original: Vector2i = root.size
+	var before: Array[Vector2i] = _root_sizes()
 	var wanted := Vector2i((Vector2(original) * scale).round())
 	root.size = wanted
 	await get_tree().process_frame
 	await wait_for_drawn_frame()
 	var got: Vector2i = root.size
 	var image: Image = grab_frame()
+	if image != null:
+		stamp_sizes(image, before[0], before[1])
 	var shot: Variant = crop(image, region) if image != null and region is Dictionary else image
 	var unrestored: String = await _restore_size(root, original)
 	if shot == null:

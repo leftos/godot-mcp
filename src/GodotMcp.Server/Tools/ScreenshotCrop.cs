@@ -25,5 +25,20 @@ internal enum ScreenshotMode
 /// <summary>A screenshot's bridge request: the image the result carries and the bridge's parameters.</summary>
 internal sealed record ScreenshotRequest(ScreenshotMode Mode, JsonObject Parameters);
 
-/// <summary>The files the bridge saved for one screenshot, with native paths; the preview only when one was made.</summary>
-internal sealed record ScreenshotFiles(string Path, int Width, int Height, string? PreviewPath, int? PreviewWidth, int? PreviewHeight);
+/// <summary>A size in pixels, as a capture reply's window and viewport give it.</summary>
+internal sealed record CaptureSize(int Width, int Height);
+
+/// <summary>
+/// The files the bridge saved for one screenshot, with native paths; the preview only when one was made; and the window's and
+/// the viewport's size it was taken in, null when the reply leaves them out.
+/// </summary>
+internal sealed record ScreenshotFiles(
+    string Path,
+    int Width,
+    int Height,
+    string? PreviewPath,
+    int? PreviewWidth,
+    int? PreviewHeight,
+    CaptureSize? Window,
+    CaptureSize? Viewport
+);

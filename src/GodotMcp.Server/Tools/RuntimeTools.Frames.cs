@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -42,8 +43,10 @@ internal sealed partial class RuntimeTools
             + "game time from the call's start, the sum of each process frame's delta, so they follow Engine.time_scale as the "
             + "game's timers do. Each point is taken in the first frame at or after it; a late frame is still taken, and late says "
             + "by how much. Points due in the same frame share one file. At most 1000 points and 120 s. Each frame is saved as "
-            + "take_screenshot saves it, path only, no image. Returns {folder, files, width, height, points: [{at, frame, file, "
-            + "gameSeconds, late, values?, trackErrors?}], shared}: folder is the directory of the PNGs, files names each distinct one once in the "
+            + "take_screenshot saves it, path only, no image. Returns {folder, files, width, height, window, viewport, warning?, "
+            + "points: [{at, frame, file, gameSeconds, late, values?, trackErrors?}], shared}: window and viewport are the first "
+            + "frame's, as take_screenshot gives them, with its letterbox warning when that frame is not the window's size (never "
+            + "for a crop); folder is the directory of the PNGs, files names each distinct one once in the "
             + "order first taken, a point's file indexes files, and shared is how many points took a file an earlier point "
             + "took. When options.timeoutMs (by default the last point's seconds + 10 s + 100 ms per point, load-adjusted) "
             + "passes first, for example under a small time_scale, it answers the frames taken with stopped: true and missed, "
@@ -96,9 +99,25 @@ internal sealed partial class RuntimeTools
         FrameTargets? destination = options?.Path is { } path ? FrameDestination(path, points.Length, options.Overwrite is true, session) : null;
         await PrepareGameToolCallsAsync("capture_frames", parameters, session, cancellationToken);
         BridgeResult result = await CallWithErrorsAsync(Find(session), CaptureCall(parameters, allowance), cancellationToken);
-        JsonObject compact = CompactFrames(CaptureReply(result));
-        destination?.Deliver(compact);
+        JsonObject compact = ShapeFrames(CaptureReply(result), IsCropped(parameters), destination is null ? null : destination.Deliver);
         return ErrorReport.AddTo(compact, result.Errors).ToJsonString();
+    }
+
+    /// <summary>
+    /// The bridge's frames as <see cref="CompactFrames"/> shapes them, handed to <paramref name="deliver"/> (the copy to
+    /// options.path, whose failure sets the warning) when given, then the first frame's letterbox warning after any warning
+    /// the copy left, unless the capture was <paramref name="cropped"/>.
+    /// </summary>
+    internal static JsonObject ShapeFrames(JsonObject reply, bool cropped, Action<JsonObject>? deliver)
+    {
+        JsonObject compact = CompactFrames(reply);
+        deliver?.Invoke(compact);
+        if (reply["frames"] is JsonArray { Count: > 0 } frames && frames[0] is JsonObject first)
+        {
+            AddWarning(compact, LetterboxWarning(ReadScreenshotFiles(first), cropped, scale: 1));
+        }
+
+        return compact;
     }
 
     /// <summary>The .tmp stem capture_frames copies its frames to, checked with every name it could write before anything is captured.</summary>
@@ -413,19 +432,32 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// The capture's own fields: the folder its frames sit in, their size, and the distinct file names in first-taken
-    /// order. A capture stopped before its first point took no frame, so it has none of these.
+    /// The capture's own fields: the folder its frames sit in, their size, the window and viewport the first frame was taken
+    /// in, and the distinct file names in first-taken order. A capture stopped before its first point took no frame, so it
+    /// has none of these but the files.
     /// </summary>
     private static void AddCapture(JsonObject result, List<JsonObject> frames, List<string> paths)
     {
         if (frames.Count > 0)
         {
+            ScreenshotFiles first = ReadScreenshotFiles(frames[0]);
             result["folder"] = Path.GetDirectoryName(paths[0]);
             result["width"] = frames[0]["width"]?.DeepClone();
             result["height"] = frames[0]["height"]?.DeepClone();
+            AddSize(result, "window", first.Window);
+            AddSize(result, "viewport", first.Viewport);
         }
 
         result["files"] = new JsonArray([.. paths.Select(path => JsonValue.Create(Path.GetFileName(path)))]);
+    }
+
+    /// <summary>result's <paramref name="field"/> as size's {width, height}; left out when the frame named no such size.</summary>
+    private static void AddSize(JsonObject result, string field, CaptureSize? size)
+    {
+        if (size is not null)
+        {
+            result[field] = JsonSerializer.SerializeToNode(size, Json);
+        }
     }
 
     /// <summary>

@@ -110,6 +110,18 @@ func test_a_point_is_due_at_or_after_its_time() -> void:
 	assert_eq(_time_script.due_points([0.1, 0.3], 2, 5.0), [], "all taken")
 
 
+func test_an_entry_carries_the_window_and_viewport_its_save_was_taken_in() -> void:
+	var sizes: Dictionary = {
+		"window": {"width": 1366, "height": 768}, "viewport": {"width": 640, "height": 360}
+	}
+	var saved: Dictionary = SAVED.merged(sizes)
+	var entry: Dictionary = _time_script.frame_entries([0.1], saved, 3, 0.12, {})[0]
+	assert_eq(entry.get("window"), sizes["window"], "the window")
+	assert_eq(entry.get("viewport"), sizes["viewport"], "the viewport")
+	var bare: Dictionary = _time_script.frame_entries([0.1], SAVED, 3, 0.12, {})[0]
+	assert_true(not bare.has("window") and not bare.has("viewport"), "none saved: %s" % bare)
+
+
 func test_two_points_due_in_one_frame_share_a_grab() -> void:
 	var due: Array = _time_script.due_points([0.1, 0.3, 0.3], 1, 0.35)
 	var entries: Array = _time_script.frame_entries(due, SAVED, 42, 0.35, {})

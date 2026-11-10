@@ -127,36 +127,10 @@ internal sealed class PreviewTools(SessionRegistry sessions)
                 text["scene"] = reply?["scene"]?.DeepClone();
                 text["cameraAdded"] = reply?["cameraAdded"]?.DeepClone();
                 text["prep"] = JsonSerializer.SerializeToNode(prep, Json);
-                AddSizes(text, reply);
             },
             limit
         );
     }
-
-    /// <summary>The window's and the viewport's size, and the warning when the capture differs, copied from the reply into the result.</summary>
-    private static void AddSizes(JsonObject text, JsonNode? reply)
-    {
-        if (reply is not JsonObject result)
-        {
-            return;
-        }
-
-        text["window"] = result["window"]?.DeepClone();
-        text["viewport"] = result["viewport"]?.DeepClone();
-        if (LetterboxWarning(result) is { } warning)
-        {
-            text["warning"] = warning;
-        }
-    }
-
-    /// <summary>The result's letterbox warning, from its capture's size and the window's; null when the reply names no window.</summary>
-    private static string? LetterboxWarning(JsonObject reply) =>
-        reply["window"] is JsonObject window
-            ? DescribeLetterbox(Pixels(reply["width"]), Pixels(reply["height"]), Pixels(window["width"]), Pixels(window["height"]))
-            : null;
-
-    /// <summary>A reply's pixel count, 0 when the field is missing: a size a reply leaves out cannot match another, so it warns.</summary>
-    private static int Pixels(JsonNode? node) => node?.GetValue<int>() ?? 0;
 
     /// <exception cref="McpException">The path is empty or holds no project.godot.</exception>
     private static string ProjectDir(string projectPath)

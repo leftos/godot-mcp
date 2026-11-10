@@ -99,7 +99,8 @@ internal sealed partial class RuntimeTools
             + "session's input gate as an input tool plays; the result adds inputNotSent, held and warning as its description "
             + "says. time_scale sets Engine.time_scale, which scales process and physics delta. Returns {paused, timeScale, "
             + "processFrames, physicsFrames}, the frames and ticks the step ran (0 for other actions), plus a step's frame "
-            + "(Engine.get_process_frames() where it stopped), screenshot when captured, and with until met plus value (args "
+            + "(Engine.get_process_frames() where it stopped), screenshot when captured ({path, width, height, window, viewport, "
+            + "warning?, previewPath, ...} as take_screenshot gives them), and with until met plus value (args "
             + "for a signal) or last as wait_for reports them: never met, it runs count frames and answers met: false. Like "
             + "wait_for's, an expression until adds failedChecks and mutedErrors when it has them."
     )]
@@ -121,7 +122,7 @@ internal sealed partial class RuntimeTools
         BridgeResult result = parameters.ContainsKey("input")
             ? await CallUnderInputGateAsync(target, call, cancellationToken)
             : await CallWithErrorsAsync(target, call, cancellationToken);
-        return await ShapeFrameResultAsync(result, cancellationToken);
+        return await ShapeFrameResultAsync(result, parameters, cancellationToken);
     }
 
     /// <summary>A step with riding input, run once any earlier input call on the session has finished, as an input tool
@@ -180,7 +181,8 @@ internal sealed partial class RuntimeTools
             + "snapshot when the wait starts instead, replacing one a gesture left, for a wait in a parallel group beside an input "
             + "in another session. options.screenshot: true "
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
-            + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
+            + "following take_screenshot can catch, adding screenshot to the result ({path, width, height, window, viewport, "
+            + "warning?, previewPath, ...} as take_screenshot gives them; a timed-out wait captures nothing, and a "
             + "frame that was not drawn gives a warning instead); options.path with it also copies the capture to a file in the "
             + "checkout's or the main checkout's .tmp folder, checked before the wait starts, which screenshot.path then names, "
             + "with screenshot.capturePath the copy under .godot/. options.call {node, method, args}, or {tool, args} for a game "
@@ -242,7 +244,7 @@ internal sealed partial class RuntimeTools
         PlaceThenMark(reply, thenMark);
         // The bridge already saved the screenshot, so its read is local and short: a cancel that landed during the extra clock
         // ping must not lose a wait that met.
-        return await WithCaptureAsync(reply, reply, result.Errors, copy, CancellationToken.None);
+        return await WithCaptureAsync(reply, reply, result.Errors, new ShotRequest(IsCropped(parameters), copy), CancellationToken.None);
     }
 
     /// <summary>wait_for without a capture, answered as its JSON text: the form a batch step runs.</summary>
@@ -1221,24 +1223,34 @@ internal sealed partial class RuntimeTools
 
     /// <summary>The frame reply as {paused, timeScale, processFrames, physicsFrames[, frame, met, value | args | last,
     /// failedChecks, mutedErrors, screenshot]}, and the preview image when captured.</summary>
-    private static async Task<IEnumerable<ContentBlock>> ShapeFrameResultAsync(BridgeResult result, CancellationToken cancellationToken)
+    private static async Task<IEnumerable<ContentBlock>> ShapeFrameResultAsync(
+        BridgeResult result,
+        JsonObject parameters,
+        CancellationToken cancellationToken
+    )
     {
         JsonObject reply =
             result.Reply as JsonObject
             ?? throw new McpException($"The bridge's frame reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
-        return await WithCaptureAsync(FrameState(reply), reply, result.Errors, null, cancellationToken);
+        return await WithCaptureAsync(FrameState(reply), reply, result.Errors, new ShotRequest(IsCropped(parameters), null), cancellationToken);
     }
 
     /// <summary>
+    /// Whether a capture was cropped, read from its own crop field (a wait's or a step's scale is the time scale, never the
+    /// capture's), and the copy of its file to make, if any.
+    /// </summary>
+    private sealed record ShotRequest(bool Cropped, Action<JsonObject>? Copy);
+
+    /// <summary>
     /// <paramref name="text"/> with the errors as one text block; when <paramref name="reply"/> carries a screenshot, text's
-    /// screenshot is its saved files as take_screenshot names them, changed by <paramref name="copy"/> when given, and the
-    /// preview image follows.
+    /// screenshot is its saved files as take_screenshot names them, changed by the request's copy when given, with the letterbox
+    /// warning after the copy's, and the preview image follows.
     /// </summary>
     private static async Task<IEnumerable<ContentBlock>> WithCaptureAsync(
         JsonObject text,
         JsonObject reply,
         IReadOnlyList<ErrorEntry> errors,
-        Action<JsonObject>? copy,
+        ShotRequest request,
         CancellationToken cancellationToken
     )
     {
@@ -1249,7 +1261,8 @@ internal sealed partial class RuntimeTools
 
         ScreenshotFiles files = ReadScreenshotFiles(screenshot);
         JsonObject shot = JsonSerializer.SerializeToNode(files, Json)!.AsObject();
-        copy?.Invoke(shot);
+        request.Copy?.Invoke(shot);
+        AddWarning(shot, LetterboxWarning(files, request.Cropped, scale: 1));
         text["screenshot"] = shot;
         byte[] image = await ReadImageAsync(files.PreviewPath ?? files.Path, cancellationToken);
         return [new TextContentBlock { Text = ErrorReport.AddTo(text, errors).ToJsonString() }, ImageContentBlock.FromBytes(image, "image/png")];

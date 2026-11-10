@@ -1,5 +1,6 @@
 # gdlint: disable=private-method-call
-# The tests call the clock's private _with_capture directly.
+# The tests call the clock's private _with_capture and the frame's private _saved and
+# _with_sizes_of directly.
 extends "res://gd_test.gd"
 ## The frame readers on a headless game (bridge/godot_mcp_frame.gd and the clock's captures in
 ## godot_mcp_time.gd): gdtest runs Godot with --headless, so every test here meets the real
@@ -52,6 +53,40 @@ func test_saving_no_image_on_a_headless_game_gives_the_refusal() -> void:
 	var frame: Node = _frame_script.new()
 	assert_eq(frame.save_screenshot(null, {}), HEADLESS_REFUSAL, "save_screenshot")
 	frame.free()
+
+
+func test_a_saved_capture_says_the_window_and_viewport_it_was_taken_in() -> void:
+	var root: Window = (Engine.get_main_loop() as SceneTree).root
+	var image := Image.create(4, 3, false, Image.FORMAT_RGBA8)
+	var saved: Dictionary = _frame_script._saved({"image": image, "path": "shot.png"})
+	var window: Vector2i = root.size
+	var viewport: Vector2 = root.get_visible_rect().size
+	assert_eq(saved.get("window"), {"width": window.x, "height": window.y}, "the window")
+	var viewport_size: Dictionary = {"width": roundi(viewport.x), "height": roundi(viewport.y)}
+	assert_eq(saved.get("viewport"), viewport_size, "the viewport")
+	for size: String in ["window", "viewport"]:
+		for side: String in ["width", "height"]:
+			var value: Variant = saved.get(size, {}).get(side)
+			assert_true(value is int, "%s.%s is an int: %s" % [size, side, value])
+	assert_eq([saved["width"], saved["height"]], [4, 3], "the capture's own size")
+
+
+func test_a_saved_capture_says_the_sizes_stamped_at_its_grab_not_the_current_ones() -> void:
+	var image := Image.create(4, 3, false, Image.FORMAT_RGBA8)
+	_frame_script.stamp_sizes(image, Vector2i(1366, 768), Vector2i(1920, 1080))
+	var saved: Dictionary = _frame_script._saved({"image": image, "path": "shot.png"})
+	assert_eq(saved.get("window"), {"width": 1366, "height": 768}, "the stamped window")
+	assert_eq(saved.get("viewport"), {"width": 1920, "height": 1080}, "the stamped viewport")
+
+
+func test_a_crop_keeps_the_stamped_sizes() -> void:
+	var image := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	_frame_script.stamp_sizes(image, Vector2i(1366, 768), Vector2i(1920, 1080))
+	var region: Image = image.get_region(Rect2i(2, 2, 4, 4))
+	var kept: Image = _frame_script._with_sizes_of(image, region)
+	var meta: StringName = _frame_script.SIZES_META
+	assert_eq(kept.get_meta(meta, {}), image.get_meta(meta), "the crop's stamped sizes")
+	assert_eq(kept.get_size(), Vector2i(4, 4), "the crop's own size")
 
 
 func test_capture_frames_refuses_a_headless_game() -> void:

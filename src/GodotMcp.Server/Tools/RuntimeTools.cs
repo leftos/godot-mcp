@@ -55,7 +55,10 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     [Description(
         "Captures the running game's next drawn frame and saves it as a PNG under the project's .godot/godot-mcp/screenshots/ "
             + "(which git ignores). Returns the file's absolute path and size, plus an image unless responseMode is path_only: by "
-            + "default a preview at most 480 px wide, saved beside the full-size PNG, whose path is always returned. A game "
+            + "default a preview at most 480 px wide, saved beside the full-size PNG, whose path is always returned. The result "
+            + "adds window and viewport, the game window's and the root viewport's size as {width, height}, and a warning when "
+            + "the capture is not the window's size (letterbox bars under stretch aspect keep; never for a crop or a scale above "
+            + "1), since coordinates read off the capture are then the capture's. A game "
             + "that animates draws a different frame each time, so for a before/after pair pause it with frame_control first, "
             + "take both shots, then resume it. path also copies the PNG to a file in the checkout's or the main checkout's .tmp "
             + "folder, checked as save_screenshot checks its path; the result's path is then that file and capturePath the "
@@ -165,7 +168,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             + "checkout is a git worktree. Never inside a .git folder or under a .godot folder outside a .tmp; a res:// path stays "
             + "in the project; links on the way are followed and their targets held to the same places. Missing folders are "
             + "created, and an existing file is refused unless options.overwrite is true; the path is checked before the shot is "
-            + "taken and again before the write. Returns take_screenshot's result with path the named file and capturePath the "
+            + "taken and again before the write. Returns take_screenshot's result (window, viewport and any letterbox warning "
+            + "included) with path the named file and capturePath the "
             + "copy under .godot/godot-mcp/screenshots/, beside which any preview stays, plus an image unless "
             + "options.responseMode is path_only."
     )]
@@ -292,6 +296,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         ScreenshotFiles files = ReadScreenshotFiles(result.Reply);
         JsonObject text = JsonSerializer.SerializeToNode(files, Json)!.AsObject();
         addFields?.Invoke(text, result.Reply);
+        AddWarning(text, LetterboxWarning(files, IsCropped(call.Parameters), ScaleOf(call.Parameters)));
         List<ContentBlock> blocks = [new TextContentBlock { Text = ErrorReport.AddTo(text, result.Errors).ToJsonString() }];
         string? imagePath = mode switch
         {
@@ -724,9 +729,47 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             ReadInt(reply["height"]) ?? 0,
             previewPath is null ? null : Path.GetFullPath(previewPath),
             ReadInt(reply["previewWidth"]),
-            ReadInt(reply["previewHeight"])
+            ReadInt(reply["previewHeight"]),
+            ReadSize(reply["window"]),
+            ReadSize(reply["viewport"])
         );
     }
+
+    /// <summary>A reply's {width, height}; null when it is not an object with both.</summary>
+    private static CaptureSize? ReadSize(JsonNode? node) =>
+        node is JsonObject size && ReadInt(size["width"]) is { } width && ReadInt(size["height"]) is { } height
+            ? new CaptureSize(width, height)
+            : null;
+
+    /// <summary>Whether a capture's bridge parameters ask for a crop.</summary>
+    internal static bool IsCropped(JsonObject parameters) => parameters["crop"] is not null;
+
+    /// <summary>A screenshot call's capture scale, 1 when its parameters name none (the bridge's default).</summary>
+    private static double ScaleOf(JsonObject parameters) => parameters["scale"] is JsonValue value && value.TryGetValue(out double scale) ? scale : 1;
+
+    /// <summary>
+    /// capture with <paramref name="warning"/> added to its warning, after any warning it already has, joined by "; ";
+    /// unchanged when there is none to add.
+    /// </summary>
+    internal static void AddWarning(JsonObject capture, string? warning)
+    {
+        if (warning is null)
+        {
+            return;
+        }
+
+        capture["warning"] = capture["warning"] is JsonValue earlier && earlier.TryGetValue(out string? text) ? $"{text}; {warning}" : warning;
+    }
+
+    /// <summary>
+    /// A capture's letterbox warning, <see cref="PreviewTools.DescribeLetterbox"/> of its size and its window's; null when the reply
+    /// names no window, or when the capture was <paramref name="cropped"/> or taken at a <paramref name="scale"/> above 1, which
+    /// is not the window's size by design.
+    /// </summary>
+    internal static string? LetterboxWarning(ScreenshotFiles capture, bool cropped, double scale) =>
+        capture.Window is not { } window || cropped || scale > 1
+            ? null
+            : PreviewTools.DescribeLetterbox(capture.Width, capture.Height, window.Width, window.Height);
 
     private static async Task<byte[]> ReadImageAsync(string path, CancellationToken cancellationToken)
     {

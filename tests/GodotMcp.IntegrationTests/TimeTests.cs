@@ -1597,8 +1597,40 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Equal(80, screenshot["height"]!.GetValue<int>());
         Assert.True(File.Exists(path), path);
         Assert.Null(screenshot["previewPath"]);
+        Assert.Null(screenshot["warning"]);
         Assert.Equal("image/png", Assert.Single(blocks.OfType<ImageContentBlock>()).MimeType);
     }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AWaitScreenshotInAKeepWindowSaysTheWindowItIsAPixelShortOf()
+    {
+        // The InputProbe is 640x360 under canvas_items + keep. In a 1366x768 window, keep draws the game at 768 * 640/360 =
+        // 1365.33 wide, floored to 1365, beside a 1 px bar (scene/main/window.cpp, the keep branch of _update_viewport_size
+        // and its floor, in 4.7.2), so the capture is a pixel narrower than the window.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        await harness.Sessions.LaunchAsync(
+            new LaunchRequest(probe.Directory, null, ["--resolution", "1366x768"], [], true, false, Prepare: true),
+            null,
+            cancellation
+        );
+
+        JsonNode reply = JsonNode.Parse(
+            Text(await tools.WaitForAsync(new WaitCondition(Frames: 2), null, new WaitOptions(Screenshot: true), cancellationToken: cancellation))
+        )!;
+        JsonObject screenshot = reply["screenshot"] as JsonObject ?? throw new InvalidOperationException($"no screenshot: {reply.ToJsonString()}");
+        string window = SizeOf(screenshot["window"]);
+
+        Assert.True(window == "1366x768", $"the window asked for is 1366x768; the capture reports {window}: {screenshot.ToJsonString()}");
+        Assert.Equal("1365x768", SizeOf(screenshot));
+        Assert.Equal("640x360", SizeOf(screenshot["viewport"]));
+        Assert.Equal(PreviewTools.DescribeLetterbox(1365, 768, 1366, 768), (string?)screenshot["warning"]);
+    }
+
+    /// <summary>A reply's {width, height} as WIDTHxHEIGHT, or none when it is not an object.</summary>
+    private static string SizeOf(JsonNode? size) => size is JsonObject both ? $"{both["width"]}x{both["height"]}" : "none";
 
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AWaitsCropOutsideTheViewportWarnsAndStillMeets()
