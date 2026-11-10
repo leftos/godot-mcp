@@ -29,6 +29,14 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     // (scene/gui/scroll_container.cpp L190-226, L311-320 in 4.7.2).
     private static readonly InputTarget ScrollPoint = new(null, 590, 190);
 
+    // The engine's own pointer: the root viewport's, and a Node2D's global one, which applies the canvas transform.
+    private const string ReadEnginePointer =
+        "var probe := Node2D.new()\n\t"
+        + "scene_tree.root.add_child(probe)\n\t"
+        + "var at := {\"viewport\": scene_tree.root.get_mouse_position(), \"global\": probe.get_global_mouse_position()}\n\t"
+        + "probe.free()\n\t"
+        + "return at";
+
     // ScrollBox's vertical and horizontal scroll bars' values.
     private const string ReadScroll =
         "var box: ScrollContainer = scene_tree.root.get_node(\"Main/ScrollBox\")\n\t"
@@ -572,6 +580,30 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         string hovered = (await RunAsync(tools, ReadHoveredInTwoFrames)).GetValue<string>();
 
         Assert.Equal("DropTarget", hovered);
+        await StopAndCheckCleanAsync(harness, probe);
+    }
+
+    // A headless display server has no FEATURE_MOUSE, so the root viewport's pointer is Input's, which every injected
+    // mouse event sets (4.7.2 viewport.cpp Viewport::get_mouse_position, input.cpp L836-871). A quiet windowed run on
+    // Windows reads GetCursorPos off the input desktop, which fails, so it has no such contract.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task TheEnginePointerFollowsClickHoverAndDragInAHeadlessRun()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = await LaunchHeadlessAsync(probe, harness);
+
+        JsonNode clicked = JsonNode.Parse(await tools.ClickAsync(new InputTarget(null, 100, 120), "left", false, cancellationToken: cancellation))!;
+        JsonNode atClick = await RunAsync(tools, ReadEnginePointer);
+        JsonNode hovered = JsonNode.Parse(await tools.HoverAsync(new InputTarget(null, 300, 200), cancellationToken: cancellation))!;
+        JsonNode atHover = await RunAsync(tools, ReadEnginePointer);
+        JsonNode dragged = JsonNode.Parse(await tools.DragAsync(DragSource, DropTarget, 300, "left", cancellationToken: cancellation))!;
+        JsonNode atDrag = await RunAsync(tools, ReadEnginePointer);
+
+        AssertEnginePointerFollows(clicked, atClick, "click");
+        AssertEnginePointerFollows(hovered, atHover, "hover");
+        AssertEnginePointerFollows(dragged, atDrag, "drag");
         await StopAndCheckCleanAsync(harness, probe);
     }
 
@@ -1221,6 +1253,33 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
             TestContext.Current.CancellationToken
         );
         return new RuntimeTools(harness.Sessions, TestCSharp.Unused());
+    }
+
+    // A run of its own with --headless, whose display server has no mouse: the engine's pointer is the injected one.
+    private static async Task<RuntimeTools> LaunchHeadlessAsync(ProbeProject probe, SessionHarness harness)
+    {
+        await harness.Sessions.LaunchAsync(
+            new LaunchRequest(probe.Directory, null, ["--headless"], [], true, false, Prepare: true),
+            null,
+            TestContext.Current.CancellationToken
+        );
+        return new RuntimeTools(harness.Sessions, TestCSharp.Unused());
+    }
+
+    // The engine's viewport and global pointers equal the tool result's pointer within 3 px, as the contract says.
+    private static void AssertEnginePointerFollows(JsonNode result, JsonNode engine, string step)
+    {
+        JsonNode pointer = result["pointer"]!;
+        foreach (string read in new[] { "viewport", "global" })
+        {
+            JsonNode at = engine[read]!;
+            bool xFollows = Math.Abs(at["x"]!.GetValue<double>() - pointer["x"]!.GetValue<double>()) <= 3;
+            bool yFollows = Math.Abs(at["y"]!.GetValue<double>() - pointer["y"]!.GetValue<double>()) <= 3;
+            Assert.True(
+                xFollows && yFollows,
+                $"the engine's {read} pointer after the {step} is {at.ToJsonString()}, not the tool's {pointer.ToJsonString()}"
+            );
+        }
     }
 
     // A run of its own in a 1000 x 900 window, checked letterboxed: without the bars the letterboxed tests would prove

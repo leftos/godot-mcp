@@ -819,6 +819,13 @@ An agent debugs a game godot-mcp holds with DebugMCP and netcoredbg; the two ser
   - **A window drag drops held injected pad input** (GMCP-61). `WM_ENTERSIZEMOVE` clears injected pad state with no focus event after it (`platform/windows/display_server_windows.cpp` L6750), so a window drag in a visible run drops held injected pad input.
 - **Releases are sent explicitly** (`pressed=false`, or `axis_value=0.0`), and every event is a new object.
 
+## The engine's pointer, from Godot 4.7.2's source
+
+- **What the pointer getters read depends on the run.** The root viewport's `get_mouse_position`, `CanvasItem.get_global_mouse_position` and `DisplayServer.mouse_get_position` read the real cursor in a visible run. In a headless run the display server has no `FEATURE_MOUSE`, so they read `Input`'s pointer, which every injected mouse event sets, and they follow `click`, `hover` and `drag`.
+- **On a quiet windowed run on Windows they are undefined.** The game sits on the server's hidden desktop, where `GetCursorPos` fails with access denied (error 5), and `DisplayServerWindows::mouse_get_position` ignores the failure and returns an uninitialized `POINT`. The value is stable at one call site within a launch, changes from launch to launch and never follows the drive; `Input.warp_mouse` and `Viewport.warp_mouse` do nothing.
+- **So game code reads the input event's position.** Clicks and hovers still land: the GUI picks at the event's own position, and the bridge's per-frame re-pick covers hover.
+- **The fix belongs to the engine:** check `GetCursorPos`'s return and fall back to `Input`'s last position. godot-mcp runs the stock engine (decision 30) and cannot ship it.
+
 ## The error feed, from Godot 4.7.2's source
 
 - `Logger` extends `RefCounted` with `_log_error(function, file, line, code, rationale, editor_notify, error_type, script_backtraces)` and `_log_message(message, error)` (`core/core_bind.h` L125-138); `ErrorType` is ERROR 0, WARNING 1, SCRIPT 2, SHADER 3.
