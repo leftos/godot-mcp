@@ -318,9 +318,9 @@ func _build_once() -> void:
 
 
 ## Serves endpoint, from source (a SOURCE_*; a join drops the errors logged before it): builds the
-## children once, sizes the window, parks it and caps the frame rate when quiet, mutes as asked,
-## sets the hover re-pick, shuts the real pads out if asked, and dials; a dial refused at once
-## when armed waits dormant.
+## children once, sizes the window, parks it, turns vsync off and caps the frame rate when quiet,
+## mutes as asked, sets the hover re-pick, shuts the real pads out if asked, and dials; a dial
+## refused at once when armed waits dormant.
 func _join(endpoint: Dictionary, source: String) -> void:
 	_build_once()
 	_endpoint = endpoint

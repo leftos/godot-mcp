@@ -600,7 +600,9 @@ Every runtime tool's result also carries `errors` when the call raised any (see 
 
   A run the server started on its hidden desktop (`GODOT_MCP_HIDDEN_DESKTOP` is 1, set by `GodotCommandLine.CreateStartInfo` for a quiet Windows run and removed for every other launch) is moved to (0, 0) instead, out of sight already: a parked root would make Windows clamp a non-embedded popup to (0, 0) and lose its offset from the root, which `grab_frame` needs.
 
-  The same branch sets `Engine.max_fps` to 60 when it reads 0 (the project set none): a quiet window keeps VSync, so it would otherwise draw at the monitor's refresh (239 fps measured) for frames nobody sees.
+  The same branch sets `Engine.max_fps` to 60 when it reads 0 (the project set none): a hidden window keeps VSync, so it would otherwise draw at the monitor's refresh (239 fps measured) for frames nobody sees.
+
+  `park_window` also turns vsync off (`DisplayServer.VSYNC_DISABLED`), whatever the project's `display/window/vsync/vsync_mode`, saving the window's mode on the first park only; `restore_window` gives that saved mode back, so a project's own mode or an engineArgs `--disable-vsync` survives a show.
 - **Editor mode**: in an editor session the environment holds no endpoint by the time `_init` runs, so `choose` finds none; the editor host (`bridge/godot_mcp_editor_host.gd`, run by the editor with `--script`; the bridge modules are `@tool` so they load there) adds the bridge under `root` and calls `use_editor` before `_ready` with the `GODOT_MCP_*` values it read and removed from the environment. That sets mode `editor`, the endpoint (`endpoint_from` in `godot_mcp_dormant.gd`, the parse `env_endpoint` uses), the window module's variables and the logger.
 
   `_ready` then joins as for a run.

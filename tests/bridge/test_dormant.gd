@@ -298,6 +298,22 @@ func test_restore_window_gives_back_only_a_window_park_window_moved() -> void:
 	assert_true(not window.parked, "restoring gives it back once")
 
 
+func test_park_window_saves_the_vsync_mode_once_and_restore_window_clears_it() -> void:
+	var window: GDScript = load_bridge_script("godot_mcp_window.gd")
+	assert_eq(window.vsync_to_save(false, 1, -1), 1, "a first park saves the mode the window has")
+	assert_eq(
+		window.vsync_to_save(true, 0, 1), 1, "a second park keeps the mode the first one saved"
+	)
+	window.vsync_before = -1
+	window.parked = false
+	window.park_window()
+	assert_eq(window.vsync_before, -1, "a headless park saves no mode")
+	window.vsync_before = 2
+	window.parked = true
+	window.restore_window()
+	assert_eq(window.vsync_before, -1, "restoring clears the saved mode")
+
+
 func test_held_buttons_lists_each_button_a_mask_holds() -> void:
 	var held: Callable = _raw_events_script.held_buttons
 	assert_eq(held.call(0), [] as Array[int], "an empty mask holds none")

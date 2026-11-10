@@ -71,6 +71,10 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       Real pads stay opt-in through `shutOutRealGamepads`. Ruled out: marking injected keys with the mouse's device mark (a key's device is 16 and the built-in `ui_*` actions match only 16 or -1: `core/input/input_event.cpp` L669-671, `core/input/input_map.cpp` L147-153).
     - **A quiet run caps its frame rate** (user, 2026-09-26, issue #6): the bridge sets `Engine.max_fps` to 60 when the project leaves it at 0. The window keeps VSync however hidden it is (`display_server_windows.cpp` `window_can_draw` L3123-3129 depends only on minimizing), so a quiet run drew at the monitor's 239 Hz.
+      The bridge also turns vsync off (GMCP-510; an orchestrator decision, not an owner ruling): `park_window` saves the window's vsync mode on the first park only and sets `VSYNC_DISABLED`, so the 60 fps cap paces a quiet run instead of the display, whatever the project's `display/window/vsync/vsync_mode`, and `restore_window` gives the saved mode back on disarm or a not-quiet re-arm.
+
+      With vsync on and the screen asleep through idle, a hidden window's present blocked about 263 ms a frame (about 3.8 fps, 0.38x game time with `max_physics_steps_per_frame` 12), measured by career-driver.
+      Ruled out: a `--disable-vsync` launch argument, fixed at display-server creation, reaching only server-launched runs and unable to be restored. Caveat: a quiet editor session re-applies the editor's own vsync when an `interface/editor/display` setting changes (Godot 4.7.2 `editor/editor_node.cpp`), so vsync can come back on in a hidden editor.
 
       A project's own cap, or a `--max-fps` in `engineArgs`, wins; the bridge cannot tell an explicit 0 from the default. A recording run is unaffected: its fixed fps skips the frame delay (`main.cpp` L5170-5178).
 11. **Time, inspection, prep, the watchdog, baselines, profiles and batches** (user, 2026-09-26, each the recommended option of a ranked choice; the rest settled from measurements and the explorers' 4.7.2 citations):

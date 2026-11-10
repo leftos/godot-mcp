@@ -14,6 +14,9 @@ const NO_FOCUS_SETTING := "display/window/size/no_focus"
 
 ## Whether park_window moved the window and restore_window has not given it back since.
 static var parked: bool = false
+## The vsync mode the window had before park_window turned it off, -1 when park_window saved none:
+## restore_window puts it back, leaving the mode alone when it is -1.
+static var vsync_before: int = -1
 ## The GODOT_MCP_* values an editor session's host read and removed from the environment, read
 ## in its place; empty in a game, which reads the environment.
 static var variables: Dictionary = {}
@@ -46,11 +49,28 @@ static func apply_window_size(root: Window) -> void:
 ## server started on its hidden desktop (GODOT_MCP_HIDDEN_DESKTOP) is out of sight already, so its
 ## window goes to (0, 0) instead: there, a window that is not embedded (a popup of a project that
 ## turns embed_subwindows off) opens where the game asked, at its offset from the root window.
+## A hidden window has nothing to tear, so its vsync mode is saved and turned off too: a screen
+## asleep through idle blocks a vsync'd present, and the frame-rate cap then paces the run.
 static func park_window() -> void:
+	var already_parked: bool = parked
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, true)
 	var on_hidden_desktop: bool = variable("GODOT_MCP_HIDDEN_DESKTOP") == "1"
 	DisplayServer.window_set_position(Vector2i.ZERO if on_hidden_desktop else PARK_POSITION)
 	parked = true
+	if DisplayServer.get_name() != "headless":
+		vsync_before = vsync_to_save(
+			already_parked, DisplayServer.window_get_vsync_mode(), vsync_before
+		)
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+
+
+## The vsync mode a park saves: the mode the window has on a first park, and the one an earlier park
+## saved on a second (park_window runs twice for one game on the dormant path, and a second save
+## would record VSYNC_DISABLED).
+static func vsync_to_save(already_parked: bool, current: int, saved: int) -> int:
+	if already_parked:
+		return saved
+	return current
 
 
 ## A game started without a server from a quiet session's override.cfg (one a killed server
@@ -79,16 +99,21 @@ static func parked_by_override() -> bool:
 	)
 
 
-## Gives back a window park_window moved (nothing when it is not parked): click-through off,
-## focusable again when the override created it unfocusable, and centred on its screen. A
-## headless run has no window.
+## Gives back a window park_window moved (nothing when it is not parked): click-through off, the
+## vsync mode it had before it was parked, focusable again when the override created it
+## unfocusable, and centred on its screen. The saved mode is read and cleared first, so a headless
+## run clears it too; only a windowed run is given the mode back.
 static func restore_window() -> void:
 	if not parked:
 		return
 	parked = false
+	var vsync: int = vsync_before
+	vsync_before = -1
 	if DisplayServer.get_name() == "headless":
 		return
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, false)
+	if vsync >= 0:
+		DisplayServer.window_set_vsync_mode(vsync as DisplayServer.VSyncMode)
 	if ProjectSettings.get_setting(NO_FOCUS_SETTING, false):
 		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, false)
 	centre_window()

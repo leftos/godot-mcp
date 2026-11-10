@@ -183,7 +183,7 @@ On a shared desktop, "not activated" needs the window style: showing a window wi
 
 A window launched from a process that holds the foreground right (an agent's shell under the user's focused app) is created above every window and paints over the user's app while focus stays put, so a visible launch that must stay out of the way is moved to the bottom of the Z order: the integration harness restores the window with `SW_SHOWNOACTIVATE` and only then pushes it to `HWND_BOTTOM`, since pushing first left it on top in 1 run of 3.
 
-Audio is off through the dummy audio driver, never by muting the app's buses, so the app's own mute stays testable and nothing leaks into its saved settings. A hidden window kept VSync and drew at the monitor's 239 Hz, so a quiet run caps at 60 fps unless the project sets its own cap.
+Audio is off through the dummy audio driver, never by muting the app's buses, so the app's own mute stays testable and nothing leaks into its saved settings. A hidden window kept VSync and drew at the monitor's 239 Hz, and with the screen asleep its present blocked for hundreds of ms a frame, so a quiet run turns vsync off and caps at 60 fps unless the project sets its own cap.
 
 Real input is kept out by the window never receiving it, not by swallowing it: an always-on swallow missed handlers that run before it and input polling, and killed input the app synthesises itself (on-screen keyboards, virtual cursors).
 Source: docs/DECISIONS.md:38-39, docs/DEVELOPMENT.md:95, docs/DEVELOPMENT.md:232, src/GodotMcp.Server/Session/OverrideFile.cs:21, docs/ARCHITECTURE.md:72, docs/TOOLS.md:53, ~/.claude/skills/godot-mcp/SKILL.md:51. Seen: issue #6 (239 Hz); window timings measured with a 5 ms window poller.

@@ -33,6 +33,10 @@ public sealed class QuietTests : IAsyncDisposable
         + "\"driver\": AudioServer.get_driver_name()}";
     private const string ReadText = "return scene_tree.root.get_node(\"Main/TextInput\").text";
     private const string ReadMaxFps = "return Engine.max_fps";
+    private const string ReadVsync = "return DisplayServer.window_get_vsync_mode()";
+
+    // Godot 4.7.2's DisplayServer.VSyncMode.VSYNC_ADAPTIVE, which the probe's project asks for.
+    private const int AdaptiveVsync = 2;
 
     // Whether the Master bus, index 0, is muted: what run_project's mute sets through the bridge.
     private const string ReadMasterMute = "return AudioServer.is_bus_mute(0)";
@@ -191,6 +195,26 @@ public sealed class QuietTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AQuietRunTurnsVsyncOff()
+    {
+        SetProjectVsync(AdaptiveVsync);
+        await _project.RunProjectAsync(_probe.Directory, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, (await RunAsync(ReadVsync)).GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ANotQuietRunOfAProjectAskingForVsyncKeepsItOn()
+    {
+        // A Compatibility renderer reads vsync back only as on or off (Godot 4.7.2 DisplayServerWindows::window_get_vsync_mode
+        // answers a GL window from is_using_vsync()), so the project's adaptive request reads 1; the quiet run's 0 is the bridge's.
+        SetProjectVsync(AdaptiveVsync);
+        await LaunchAsync(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, (await RunAsync(ReadVsync)).GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AQuietRunKeepsTheProjectsOwnFrameRate()
     {
         string settings = File.ReadAllText(_probe.ProjectFile);
@@ -202,6 +226,16 @@ public sealed class QuietTests : IAsyncDisposable
 
     private Task<string> LaunchAsync(bool quiet, CancellationToken cancellation) =>
         _project.RunProjectAsync(_probe.Directory, options: new RunOptions(Quiet: quiet), cancellationToken: cancellation);
+
+    // The probe's project asks for a vsync mode, so a quiet run turning it off shows against a project that wants it.
+    private void SetProjectVsync(int mode)
+    {
+        string settings = File.ReadAllText(_probe.ProjectFile);
+        File.WriteAllText(
+            _probe.ProjectFile,
+            settings.Replace("[display]", $"[display]\n\nwindow/vsync/vsync_mode={mode}", StringComparison.Ordinal)
+        );
+    }
 
     private async Task<JsonNode> RunAsync(string body)
     {

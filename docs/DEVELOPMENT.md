@@ -131,7 +131,9 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   Parallelism is off in `xunit.runner.json` (`"parallelMode": "none"`): the xUnit 4.0.1 assembly attributes the docs name do not compile (`CollectionBehavior` is CS0619, `Parallelization` does not exist). The value is right for xunit.v3.runner.common 4.0.1, which parses `"none"` to `ParallelMode.None` (verified by decompiling); the published schema's `"off"` would be silently ignored and turn class parallelism back on, so do not change it to match the schema.
 
-  `QuietTests` covers a default run being unfocused, off-screen, on the Dummy audio driver and capped at 60 fps (a not-quiet run and a project's own `max_fps` left alone), a quiet run showing no window on the test's desktop at any moment of its launch (Windows), a not-quiet run on-screen with a real driver and its window found there, and `type_text`, `key` and a raw `simulate_input` key all reaching a LineEdit in a quiet run.
+  `QuietTests` covers a default run being unfocused, off-screen, on the Dummy audio driver and capped at 60 fps (a not-quiet run and a project's own `max_fps` left alone), vsync off in a quiet run of a project asking for vsync and on in a not-quiet one, and a quiet run showing no window on the test's desktop at any moment of its launch (Windows).
+
+  It also covers a not-quiet run on-screen with a real driver and its window found there, and `type_text`, `key` and a raw `simulate_input` key all reaching a LineEdit in a quiet run.
 
   Every other test runs quiet too.
 
