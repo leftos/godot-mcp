@@ -1,10 +1,13 @@
 extends "res://scratch/scratch_probe.gd"
-## A scene paced at 0.1 s whose last step, "arm", godot-mcp.json paces at 2 s: the step arms a timer
-## that push_errors 3 s of game time later, after the step's own wait but inside the wait after the
-## last step, which is that step's 2 s. Red with no failed step and the error in its exit; were the
-## wait after the scene's 0.1 s instead, the game would be stopped before the timer fires.
+## A scene paced at 0.1 s whose last step, "arm", godot-mcp.json paces at 2 s: that step only
+## arms a flag, and the server's GetStatus after it starts a 1.8 s game-time timer that fires
+## inside the wait after the last step (that step's 2 s, which starts after the step's window
+## closes, which is after GetStatus). Red with no failed step and the error in its exit; were
+## the wait after the scene's 0.1 s instead, the game would be stopped before the timer fires.
 
-const FIRE_S := 3.0
+const FIRE_S := 1.8
+
+var _armed: bool = false
 
 
 func _init() -> void:
@@ -14,7 +17,14 @@ func _init() -> void:
 
 func _arm() -> void:
 	set_note("armed")
-	get_tree().create_timer(FIRE_S).timeout.connect(_fire)
+	_armed = true
+
+
+func GetStatus() -> String:
+	if _armed:
+		_armed = false
+		get_tree().create_timer(FIRE_S).timeout.connect(_fire)
+	return super()
 
 
 func _fire() -> void:
