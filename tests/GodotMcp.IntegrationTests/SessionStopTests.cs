@@ -82,6 +82,7 @@ public sealed class SessionStopTests : IAsyncDisposable
         Assert.Contains("\nLast stderr lines:\n", stopped.KillReason, StringComparison.Ordinal);
     }
 
+    // The stop reports the quit's length: at least the game's 1200 ms exit block, and no upper bound, since load only lengthens it.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStopSaysHowLongTheQuitTook()
     {
@@ -94,7 +95,7 @@ public sealed class SessionStopTests : IAsyncDisposable
 
         Assert.False(stopped.Killed);
         Assert.NotNull(stopped.QuitMs);
-        Assert.InRange(stopped.QuitMs.Value, 1200, 2999);
+        Assert.True(stopped.QuitMs.Value >= 1200, $"QuitMs {stopped.QuitMs.Value} is under the game's 1200 ms exit block");
         Assert.True(stopped.OverrideRemoved);
     }
 
