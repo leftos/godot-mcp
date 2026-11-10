@@ -14,9 +14,10 @@ extends SceneTree
 ## checks each C# script the target's whole dependency closure reaches (however deep, each script
 ## once a run) with can_instantiate; an error is grouped under the res:// file it names, else under
 ## the file being checked. get_scene_file_tree reads a scene's SceneState, expanding instanced
-## scenes and an inherited scene's base in place, without instantiating anything. describe_class
-## reads a class through the bridge's class reader, as a running game's bridge does. Every other
-## op is a scene edit, run by scene_ops.gd.
+## scenes and an inherited scene's base in place, without instantiating anything; an imported
+## model's scene (a .glb, .gltf, .fbx, .blend or .dae file's, loaded through its .import) is read
+## the same way. describe_class reads a class through the bridge's class reader, as a running
+## game's bridge does. Every other op is a scene edit, run by scene_ops.gd.
 
 const ClassInfo := preload("../bridge/godot_mcp_class_info.gd")
 const SceneOps := preload("scene_ops.gd")

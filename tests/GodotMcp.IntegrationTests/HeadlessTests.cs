@@ -560,6 +560,31 @@ public sealed class HeadlessTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task GetSceneFileTreeReadsAnImportedGltf()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteFile(
+            probe.Directory,
+            "model.gltf",
+            """{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"name":"Body","children":[1]},{"name":"Wheel"}]}"""
+        );
+
+        JsonNode result = await TreeAsync(probe.Directory, "model.gltf", null, cancellation);
+
+        AssertNodes(
+            [
+                """{"path":".","name":"model","type":"Node3D","childCount":1}""",
+                """{"path":"Body","name":"Body","type":"Node3D","childCount":1}""",
+                """{"path":"Body/Wheel","name":"Wheel","type":"Node3D","childCount":0}""",
+            ],
+            result
+        );
+        Assert.True(File.Exists(Path.Combine(probe.Directory, "model.gltf.import")));
+        Assert.Contains("res://model.gltf.import", result["prep"]!["filesWritten"]!.AsArray().Select(entry => entry!.GetValue<string>()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DescribeClassReadsAnEngineClassHeadless()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

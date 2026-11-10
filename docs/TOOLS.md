@@ -1672,7 +1672,8 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 ### `get_scene_file_tree`
 
 - **Does:** lists a scene file's nodes without running any code, instanced scenes expanded and an inherited scene's base merged: path (from the root, `.`), name, type, script, instance, groups, childCount.
-- **Use:** before a scene edit, to learn node paths. `scenePath` (a `.tscn`, `.scn` or `.xscn`; any other is refused: `is not a scene: the scene tools take .tscn, .scn and .xscn files.`), `root`, `options {maxDepth, offset, limit, prepare}`.
+- **Use:** before a scene edit, to learn node paths. `scenePath` (a `.tscn`, `.scn` or `.xscn`, or an imported model, a `.glb`, `.gltf`, `.fbx`, `.blend` or `.dae`; any other is refused: `is not a scene: get_scene_file_tree takes .tscn, .scn and .xscn files and imported .glb, .gltf, .fbx, .blend and .dae models.`), `root`, `options {maxDepth, offset, limit, prepare}`.
+- **Edges:** an imported model is read as Godot imported it, so its nodes are the ones the importer made. When its `.import` is missing or out of date the prep imports it first (not with `prepare: never`), and the import shows in the result's `prep.filesWritten` as `res://<model>.import`. A `.blend` imports only where the editor settings name Blender. A model in a folder Godot does not scan is refused (`<res path> is in <res folder>, which Godot does not scan; move the asset out of it.`). Every other scene tool still refuses such models (`is not a scene: the scene tools take .tscn, .scn and .xscn files.`).
 
 ### `create_scene`
 

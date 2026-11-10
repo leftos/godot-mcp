@@ -34,6 +34,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     private static readonly string[] ValidateExtensions = [".gd", ".cs", ".tscn", ".scn", ".xscn", ".tres", ".res", ".xres"];
     private static readonly string[] SweepExtensions = [".gd", ".tscn", ".xscn", ".tres", ".xres"];
     internal static readonly string[] SceneExtensions = [".tscn", ".scn", ".xscn"];
+    internal static readonly string[] ImportedSceneExtensions = [".glb", ".gltf", ".fbx", ".blend", ".dae"];
     private static readonly string[] BuildStatesChecked = ["built", "up-to-date", "failed"];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -91,16 +92,22 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     [McpServerTool(Name = "get_scene_file_tree", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "Lists the nodes of a scene file without running it, in a headless Godot: read from the saved scene, never instantiated, "
-            + "so no game code runs. Instanced scenes are expanded (their nodes listed under the instancing node) and an inherited "
-            + "scene's base is merged in. Each node: path (relative to the scene's root, which is \".\"), name, type, script (its "
-            + "resource path), instance (the scene the node instances), groups, and childCount; depth first from root. Returns one "
-            + "page, {nodes, total, offset}, plus next, the offset of the following page, while more remain, and errors when Godot "
-            + "logged any while reading. A placeholder instance is listed with its instance path, not expanded. For the running "
-            + "game's nodes, get_scene_tree."
+            + "so no game code runs. It also reads a model a scene importer brings in (.glb, .gltf, .fbx, .blend, .dae) as Godot "
+            + "imported it, importing it first when its import is missing or out of date (unless prepare is never); a .blend "
+            + "imports only where the editor settings name Blender. Every other scene tool refuses such models. Instanced scenes "
+            + "are expanded (their nodes listed under the instancing node) and an inherited scene's base is merged in. Each "
+            + "node: path (relative to the scene's root, which is \".\"), name, type, script (its resource path), instance (the scene "
+            + "the node instances), groups, and childCount; depth first from root. Returns one page, {nodes, total, offset}, plus "
+            + "next, the offset of the following page, while more remain, and errors when Godot logged any while reading. A "
+            + "placeholder instance is listed with its instance path, not expanded. For the running game's nodes, get_scene_tree."
     )]
     public async Task<string> GetSceneFileTreeAsync(
         [Description(ProjectPathDescription)] string projectPath,
-        [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn, .scn or .xscn.")] string scenePath,
+        [Description(
+            "The scene: a res:// path or a path relative to the project folder, ending .tscn, .scn or .xscn, or an imported "
+                + ".glb, .gltf, .fbx, .blend or .dae model."
+        )]
+            string scenePath,
         [Description(
             "The node to list from, itself included: its path relative to the scene's root (Player/Sprite); the scene's root when left out."
         )]
@@ -118,13 +125,18 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
+            string scene = CheckReadableScenePath(projectDir, scenePath);
             JsonObject parameters = new()
             {
-                ["scene"] = CheckScenePath(projectDir, scenePath),
+                ["scene"] = scene,
                 ["root"] = string.IsNullOrWhiteSpace(root) ? "." : root.Trim(),
                 ["maxDepth"] = maxDepth,
             };
-            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare, RunCeiling) { ImportSkipHint = SkipPrepHint };
+            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare, RunCeiling)
+            {
+                ImportAssets = SceneImportAssets(projectDir, scene),
+                ImportSkipHint = SkipPrepHint,
+            };
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         return AddBuildAndErrors(RuntimeTools.PageList(run.Result, "nodes", offset, limit), run).ToJsonString();
@@ -151,6 +163,42 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     private static PathRule SceneRule(string argument) =>
         new(argument, SceneExtensions, "is not a scene: the scene tools take .tscn, .scn and .xscn files.");
+
+    /// <summary>
+    /// get_scene_file_tree's scene: a scene file, or a model a scene importer brings in (.glb, .gltf, .fbx, .blend, .dae),
+    /// which the tool reads as Godot imported it. The scene edit tools keep taking scene files only (<see cref="CheckScenePath"/>).
+    /// </summary>
+    /// <exception cref="McpException">The path is empty, outside the project, missing, or of neither kind.</exception>
+    internal static string CheckReadableScenePath(string projectDir, string scenePath) =>
+        ToResPath(
+            projectDir,
+            scenePath,
+            new PathRule(
+                "scenePath",
+                [.. SceneExtensions, .. ImportedSceneExtensions],
+                "is not a scene: get_scene_file_tree takes .tscn, .scn and .xscn files and imported .glb, .gltf, .fbx, .blend and .dae models."
+            )
+        );
+
+    /// <summary>The files the prep imports before get_scene_file_tree reads the scene: an imported model's, and none else.</summary>
+    /// <exception cref="McpException">An imported model sits in a folder Godot's scan skips, so an import never reaches it.</exception>
+    internal static IReadOnlyList<string> SceneImportAssets(string projectDir, string scenePath)
+    {
+        if (!ImportedSceneExtensions.Contains(Path.GetExtension(scenePath), StringComparer.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        string relative = scenePath.StartsWith("res://", StringComparison.Ordinal) ? scenePath["res://".Length..] : scenePath;
+        string full = Path.Combine(projectDir, relative.Replace('/', Path.DirectorySeparatorChar));
+        // An import never reaches a file in a folder the scan skips, so it would be due on every request.
+        string? unscanned = PrepScan.UnscannedFolder(projectDir, full);
+        return unscanned is null
+            ? [full]
+            : throw new McpException(
+                $"{ResOf(projectDir, full)} is in {ResOf(projectDir, unscanned)}, which Godot does not scan; move the asset out of it."
+            );
+    }
 
     /// <summary>The project folder's git-versioned scripts, scenes and resources that exist, as res:// paths in ordinal order.</summary>
     /// <exception cref="McpException">The folder is not in a git repository, or it has more than <see cref="MaxSweep"/>.</exception>
