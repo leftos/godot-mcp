@@ -998,13 +998,17 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   A condition that cannot be met (an ambiguous unique name) fails the step with `wait_for`'s text, the game left paused at that frame. A `state` until (`until: {node, state, equals}`) reads the node's state after each stepped frame as `wait_for` does, a C# node's through the C# helper, so it stops on the frame a game's own key reaches a value. A signal `until` is connected when the request arrives, so a signal emitted before the first stepped frame is met at that first frame.
 
-  `step` with `options.input` sends `simulate_input`'s raw events (`key`, `mouse_button`, `mouse_motion`, `pan_gesture`, `joypad_button`, `joypad_motion`, `action`; at most 100) inside chosen stepped frames: each entry takes `frame`, the 0-based stepped frame it is sent in (0 when left out), and runs under the session's input gate as an input tool does.
+  `step` with `options.input` sends `simulate_input`'s raw events (`key`, `mouse_button`, `mouse_motion`, `pan_gesture`, `joypad_button`, `joypad_motion`, `action`; at most 100 written events and 2000 sent) inside chosen stepped frames: each entry takes `frame`, the 0-based stepped frame it is sent in (0 when left out), and runs under the session's input gate as an input tool does.
 
   A `wait` or a `click_element` entry is refused (a step's input is placed by frame), as is any `options.input` with `unit: "physics"`, a `frame` that is not a whole number 0 or more or lies past the step's last frame, and an unknown type (`simulate_input`'s `events[<i>] has type …`).
 
   Each event is sent at its frame's `process_frame`, before that frame's nodes process, so `_input`, `gui_input` and `is_action_just_pressed` in `_process` see it in that frame. `_physics_process` sees a press at the next physics tick, one frame later than a real event, which the engine flushes between frames.
 
   A riding click reaches a world node's `input_event` one physics tick late as well, so place a world click no later than the step's last frame minus 1. Events of one frame are sent in list order; a frame the window does not draw sends nothing and does not move the schedule on.
+
+  A `{type: "repeat", count, every, frame?, events: [...]}` entry sends its `events` (1 to 100) `count` times (a whole number 1 to 1000), `every` frames apart (a whole number 1 or more), the first iteration starting at the entry's `frame` (0 when left out), so an action is held or an input repeated without a script. Each inner entry's `frame` is counted from its iteration's start, and an inner `pressed`-less entry presses and releases a frame apart as a plain one does.
+
+  A repeat's inner entries may not be a `repeat` (`repeats do not nest: write the inner pattern as events`), a `wait` or a `click_element`; a refusal names the entry as `options.input[<i>].events[<j>]`. The 100 cap counts a repeat as 1 plus its inner entries, and the events it expands to count against the 2000 sent (`options.input expands to <n> events; at most 2000 are sent.`). A repeat whose last event falls past the step's last frame is refused whole: `options.input[<i>] repeat reaches frame <f>, past the step's last frame <last>; lower count or every, or raise the step's count.` The expanded events keep list order, and an event of a repeat shares a frame with a plain entry in the order their entries were written.
 
   A `key`, `mouse_button` (not a wheel notch), `joypad_button` or `action` with `pressed` left out is a press at `frame` and a release at `frame + 1` (an action's release carries no `strength`), which must fall inside the step (otherwise refused naming `pass pressed: true and a release event, or raise count`).
 

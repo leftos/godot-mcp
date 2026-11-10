@@ -106,6 +106,47 @@ public sealed class StepInputTests(SharedProbeSession shared) : IAsyncLifetime, 
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARepeatedActionPulseIsJustPressedOnEachPulse()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await FrameAsync("pause");
+        JsonArray events =
+        [
+            new JsonObject
+            {
+                ["type"] = "action",
+                ["action"] = "probe_jump",
+                ["pressed"] = true,
+                ["frame"] = 0,
+            },
+            new JsonObject
+            {
+                ["type"] = "action",
+                ["action"] = "probe_jump",
+                ["pressed"] = false,
+                ["frame"] = 2,
+            },
+        ];
+        JsonObject repeat = new()
+        {
+            ["type"] = "repeat",
+            ["count"] = 6,
+            ["every"] = 3,
+            ["events"] = events,
+        };
+
+        int jumpsBefore = (await RunBodyAsync("return scene_tree.root.get_node(\"Main/PadProbe\").jump_count", cancellation)).GetValue<int>();
+
+        JsonObject stepped = await FrameAsync("step", 18, new StepOptions(Input: [repeat]));
+        bool held = (await RunBodyAsync("return Input.is_action_pressed(\"probe_jump\")", cancellation)).GetValue<bool>();
+        int jumpsAfter = (await RunBodyAsync("return scene_tree.root.get_node(\"Main/PadProbe\").jump_count", cancellation)).GetValue<int>();
+
+        Assert.False(stepped.ContainsKey("held"), stepped.ToJsonString());
+        Assert.False(held, "the action the step tapped is not left held");
+        Assert.Equal(jumpsBefore + 6, jumpsAfter);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AnActionSentWhilePausedIsNeverJustPressedInTheStepThatFollows()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

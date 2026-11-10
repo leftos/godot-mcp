@@ -26,13 +26,16 @@ internal sealed record StepOptions(
         WaitCondition? Until = null,
     [property: Description(
         "Riding input: simulate_input's raw events (key, mouse_button, mouse_motion, pan_gesture, joypad_button, joypad_motion, "
-            + "action; at most 100), each with frame, the 0-based stepped frame it is sent in (0 when left out). Each is sent at "
-            + "its frame's process_frame, before the frame's nodes process, so _input, gui_input and is_action_just_pressed in "
-            + "_process see it in that frame; _physics_process sees the press at the next physics tick, one frame later than a "
-            + "real event. A key, mouse button, pad button or action with pressed left out presses at frame and releases at frame + 1, "
-            + "inside the step. Events of one frame keep their list order. Process unit only. After an until met early, the "
-            + "result adds inputNotSent, the events left unsent (a press-and-release entry counts as two); held {keys, "
-            + "mouseButtons, padButtons, actions} lists what is still pressed; a pad event on a connected real pad adds "
+            + "action; at most 100 written events and 2000 sent), each with frame, the 0-based stepped frame it is sent in (0 "
+            + "when left out). Each is sent at its frame's process_frame, before the frame's nodes process, so _input, gui_input "
+            + "and is_action_just_pressed in _process see it in that frame; _physics_process sees the press at the next physics "
+            + "tick, one frame later than a real event. A key, mouse button, pad button or action with pressed left out presses "
+            + "at frame and releases at frame + 1, inside the step. A {type: \"repeat\", count, every, frame?, events: [...]} "
+            + "entry repeats its events count times, every frames apart, each event's frame counted from its iteration's start; "
+            + "repeats do not nest, and the last one must fall inside the step. Events of one frame keep their list order. "
+            + "Process unit only. After an until met early, the result adds inputNotSent, the events left unsent (a "
+            + "press-and-release entry counts as two); held {keys, mouseButtons, padButtons, actions} lists what is still "
+            + "pressed; a pad event on a connected real pad adds "
             + "simulate_input's warning to warning. An event the game cannot play fails the step at its frame, leaving the "
             + "game paused there; a failed step's error ends with \"; held: \" and the held object when anything is held."
     )]

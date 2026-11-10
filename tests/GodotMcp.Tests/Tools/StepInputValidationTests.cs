@@ -16,6 +16,9 @@ public sealed class StepInputValidationTests
     // release (-), and its entry's index.
     private static readonly string[] SortedOrder = ["A0+", "D0+", "A1-", "B1+", "C2+"];
     private static readonly int[] SortedIndices = [1, 3, 1, 2, 0];
+
+    // The sorted list of OverlappingRepeatIterationsKeepIterationThenListOrderWithinAFrame: each event's key and frame.
+    private static readonly string[] OverlappingOrder = ["A0", "B1", "A1", "B2"];
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     [Fact]
@@ -260,6 +263,232 @@ public sealed class StepInputValidationTests
         Assert.Equal(1, Assert.Single(sent)!["frame"]!.GetValue<int>());
     }
 
+    [Fact]
+    public void ARepeatExpandsItsEventsEveryNFrames()
+    {
+        StepOptions options = new(Input: [Repeat(3, 3, Key("A", frame: 0, pressed: true), Key("A", frame: 2, pressed: false))]);
+
+        JsonArray sent = Sent(RuntimeTools.BuildFrameParameters("step", 9, null, options));
+
+        Assert.Equal([0, 2, 3, 5, 6, 8], sent.Select(entry => entry!["frame"]!.GetValue<int>()));
+        Assert.All(sent, entry => Assert.Equal(0, entry!["index"]!.GetValue<int>()));
+    }
+
+    [Fact]
+    public void ARepeatOfAHundredAndEightyPulsesPassesTheWrittenCapAndSendsThreeHundredSixty()
+    {
+        JsonObject press = new()
+        {
+            ["type"] = "action",
+            ["action"] = "brake",
+            ["strength"] = 0.7,
+            ["pressed"] = true,
+            ["frame"] = 0,
+        };
+        JsonObject release = new()
+        {
+            ["type"] = "action",
+            ["action"] = "brake",
+            ["pressed"] = false,
+            ["frame"] = 2,
+        };
+        StepOptions options = new(Input: [Repeat(180, 3, press, release)]);
+
+        JsonArray sent = Sent(RuntimeTools.BuildFrameParameters("step", 540, null, options));
+
+        Assert.Equal(360, sent.Count);
+    }
+
+    [Fact]
+    public void ARepeatCountsItsInnerEventsAgainstTheWrittenCap()
+    {
+        JsonObject[] inner = [.. Enumerable.Range(0, 100).Select(_ => Key("A", frame: 0, pressed: true))];
+
+        StepOptions options = new(Input: [Repeat(2, 1, inner)]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 3, null, options));
+
+        Assert.Equal("options.input takes at most 100 events; got 101.", refused.Message);
+    }
+
+    [Fact]
+    public void AnExpandedListOverTwoThousandIsRefused()
+    {
+        JsonObject[] inner = [Key("A", frame: 0, pressed: true), Key("B", frame: 0, pressed: true), Key("C", frame: 0, pressed: true)];
+
+        StepOptions options = new(Input: [Repeat(1000, 1, inner)]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 1000, null, options));
+
+        Assert.Equal("options.input expands to 3000 events; at most 2000 are sent.", refused.Message);
+    }
+
+    [Fact]
+    public void ARepeatPastTheStepsLastFrameIsRefused()
+    {
+        StepOptions options = new(Input: [Repeat(4, 3, Key("A", frame: 0, pressed: true), Key("A", frame: 2, pressed: false))]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
+
+        Assert.Equal(
+            "options.input[0] repeat reaches frame 11, past the step's last frame 9; lower count or every, or raise the step's count.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void ARepeatWithACountOfZeroIsRefused()
+    {
+        StepOptions options = new(Input: [Repeat(0, 3, Key("A", frame: 0, pressed: true))]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 3, null, options));
+
+        Assert.Equal("options.input[0].count must be a whole number, 1 to 1000; got 0.", refused.Message);
+    }
+
+    [Fact]
+    public void ARepeatWithoutEveryIsRefused()
+    {
+        JsonObject repeat = Repeat(2, 3, Key("A", frame: 0, pressed: true));
+        repeat.Remove("every");
+        StepOptions options = new(Input: [repeat]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 3, null, options));
+
+        Assert.Equal("options.input[0].every must be a whole number, 1 or more; got null.", refused.Message);
+    }
+
+    [Fact]
+    public void ARepeatWithoutEventsIsRefused()
+    {
+        JsonObject repeat = Repeat(2, 3, Key("A", frame: 0, pressed: true));
+        repeat.Remove("events");
+        StepOptions options = new(Input: [repeat]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 3, null, options));
+
+        Assert.Equal("options.input[0].events must be a list of 1 to 100 events.", refused.Message);
+    }
+
+    [Fact]
+    public void ANestedRepeatIsRefused()
+    {
+        StepOptions options = new(Input: [Repeat(2, 3, Repeat(2, 1, Key("A", frame: 0, pressed: true)))]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
+
+        Assert.Equal("options.input[0].events[0] is a repeat; repeats do not nest: write the inner pattern as events.", refused.Message);
+    }
+
+    [Fact]
+    public void AWaitInsideARepeatNamesItsPlace()
+    {
+        StepOptions options = new(Input: [Repeat(2, 3, new JsonObject { ["type"] = "wait", ["ms"] = 50 })]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
+
+        Assert.Equal("options.input[0].events[0] is a wait: a step's input is placed by frame; give the event a frame instead.", refused.Message);
+    }
+
+    [Fact]
+    public void ARepeatsTapInnerEntryReleasesAFrameLaterInEachIteration()
+    {
+        JsonObject tap = new() { ["type"] = "action", ["action"] = "jump" };
+        StepOptions options = new(Input: [Repeat(2, 4, tap)]);
+
+        JsonArray sent = Sent(RuntimeTools.BuildFrameParameters("step", 6, null, options));
+
+        Assert.Equal([0, 1, 4, 5], sent.Select(entry => entry!["frame"]!.GetValue<int>()));
+        Assert.Equal([true, false, true, false], sent.Select(entry => entry!["pressed"]!.GetValue<bool>()));
+    }
+
+    [Fact]
+    public void OverlappingRepeatIterationsKeepIterationThenListOrderWithinAFrame()
+    {
+        StepOptions options = new(Input: [Repeat(2, 1, Key("A", frame: 0, pressed: true), Key("B", frame: 1, pressed: true))]);
+
+        JsonArray sent = Sent(RuntimeTools.BuildFrameParameters("step", 3, null, options));
+
+        string[] order = [.. sent.Select(entry => $"{entry!["key"]}{entry["frame"]}")];
+        Assert.Equal(OverlappingOrder, order);
+    }
+
+    [Fact]
+    public void ARepeatsFrameIsItsFirstIterationsStart()
+    {
+        JsonObject repeat = Repeat(2, 3, Key("A", frame: 0, pressed: true));
+        repeat["frame"] = 2;
+        StepOptions options = new(Input: [repeat]);
+
+        JsonArray sent = Sent(RuntimeTools.BuildFrameParameters("step", 8, null, options));
+
+        Assert.Equal([2, 5], sent.Select(entry => entry!["frame"]!.GetValue<int>()));
+    }
+
+    [Fact]
+    public void ARepeatSendingInAPlainEntrysFrameKeepsItsListPlace()
+    {
+        JsonObject repeat = Repeat(1, 1, Key("B", frame: 0, pressed: true));
+        repeat["frame"] = 3;
+        StepOptions options = new(Input: [Key("A", frame: 3, pressed: true), repeat, Key("C", frame: 3, pressed: true)]);
+
+        JsonArray sent = Sent(RuntimeTools.BuildFrameParameters("step", 5, null, options));
+
+        Assert.Equal(["A", "B", "C"], sent.Select(entry => entry!["key"]!.GetValue<string>()));
+        Assert.Equal([0, 1, 2], sent.Select(entry => entry!["index"]!.GetValue<int>()));
+    }
+
+    [Fact]
+    public void AnInnerEntryOfAnUnknownTypeNamesItsPlace()
+    {
+        StepOptions options = new(Input: [Repeat(2, 3, new JsonObject { ["type"] = "bogus" })]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
+
+        Assert.Equal(
+            "options.input[0].events[0] has type 'bogus'; the types are key, mouse_button, mouse_motion, pan_gesture, joypad_button, "
+                + "joypad_motion, action, click_element, wait.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AnInnerEntryWithANegativeFrameNamesItsPlace()
+    {
+        StepOptions options = new(Input: [Repeat(2, 3, Key("A", frame: -1, pressed: true))]);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
+
+        Assert.Equal("options.input[0].events[0].frame must be a whole number, 0 or more; got -1.", refused.Message);
+    }
+
+    [Fact]
+    public void AnInnerTapAtTheLargestFrameIsRefusedAsPastTheEnd()
+    {
+        StepOptions options = new(
+            Input:
+            [
+                Repeat(
+                    2,
+                    3,
+                    new JsonObject
+                    {
+                        ["type"] = "action",
+                        ["action"] = "jump",
+                        ["frame"] = int.MaxValue,
+                    }
+                ),
+            ]
+        );
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
+
+        Assert.Equal(
+            "options.input[0] repeat reaches frame 2147483651, past the step's last frame 9; lower count or every, or raise the step's count.",
+            refused.Message
+        );
+    }
+
     private static JsonArray Sent(JsonObject parameters) => parameters["input"]!.AsArray();
 
     private static JsonObject Key(string key, int? frame, bool? pressed)
@@ -276,5 +505,22 @@ public sealed class StepInputValidationTests
         }
 
         return item;
+    }
+
+    private static JsonObject Repeat(int count, int every, params JsonObject[] events)
+    {
+        JsonArray list = [];
+        foreach (JsonObject entry in events)
+        {
+            list.Add(entry);
+        }
+
+        return new JsonObject
+        {
+            ["type"] = "repeat",
+            ["count"] = count,
+            ["every"] = every,
+            ["events"] = list,
+        };
     }
 }
