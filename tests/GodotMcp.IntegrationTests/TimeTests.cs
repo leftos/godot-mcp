@@ -434,9 +434,8 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     public async Task WaitForNodeExists()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);
-        await ArmAsync(300);
 
-        JsonObject waited = await WaitAsync(new WaitCondition(Node: "Armed", Exists: true));
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "Armed", Exists: true), ArmedByTheWait(300));
 
         Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
         Assert.True(waited["value"]!.GetValue<bool>(), waited.ToJsonString());
