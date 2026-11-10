@@ -44,6 +44,40 @@ public sealed class ProjectPrepChecksTests : IDisposable
     private static bool IsStale(string game, params string[] extraInputs) =>
         PrepScan.IsFormatClassStale(game, new ProjectFiles([Path.Combine(game, "Loader.cs"), .. extraInputs], [], [], [], [], []));
 
+    private const string KilledClause = "within 300 s of load-adjusted time (wall 482.1 s, machine free 62% on average)";
+
+    [Fact]
+    public void AStepKilledWhileItsWrapperWaitedQuotesTheWait()
+    {
+        ToolProcessResult killed = new(-1, TimeSpan.FromSeconds(482), KillReason.Ceiling, KilledClause)
+        {
+            LastWait = "gate: still waiting for a heavy slot (480 s; 1 busy)",
+        };
+
+        string message = ProjectPrep.KilledStepMessage("The Godot import of X:\\g", killed, "the game was not started", "X:\\g\\import.log");
+
+        Assert.Equal(
+            $"The Godot import of X:\\g did not finish {KilledClause}, so it was stopped with its whole process tree and the game was "
+                + "not started. It was still waiting for a slot: \"gate: still waiting for a heavy slot (480 s; 1 busy)\". "
+                + "Its log: X:\\g\\import.log",
+            message
+        );
+    }
+
+    [Fact]
+    public void AStepKilledWithNoWaitSaysWhatItSaidBefore()
+    {
+        ToolProcessResult killed = new(-1, TimeSpan.FromSeconds(482), KillReason.Ceiling, KilledClause);
+
+        string message = ProjectPrep.KilledStepMessage("The C# build of X:\\g\\G.csproj", killed, "the game was not started", "X:\\b.log");
+
+        Assert.Equal(
+            $"The C# build of X:\\g\\G.csproj did not finish {KilledClause}, so it was stopped with its whole process tree and "
+                + "the game was not started. Its log: X:\\b.log",
+            message
+        );
+    }
+
     [Fact]
     public void AGlobalClassWithNoClassCacheIsStale() => Assert.True(IsStale(GlobalClassGame(ProjectPrepFixtures.Built)));
 

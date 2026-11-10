@@ -25,6 +25,15 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     /// <summary>The prefixes of the lines a gate prints when its watchdog killed the run: each names the cause.</summary>
     private static readonly string[] KillForms = ["gate: STALLED", "gate: TIMED OUT", "gate: BACKSTOP", "gate: TRANSFER"];
 
+    /// <summary>The prefixes of a gate's lines while it waits for a slot: the first, then its heartbeat every 30 s.</summary>
+    private static readonly string[] WaitForms = ["gate: waiting for a ", "gate: still waiting for a "];
+
+    /// <summary>The prefix of the line a gate prints when it takes the slot it waited for.</summary>
+    private const string TookForm = "gate: took a ";
+
+    /// <summary>What follows the timestamp of a gate line in its own log: <c>2026-01-01T10:00:00+00:00 gat gate: …</c>.</summary>
+    private const string StampedTag = "gat ";
+
     /// <summary>How much of a verdict line a result carries.</summary>
     public const int VerdictLength = 200;
 
@@ -80,14 +89,68 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
         return verdict is null || verdict.Length <= VerdictLength ? verdict : verdict[..VerdictLength];
     }
 
+    /// <summary>
+    /// What a wrapper's console line says about its wait for a slot: <see cref="WaitState.Waiting"/> for a gate's
+    /// <c>gate: waiting for a …</c> or <c>gate: still waiting for a …</c> (a heavy, light or remote slot, behind or beside
+    /// another gate's request), <see cref="WaitState.Took"/> for its <c>gate: took a … slot after …</c>, and
+    /// <see cref="WaitState.None"/> for any other line, its waits for a work folder or a push included. Each form counts bare
+    /// or after the gate's <c>&lt;stamp&gt; gat </c> log prefix. These lines are the gate's prose, not its stable interface.
+    /// A waiting wording that stops matching leaves the ceiling running from the wrapper's start, as for any other wrapper;
+    /// a took wording that stops matching while the waiting lines still match never restarts the ceiling, so only the wall
+    /// backstop of <see cref="LoadClock.BackstopFactor"/> times the ceiling bounds the step.
+    /// </summary>
+    public static WaitState Classify(string line)
+    {
+        string bare = BareGateLine(line);
+        if (WaitForms.Any(form => bare.StartsWith(form, StringComparison.Ordinal)))
+        {
+            return WaitState.Waiting;
+        }
+
+        return bare.StartsWith(TookForm, StringComparison.Ordinal) ? WaitState.Took : WaitState.None;
+    }
+
+    /// <summary>
+    /// The wait after one more console line: a waiting line (<see cref="Classify"/>) before any took line becomes the last
+    /// wait, bare and cut to <see cref="VerdictLength"/> characters; a took line ends the wait for good, so its last wait is
+    /// null and no later line changes it; any other line changes nothing.
+    /// </summary>
+    internal static (WaitState State, string? LastWait) Advance((WaitState State, string? LastWait) wait, string line)
+    {
+        if (wait.State == WaitState.Took)
+        {
+            return wait;
+        }
+
+        return Classify(line) switch
+        {
+            WaitState.Waiting => (WaitState.Waiting, Cut(BareGateLine(line))),
+            WaitState.Took => (WaitState.Took, null),
+            _ => wait,
+        };
+    }
+
+    /// <summary><paramref name="line"/> without a trailing carriage return or the gate's <c>&lt;stamp&gt; gat </c> log prefix.</summary>
+    private static string BareGateLine(string line)
+    {
+        string trimmed = line.TrimEnd('\r');
+        int space = trimmed.IndexOf(' ', StringComparison.Ordinal);
+        return space > 0 && trimmed.AsSpan(space + 1).StartsWith(StampedTag, StringComparison.Ordinal)
+            ? trimmed[(space + 1 + StampedTag.Length)..]
+            : trimmed;
+    }
+
+    private static string Cut(string line) => line.Length <= VerdictLength ? line : line[..VerdictLength];
+
     /// <summary>The last of <paramref name="lines"/> that starts with one of <paramref name="forms"/>, or null when none does.</summary>
     private static string? LastLineStartingWith(string[] lines, string[] forms) =>
         lines.LastOrDefault(line => forms.Any(form => line.StartsWith(form, StringComparison.Ordinal)));
 
     /// <summary>
     /// <paramref name="request"/> run through the wrapper, from the project folder, with its output captured into
-    /// <see cref="CaptureLog"/> and no stall kill: a wrapper waiting for a slot prints nothing and uses no CPU. The ceiling
-    /// and its wall backstop stay.
+    /// <see cref="CaptureLog"/>, its console watched for a gate's wait for a slot (<see cref="Watch"/>), and no stall kill:
+    /// a gate waiting for a slot uses no CPU, and though it prints a waiting line and a heartbeat every 30 s, a wrapper owes
+    /// the server no output. The ceiling holds, paused while the gate waits, and a wall backstop bounds the whole step.
     /// </summary>
     public ToolProcessRequest Wrap(ToolProcessRequest request)
     {
@@ -98,15 +161,41 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
                 element.Replace(LogToken, request.LogPath, StringComparison.Ordinal).Replace(CeilingToken, ceiling, StringComparison.Ordinal)
             ),
         ];
+        return Watch(
+            request with
+            {
+                FileName = ResolveProgram(command[0], ProjectDir),
+                Arguments = [.. command.Skip(1), ResolveProgram(request.FileName, request.WorkingDirectory), .. request.Arguments],
+                WorkingDirectory = ProjectDir,
+                LogPath = CaptureLog(request.LogPath),
+                StallLimit = TimeSpan.MaxValue,
+            }
+        );
+    }
+
+    /// <summary>
+    /// <paramref name="request"/> with a new <see cref="WaitWatch"/> reading each stdout and stderr line after any callback
+    /// the request already has, so its ceiling does not run while the wrapper waits for a slot.
+    /// </summary>
+    internal static ToolProcessRequest Watch(ToolProcessRequest request)
+    {
+        WaitWatch watch = new();
         return request with
         {
-            FileName = ResolveProgram(command[0], ProjectDir),
-            Arguments = [.. command.Skip(1), ResolveProgram(request.FileName, request.WorkingDirectory), .. request.Arguments],
-            WorkingDirectory = ProjectDir,
-            LogPath = CaptureLog(request.LogPath),
-            StallLimit = TimeSpan.MaxValue,
+            WaitWatch = watch,
+            StandardOutputLine = Chain(request.StandardOutputLine, watch.Observe),
+            StandardErrorLine = Chain(request.StandardErrorLine, watch.Observe),
         };
     }
+
+    private static Action<string> Chain(Action<string>? first, Action<string> then) =>
+        first is null
+            ? then
+            : line =>
+            {
+                first(line);
+                then(line);
+            };
 
     /// <summary>Whether the wrapper says it killed the command: it exited <see cref="StoppedExitCode"/> by itself.</summary>
     public static bool Stopped(ToolProcessResult result) => !result.WasKilled && result.ExitCode == StoppedExitCode;
@@ -121,4 +210,122 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     /// <summary>A program with a folder in it is relative to the project folder; a bare name is looked up on PATH.</summary>
     internal static string ResolveProgram(string program, string projectDir) =>
         program.IndexOfAny(['/', '\\']) < 0 ? program : Path.GetFullPath(Path.Combine(projectDir, program));
+}
+
+/// <summary>
+/// A wrapped step's wait for a slot, read from its wrapper's console lines on the output readers' threads, and the ceiling
+/// that follows it: the ceiling runs from the wrapper's start, stops at its first waiting line, and starts afresh at its took
+/// line. Each move of the wait and each read of it with the ceiling happen under one lock, so the check loop never sees a
+/// wait without its ceiling.
+/// </summary>
+internal sealed class WaitWatch : IDisposable
+{
+    private readonly Lock _lock = new();
+    private (WaitState State, string? LastWait) _wait = (WaitState.None, null);
+    private LoadClock? _clock;
+    private TimeSpan _ceiling;
+    private CancellationToken _token;
+    private LoadDeadline? _running;
+    private bool _closed;
+
+    /// <summary>Where the wait stands.</summary>
+    internal WaitState State
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _wait.State;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads one console line (<see cref="PrepWrapper.Advance"/>): the first waiting line ends the ceiling, and the took line
+    /// after it starts a fresh one. A took line with no waiting line before it leaves the ceiling running from the start.
+    /// </summary>
+    public void Observe(string line)
+    {
+        lock (_lock)
+        {
+            WaitState before = _wait.State;
+            _wait = PrepWrapper.Advance(_wait, line);
+            // A ceiling that has already run out stays, so the check loop still kills for it.
+            if (before == WaitState.None && _wait.State == WaitState.Waiting && _running is not { Expired: true })
+            {
+                _running?.Dispose();
+                _running = null;
+            }
+            else if (before == WaitState.Waiting && _wait.State == WaitState.Took)
+            {
+                StartCeiling();
+            }
+        }
+    }
+
+    /// <summary>Starts the ceiling at the wrapper's start, unless a waiting line has already come.</summary>
+    /// <param name="clock">The clock the ceiling runs on.</param>
+    /// <param name="ceiling">The step's ceiling of load-adjusted time.</param>
+    /// <param name="token">Cancels the ceiling's token without a reason.</param>
+    public void Arm(LoadClock clock, TimeSpan ceiling, CancellationToken token)
+    {
+        lock (_lock)
+        {
+            (_clock, _ceiling, _token) = (clock, ceiling, token);
+            if (_wait.State != WaitState.Waiting)
+            {
+                StartCeiling();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The kill the ceiling or <paramref name="backstop"/> calls for, and the last waiting line when the wrapper still waits
+    /// for a slot, read together.
+    /// </summary>
+    /// <param name="backstop">The deadline that ends <see cref="LoadClock.BackstopFactor"/> times the ceiling in wall time after the start.</param>
+    public (KillReason Reason, string? Detail, string? LastWait) Verdict(LoadDeadline backstop)
+    {
+        lock (_lock)
+        {
+            (KillReason reason, string? detail) =
+                _running is { Expired: true } running ? ToolProcess.DeadlineKill(running)
+                : backstop.Expired ? (KillReason.Backstop, ToolProcess.BackstopDetail(backstop, _ceiling))
+                : (KillReason.None, null);
+            return (reason, detail, reason == KillReason.None ? null : _wait.LastWait);
+        }
+    }
+
+    /// <summary>Ends the ceiling; lines read after it move the wait but start no ceiling.</summary>
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            _closed = true;
+            _running?.Dispose();
+            _running = null;
+        }
+    }
+
+    /// <summary>Starts a ceiling unless one that ran out before the wait is still there for the check loop to kill for.</summary>
+    private void StartCeiling()
+    {
+        if (_clock is not null && !_closed && _running is null)
+        {
+            _running = _clock.Start(_ceiling, _token);
+        }
+    }
+}
+
+/// <summary>Where a wrapped step stands in its wrapper's wait for a slot, as its console lines say (<see cref="PrepWrapper.Classify"/>).</summary>
+internal enum WaitState
+{
+    /// <summary>No waiting line yet: the wrapper got its slot at once, is no gate, or has not said.</summary>
+    None,
+
+    /// <summary>The wrapper said it waits for a slot and has not said it took one.</summary>
+    Waiting,
+
+    /// <summary>The wrapper said it took its slot: the wrapped command runs.</summary>
+    Took,
 }

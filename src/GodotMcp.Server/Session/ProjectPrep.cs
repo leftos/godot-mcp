@@ -439,11 +439,22 @@ internal static partial class ProjectPrep
     {
         if (built.WasKilled)
         {
-            throw new SessionException(
-                $"The C# build of {csproj} did not finish {built.KillPhrase}, so it was stopped with its whole process tree "
-                    + $"and {outcome}. Its log: {log}"
-            );
+            throw new SessionException(KilledStepMessage($"The C# build of {csproj}", built, outcome, log));
         }
+    }
+
+    /// <summary>
+    /// The refusal of a prep step its ceiling or backstop killed: what did not finish and why, what that left undone, the
+    /// wrapper's last waiting line when it still waited for a slot (<see cref="ToolProcessResult.LastWait"/>), and the log.
+    /// </summary>
+    /// <param name="step">The step as the sentence opens: "The Godot import of X:\game".</param>
+    /// <param name="killed">The killed step's result.</param>
+    /// <param name="outcome">What the kill left undone: "the game was not started".</param>
+    /// <param name="log">The step's log.</param>
+    internal static string KilledStepMessage(string step, ToolProcessResult killed, string outcome, string log)
+    {
+        string wait = killed.LastWait is null ? string.Empty : $" It was still waiting for a slot: \"{killed.LastWait}\".";
+        return $"{step} did not finish {killed.KillPhrase}, so it was stopped with its whole process tree and {outcome}.{wait} Its log: {log}";
     }
 
     /// <exception cref="SessionException">The build was stopped by the prep wrapper, or failed.</exception>
@@ -765,10 +776,7 @@ internal static partial class ProjectPrep
 
         if (imported.WasKilled)
         {
-            throw new SessionException(
-                $"The Godot import of {projectDir} did not finish {imported.KillPhrase}, so it was stopped with its whole "
-                    + $"process tree and the game was not started. Its log: {log}"
-            );
+            throw new SessionException(KilledStepMessage($"The Godot import of {projectDir}", imported, "the game was not started", log));
         }
 
         if (wrapper is not null && PrepWrapper.Stopped(imported))
@@ -817,10 +825,7 @@ internal static partial class ProjectPrep
         ToolProcessResult ran = await RunToolAsync(step, tool, logger, cancellationToken);
         if (ran.WasKilled)
         {
-            throw new SessionException(
-                $"The prep of process {session} did not finish {ran.KillPhrase}, so it was stopped with its whole process tree "
-                    + $"and the process was not started. Its log: {log}"
-            );
+            throw new SessionException(KilledStepMessage($"The prep of process {session}", ran, "the process was not started", log));
         }
 
         if (wrapper is not null && PrepWrapper.Stopped(ran))

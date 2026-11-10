@@ -178,6 +178,83 @@ public sealed class PrepWrapperTests : IDisposable
         );
 
     [Theory]
+    [InlineData("gate: waiting for a heavy slot (1 busy)", "Waiting")]
+    [InlineData("gate: waiting for a heavy slot (2 busy), the first frees in about 40 s", "Waiting")]
+    [InlineData("gate: still waiting for a heavy slot (480 s; 1 busy)", "Waiting")]
+    [InlineData("gate: waiting for a heavy slot behind the critical request of gate 4242", "Waiting")]
+    [InlineData("gate: waiting for a light slot beside the critical request of gate 4242", "Waiting")]
+    [InlineData("gate: still waiting for a light slot (30 s)", "Waiting")]
+    [InlineData("gate: waiting for a remote slot on builder", "Waiting")]
+    [InlineData("2026-01-01T10:00:00+00:00 gat gate: waiting for a heavy slot (1 busy)", "Waiting")]
+    [InlineData("2026-01-01T10:00:30+00:00 gat gate: still waiting for a heavy slot (30 s)", "Waiting")]
+    [InlineData("gate: took a heavy slot after 480.2 s", "Took")]
+    [InlineData("gate: took a remote slot on builder after 12 s", "Took")]
+    [InlineData("2026-01-01T10:08:00+00:00 gat gate: took a heavy slot after 480.2 s", "Took")]
+    [InlineData("gate: waiting for this worktree's work folder", "None")]
+    [InlineData("gate: waiting for the pending gate push", "None")]
+    [InlineData("gate: waiting for the machine (critical)", "None")]
+    [InlineData("gate: running under the heavy slot of gate 4242", "None")]
+    [InlineData("gate: passed in 20 s (load-adjusted 2 s, ceiling 300 s)", "None")]
+    [InlineData("Build succeeded.", "None")]
+    [InlineData("2026-01-01 out gate: waiting for a heavy slot (1 busy)", "None")]
+    [InlineData("", "None")]
+    public void TheWaitStateIsClassifiedFromTheConsoleLine(string line, string state) => Assert.Equal(state, PrepWrapper.Classify(line).ToString());
+
+    [Fact]
+    public void TheLastWaitIsTheLastWaitingLineOfTheLog()
+    {
+        string still = "gate: still waiting for a heavy slot (480 s; 1 busy) " + new string('x', 300);
+        string log =
+            "gate: waiting for a heavy slot (1 busy)\r\n"
+            + "gate: still waiting for a heavy slot (30 s)\r\n"
+            + "2026-01-01T10:08:00+00:00 gat "
+            + still
+            + "\r\n"
+            + "gate: waiting for the pending gate push\r\n";
+
+        Assert.Equal(still[..200], LastWaitOf(log));
+    }
+
+    [Fact]
+    public void ALogWithNoWaitingLineHasNoLastWait()
+    {
+        Assert.Null(LastWaitOf("Build succeeded.\ngate: passed in 20 s (load-adjusted 2 s, ceiling 300 s)\n"));
+        Assert.Null(LastWaitOf(string.Empty));
+    }
+
+    [Fact]
+    public void ATookLineAfterTheLastWaitingLineEndsTheWait()
+    {
+        const string log =
+            "gate: waiting for a heavy slot (1 busy)\n"
+            + "gate: still waiting for a heavy slot (30 s)\n"
+            + "gate: took a heavy slot after 31.4 s\n"
+            + "gate: still waiting for a heavy slot (60 s)\n"
+            + "Build succeeded.\n";
+
+        Assert.Null(LastWaitOf(log));
+    }
+
+    [Fact]
+    public void TheWrapperWatchesTheConsoleAfterTheRequestsOwnCallback()
+    {
+        const string waiting = "gate: waiting for a heavy slot (1 busy)";
+        List<string> seen = [];
+        PrepWrapper wrapper = new(["gate", "{log}"], _temp.Path);
+
+        ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest() with { StandardErrorLine = seen.Add });
+        wrapped.StandardErrorLine!(waiting);
+
+        Assert.Equal([waiting], seen);
+        Assert.NotNull(wrapped.WaitWatch);
+        Assert.Equal(WaitState.Waiting, wrapped.WaitWatch.State);
+    }
+
+    /// <summary>The last wait of a log's lines read in order, as the wait watch reads the console (<see cref="PrepWrapper.Advance"/>).</summary>
+    private static string? LastWaitOf(string log) =>
+        log.Split('\n').Aggregate<string, (WaitState State, string? LastWait)>((WaitState.None, null), PrepWrapper.Advance).LastWait;
+
+    [Theory]
     [InlineData("tools/gate.cmd")]
     [InlineData("./gate.cmd")]
     [InlineData("tools\\gate.cmd")]

@@ -754,6 +754,10 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       Every Windows start passes through it, headless or not, and load widens the gap. Ruled out: retrying only in the itest harness (the warm host died this way in a gate, and production meets the same race) and blaming the GPU driver.
 
+51. **A wrapped prep step's ceiling does not count a gate's queued time** (GMCP-496; an orchestrator decision, not an owner ruling). The ceiling runs from the wrapper's start until the wrapper's console prints a gate's `gate: waiting for a …` line, pauses there, and starts fresh (load-adjusted as before) at the `gate: took a …` line; a wall backstop of 5 x the ceiling from the wrapper's start bounds the step whether or not it is queued. A step killed while its last classified line is a waiting line says so in its refusal, quoting that line.
+    - **The wait and took lines are gate prose, not its stable interface**: the gate's design doc (`X:\dev\gate\docs\design.md`) holds only the `STALLED` / `TIMED OUT` / `BACKSTOP` forms and `Full output:` stable. So a wrapper that prints no waiting line (a gate with a free slot, any other wrapper) keeps today's clock exactly, a waiting line after the took line is ignored, and a changed took wording leaves only the backstop.
+    - **Rejected:** keeping the ceiling from the wrapper's start (GMCP-492's 8-minute queue killed a gate before its command ran), and starting the ceiling only at the took line (a gate with a free slot prints neither line, so it would never start).
+
 ## Wire
 
 - **The server listens and the bridge dials in.** The server binds `127.0.0.1:0` and keeps the listener open, then passes the port and a session token to Godot through environment variables (`GODOT_MCP_PORT`, `GODOT_MCP_TOKEN`). This removes the reference server's free-port race and its regex-editing of the port into GDScript.

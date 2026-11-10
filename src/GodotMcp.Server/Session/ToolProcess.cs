@@ -57,6 +57,13 @@ internal sealed record ToolProcessRequest(string FileName, IReadOnlyList<string>
     /// job that cannot be made or joined then refuses the start rather than leaving the tree unreachable.
     /// </summary>
     public bool KillOnClose { get; init; }
+
+    /// <summary>
+    /// Watches a prep wrapper's console for its wait for a slot (<see cref="PrepWrapper.Watch"/>): the ceiling then runs only
+    /// while the wrapper does not wait, and <see cref="LoadClock.BackstopFactor"/> times it in wall time from the start
+    /// bounds the step. Null for an unwrapped request, whose ceiling runs from its start.
+    /// </summary>
+    public WaitWatch? WaitWatch { get; init; }
 }
 
 /// <summary>What killed a tool process and its tree, if anything did.</summary>
@@ -81,6 +88,9 @@ internal enum KillReason
 internal sealed record ToolProcessResult(int ExitCode, TimeSpan Elapsed, KillReason Killed, string? KillDetail = null)
 {
     public bool WasKilled => Killed != KillReason.None;
+
+    /// <summary>The wrapper's last waiting line, bare, when a kill found it still waiting for a slot; null otherwise.</summary>
+    public string? LastWait { get; init; }
 
     /// <summary>
     /// <see cref="KillDetail"/> as it follows "did not finish": a ceiling kill's clause as it is, whose own parentheses hold the
@@ -132,10 +142,10 @@ internal static class ToolProcess
     /// <exception cref="OperationCanceledException">The call was cancelled; the process tree was killed first.</exception>
     public static async Task<ToolProcessResult> WaitAsync(Running run, CancellationToken cancellationToken)
     {
-        (KillReason killed, string? detail) = await WaitOrKillAsync(run, cancellationToken);
+        (KillReason killed, string? detail, string? lastWait) = await WaitOrKillAsync(run, cancellationToken);
         TimeSpan elapsed = run.Elapsed;
         await run.FinishOutputAsync();
-        return new ToolProcessResult(run.Process.HasExited ? run.Process.ExitCode : -1, elapsed, killed, detail);
+        return new ToolProcessResult(run.Process.HasExited ? run.Process.ExitCode : -1, elapsed, killed, detail) { LastWait = lastWait };
     }
 
     /// <summary>
@@ -278,13 +288,14 @@ internal static class ToolProcess
     /// </summary>
     internal static (KillReason Reason, string Detail) DeadlineKill(LoadDeadline deadline) =>
         deadline.Reason == DeadlineReason.Backstop
-            ? (
-                KillReason.Backstop,
-                $"ran {LoadDeadline.Seconds(deadline.Wall)} s of wall time, {LoadClock.BackstopFactor} x its "
-                    + $"{LoadDeadline.Seconds(deadline.Budget)} s ceiling (load-adjusted {LoadDeadline.Seconds(deadline.Adjusted)} s, "
-                    + $"machine free {LoadDeadline.Percent(deadline.MeanFree)}% on average)"
-            )
+            ? (KillReason.Backstop, BackstopDetail(deadline, deadline.Budget))
             : (KillReason.Ceiling, deadline.CeilingClause());
+
+    /// <summary>A backstop kill's detail: the wall time <paramref name="deadline"/> ran, against <paramref name="ceiling"/>.</summary>
+    internal static string BackstopDetail(LoadDeadline deadline, TimeSpan ceiling) =>
+        $"ran {LoadDeadline.Seconds(deadline.Wall)} s of wall time, {LoadClock.BackstopFactor} x its "
+        + $"{LoadDeadline.Seconds(ceiling)} s ceiling (load-adjusted {LoadDeadline.Seconds(deadline.Adjusted)} s, "
+        + $"machine free {LoadDeadline.Percent(deadline.MeanFree)}% on average)";
 
     /// <summary>
     /// A kill's <paramref name="detail"/> as it follows "did not finish": a ceiling kill's clause as it is, whose own
@@ -322,11 +333,14 @@ internal static class ToolProcess
     }
 
     /// <summary>Waits for the exit, checking the ceiling and the stall every <see cref="CheckPeriod"/>.</summary>
-    /// <returns>What killed the process tree, and why in words; <see cref="KillReason.None"/> when the process exited.</returns>
-    private static async Task<(KillReason Reason, string? Detail)> WaitOrKillAsync(Running run, CancellationToken cancellationToken)
+    /// <returns>
+    /// What killed the process tree, why in words, and the wrapper's last waiting line when it still waited for a slot;
+    /// <see cref="KillReason.None"/> when the process exited.
+    /// </returns>
+    private static async Task<(KillReason Reason, string? Detail, string? LastWait)> WaitOrKillAsync(Running run, CancellationToken cancellationToken)
     {
         LoadClock clock = run.Request.Clock ?? LoadClock.Shared;
-        using LoadDeadline deadline = clock.Start(run.Request.Ceiling, cancellationToken);
+        using var limits = Limits.Start(run.Request, clock, cancellationToken);
         StallWatch stall = new(clock.Time, run.Request.StallLimit);
         if (!run.Tree.Measurable)
         {
@@ -339,7 +353,7 @@ internal static class ToolProcess
             await Task.WhenAny(exit, Task.Delay(CheckPeriod, clock.Time, cancellationToken));
             if (exit.IsCompleted)
             {
-                return (KillReason.None, null);
+                return (KillReason.None, null, null);
             }
 
             if (cancellationToken.IsCancellationRequested)
@@ -348,32 +362,100 @@ internal static class ToolProcess
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
-            (KillReason reason, string? detail) = Check(run, deadline, stall);
+            (KillReason reason, string? detail, string? lastWait) = Check(run, limits, stall);
             if (reason != KillReason.None)
             {
                 await run.KillAsync();
-                return (reason, detail);
+                return (reason, detail, lastWait);
             }
         }
     }
 
-    /// <returns>The first limit the process has passed, and why in words; <see cref="KillReason.None"/> when it has passed none.</returns>
-    private static (KillReason Reason, string? Detail) Check(Running run, LoadDeadline deadline, StallWatch stall)
+    /// <returns>
+    /// The first limit the process has passed, why in words, and the wrapper's last waiting line when it still waited;
+    /// <see cref="KillReason.None"/> when it has passed none.
+    /// </returns>
+    private static (KillReason Reason, string? Detail, string? LastWait) Check(Running run, Limits limits, StallWatch stall)
     {
-        if (deadline.Expired)
+        (KillReason Reason, string? Detail, string? LastWait) expired = limits.Expired();
+        if (expired.Reason != KillReason.None)
         {
-            return DeadlineKill(deadline);
+            return expired;
         }
 
         // Without the tree's CPU, a child working silently (a compile in an MSBuild worker) would read as stalled.
         if (!run.Tree.Measurable || !stall.Observe(run.OutputLines, run.Tree.Ticks))
         {
-            return (KillReason.None, null);
+            return (KillReason.None, null, null);
         }
 
         TimeSpan limit = run.Request.StallLimit;
         Log.ToolStalled(run.Logger, run.Request.FileName, limit.TotalSeconds);
-        return (KillReason.Stall, $"stalled: no output and no CPU for {LoadDeadline.Seconds(limit)} s");
+        return (KillReason.Stall, $"stalled: no output and no CPU for {LoadDeadline.Seconds(limit)} s", null);
+    }
+
+    /// <summary>
+    /// The deadlines a process is killed at. Unwatched, its ceiling from its start, with that ceiling's own backstop. Watched
+    /// (<see cref="ToolProcessRequest.WaitWatch"/>), a backstop of <see cref="LoadClock.BackstopFactor"/> times the ceiling
+    /// in wall time from the start, never paused, beside the ceiling the watch pauses while the wrapper waits for a slot.
+    /// </summary>
+    private sealed class Limits : IDisposable
+    {
+        private readonly LoadDeadline _deadline;
+        private readonly WaitWatch? _watch;
+
+        private Limits(LoadDeadline deadline, WaitWatch? watch)
+        {
+            _deadline = deadline;
+            _watch = watch;
+        }
+
+        public static Limits Start(ToolProcessRequest request, LoadClock clock, CancellationToken cancellationToken)
+        {
+            if (request.WaitWatch is not { } watch)
+            {
+                return new Limits(clock.Start(request.Ceiling, cancellationToken), null);
+            }
+
+            // Its load-adjusted budget is its wall cap too: load-adjusted time never runs ahead of wall time, so it ends at
+            // the wall cap, or at the budget on the same tick on a free machine; either way it is the backstop.
+            TimeSpan backstop = request.Ceiling * LoadClock.BackstopFactor;
+            LoadDeadline wall = clock.Start(backstop, backstop > TimeSpan.Zero ? backstop : null, cancellationToken);
+            try
+            {
+                watch.Arm(clock, request.Ceiling, cancellationToken);
+            }
+            catch
+            {
+                wall.Dispose();
+                throw;
+            }
+
+            return new Limits(wall, watch);
+        }
+
+        /// <summary>The kill a limit calls for, with the wrapper's last waiting line when it still waits; none when no limit has passed.</summary>
+        public (KillReason Reason, string? Detail, string? LastWait) Expired()
+        {
+            if (_watch is not null)
+            {
+                return _watch.Verdict(_deadline);
+            }
+
+            if (!_deadline.Expired)
+            {
+                return (KillReason.None, null, null);
+            }
+
+            (KillReason reason, string detail) = DeadlineKill(_deadline);
+            return (reason, detail, null);
+        }
+
+        public void Dispose()
+        {
+            _watch?.Dispose();
+            _deadline.Dispose();
+        }
     }
 
     private static void KillTree(Process process, string fileName, ILogger logger)
