@@ -15,6 +15,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A launch or headless tool imports an asset that has no `.import` file yet, instead of leaving it for the editor.
 - An insert, move, duplicate or delete among TabContainer pages keeps the rest of the `.tscn` text, and tab titles follow their pages.
 - A headless save keeps Godot's pack form only for a node that needs it, named in the warning, instead of rewriting the whole scene.
 - A Godot start that crashes at boot with 0xC06D007F, before any request reaches it, is started once more instead of failing the call.
