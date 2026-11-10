@@ -31,6 +31,12 @@ internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IRead
 
     /// <summary>What a build stopped at its ceiling leaves undone, as its refusal says: run_project's by default.</summary>
     public string KilledBuildOutcome { get; init; } = "the game was not started";
+
+    /// <summary>
+    /// Whether an import whose Godot crashed at boot runs once more: a registry's prep passes its own
+    /// <see cref="SessionRegistry.RetryBootCrashOnce"/>.
+    /// </summary>
+    public required bool RetryBootCrashOnce { get; init; }
 }
 
 /// <summary>
@@ -642,6 +648,14 @@ internal static partial class ProjectPrep
         string projectDir = context.ProjectDir;
         string log = request.LogPath;
         ToolProcessResult imported = await RunStepAsync(request, "Godot", wrapper, context.Logger, cancellationToken);
+        if (context.RetryBootCrashOnce && GodotSession.CrashedAtBoot(imported))
+        {
+            // The crash precedes Main::setup, so the import never began; the run again is the import's only one.
+            cancellationToken.ThrowIfCancellationRequested();
+            GodotSession.LogBootCrashRetried(context.Logger, $"the Godot import of {projectDir}");
+            imported = await RunStepAsync(request, "Godot", wrapper, context.Logger, cancellationToken);
+        }
+
         if (imported.WasKilled)
         {
             throw new SessionException(

@@ -85,6 +85,7 @@ internal static class HeadlessRunner
                 ImportAssets = request.ImportAssets,
                 ImportSkipHint = request.ImportSkipHint,
                 BuildWhenUnsaved = request.ReportsBuild,
+                RetryBootCrashOnce = registry.RetryBootCrashOnce,
             };
             PrepOutcome prep = request.Prepare
                 ? await ProjectPrep.RunReportingBuildAsync(context, cancellationToken)
@@ -188,14 +189,19 @@ internal static class HeadlessRunner
             };
             await File.WriteAllTextAsync(requestPath, body.ToJsonString(), Utf8NoBom, cancellationToken);
             string[] arguments = ["--headless", "--path", projectDir, "--script", ForGodot(call.Script), "--", ForGodot(requestPath)];
-            ToolProcessResult ran = await StartAsync(
-                new ToolProcessRequest(call.Godot, arguments, projectDir, log, call.Request.Ceiling)
-                {
-                    SetVariables = new Dictionary<string, string> { [GodotCommandLine.OffVariable] = "1" },
-                },
-                call,
-                cancellationToken
-            );
+            ToolProcessRequest process = new(call.Godot, arguments, projectDir, log, call.Request.Ceiling)
+            {
+                SetVariables = new Dictionary<string, string> { [GodotCommandLine.OffVariable] = "1" },
+            };
+            ToolProcessResult ran = await StartAsync(process, call, cancellationToken);
+            if (call.Registry.RetryBootCrashOnce && NothingRan(ran, resultPath, log))
+            {
+                // The crash precedes Main::setup, so the script never read the request; the run again is the operation's only one.
+                cancellationToken.ThrowIfCancellationRequested();
+                GodotSession.LogBootCrashRetried(call.Registry.Logger, $"the cold headless {call.Request.Operation} run on {projectDir}");
+                ran = await StartAsync(process, call, cancellationToken);
+            }
+
             return ReadResult(call, ran, resultPath, log);
         }
         finally
@@ -204,6 +210,13 @@ internal static class HeadlessRunner
             DeleteLogged(resultPath, call.Registry.Logger);
         }
     }
+
+    /// <summary>
+    /// Whether a cold run crashed at boot before the operation began: it exited with <see cref="GodotSession.BootCrashExitCode"/>,
+    /// wrote no result, and left its log empty, since Godot prints its header inside Main::setup.
+    /// </summary>
+    private static bool NothingRan(ToolProcessResult ran, string resultPath, string log) =>
+        GodotSession.CrashedAtBoot(ran) && !File.Exists(resultPath) && (!File.Exists(log) || new FileInfo(log).Length == 0);
 
     /// <summary>Deletes a request or result file; a failure is logged, so it never replaces the run's own outcome.</summary>
     private static void DeleteLogged(string path, ILogger logger)

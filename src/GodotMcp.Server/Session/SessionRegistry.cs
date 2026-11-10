@@ -111,11 +111,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     internal TimeSpan ScratchUntilGuard { get; init; } = ScratchRun.UntilHangGuard;
 
     /// <summary>
-    /// Whether a launch whose Godot exited with <see cref="GodotSession.BootCrashExitCode"/> before its bridge connected is
-    /// started once more: off unless set, as the itest harness sets it, since Godot can crash at boot with 0xC06D007F in the GPU
-    /// driver's start-up, a fault no product path reaches. Any other exit, and a second crash, fail the launch as before.
+    /// Whether a Godot that exited with <see cref="GodotSession.BootCrashExitCode"/> before it was sent anything is started
+    /// once more: a launch before its bridge connected, a warm headless host before its hello, a cold headless run and the
+    /// prep's import. On unless set off, as a test sets it: Godot's Windows start-up can crash with 0xC06D007F in the race
+    /// between its GetProcAddress import hook and dinput8's delay-load, before the project or any script is loaded, so a start
+    /// again repeats nothing. Any other exit, and a second crash, fail as before.
     /// </summary>
-    internal bool RetryBootCrashOnce { get; init; }
+    internal bool RetryBootCrashOnce { get; init; } = true;
 
     /// <summary>The server's own <see cref="ExitGrace"/>: 3 s of load-adjusted time.</summary>
     internal static readonly TimeSpan DefaultExitGrace = TimeSpan.FromSeconds(3);
@@ -1070,7 +1072,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 logger,
                 () => RunningSessionNames(projectDir, except: null),
                 () => HeadlessHosts.StopFolder(projectDir, "import")
-            );
+            )
+            {
+                RetryBootCrashOnce = RetryBootCrashOnce,
+            };
             return await ProjectPrep.RunAsync(context, cancellationToken);
         }
         finally
@@ -1878,7 +1883,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                     logger,
                     () => RunningSessionNames(projectDir, session),
                     () => HeadlessHosts.StopFolder(projectDir, "import")
-                );
+                )
+                {
+                    RetryBootCrashOnce = RetryBootCrashOnce,
+                };
                 return await ProjectPrep.RunAsync(context, limit.Token);
             }
             finally

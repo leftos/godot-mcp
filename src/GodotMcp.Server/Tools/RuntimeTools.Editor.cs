@@ -300,6 +300,8 @@ internal sealed partial class RuntimeTools
             PrepContext context = new(projectDir, sessions.Logger, () => [], () => { })
             {
                 KilledBuildOutcome = "the editor keeps its previous assembly",
+                // A build alone never reaches the import, the only step the flag governs.
+                RetryBootCrashOnce = true,
             };
             return await ProjectPrep.RunBuildAsync(context, cancellationToken);
         }

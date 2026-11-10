@@ -28,6 +28,9 @@ public sealed class HeadlessHostsTests : IDisposable
     /// <summary>The message a call gets once the server is shutting down.</summary>
     private const string ShuttingDown = "The server is shutting down, so no headless host starts now.";
 
+    /// <summary>What the Warning a host's retry after a boot crash logs names as its subject.</summary>
+    private const string HostRetried = "retrying the warm headless host for";
+
     private const int ServerPid = 1_001;
     private const int OtherServerPid = 1_002;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
@@ -47,6 +50,7 @@ public sealed class HeadlessHostsTests : IDisposable
     private readonly SessionRegistry _registry;
     private readonly ConcurrentQueue<FakeHost> _launched = new();
     private readonly RecordingLogger _log = new();
+    private readonly ConcurrentQueue<FakeHostMode> _nextModes = new();
     private FakeHostMode _launchMode = FakeHostMode.Answer;
 
     // When set, hosts launched from then on dial only once it completes, so their starts stay under way together.
@@ -316,7 +320,138 @@ public sealed class HeadlessHostsTests : IDisposable
         );
         Assert.True(Assert.Single(_launched).Disposed, "the host was let go of");
         Assert.Null(Hosts.ProcessIdOf(game));
+        Assert.DoesNotContain(_log.Messages, message => message.Contains("0xC06D007F", StringComparison.Ordinal));
     }
+
+    // The class registry never sets the flag, so it holds the registry's default.
+    [Fact]
+    public void ANewRegistryStartsAGodotThatCrashedAtBootOnceMore() => Assert.True(_registry.RetryBootCrashOnce);
+
+    [Fact]
+    public async Task AHostThatCrashesAtBootIsStartedOnceMoreWhenTheRegistrySaysSo()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using SessionRegistry registry = new(_listener, _log)
+        {
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders-boot.txt"), TextWriter.Null),
+            Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
+            HostLauncher = Launch,
+            ServerProcessId = ServerPid,
+            RetryBootCrashOnce = true,
+        };
+        string game = Game("game");
+        _nextModes.Enqueue(FakeHostMode.BootCrashAtStart);
+
+        JsonObject reply = await RunAsync(registry.HeadlessHosts, game, Ceiling, cancellation);
+
+        FakeHost[] launched = [.. _launched];
+        Assert.Equal(2, launched.Length);
+        Assert.True(launched[0].Disposed, "the crashed host was let go of");
+        Assert.True(launched[1].EarlierHostsReleasedAtLaunch, "the crashed host was let go of before the next was launched");
+        Assert.Equal(launched[1].Id, PidIn(reply));
+        Assert.Equal(launched[1].Id, registry.HeadlessHosts.ProcessIdOf(game));
+        Assert.Single(_log.Messages, message => message.Contains(HostRetried, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AHostThatCrashesAtBootFailsTheCallAsBeforeWhenTheRegistryDoesNotRetry()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using SessionRegistry registry = new(_listener, _log)
+        {
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders-noretry.txt"), TextWriter.Null),
+            Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
+            HostLauncher = Launch,
+            ServerProcessId = ServerPid,
+            RetryBootCrashOnce = false,
+        };
+        string game = Game("game");
+        _nextModes.Enqueue(FakeHostMode.BootCrashAtStart);
+
+        SessionException failed = await Assert.ThrowsAnyAsync<SessionException>(() => RunAsync(registry.HeadlessHosts, game, Ceiling, cancellation));
+
+        FakeHost host = Assert.Single(_launched);
+        Assert.Equal(BootCrashFailure(game, host), failed.Message);
+        Assert.True(host.Disposed, "the host was let go of");
+        Assert.Null(registry.HeadlessHosts.ProcessIdOf(game));
+    }
+
+    [Fact]
+    public async Task AHostThatCrashesAtBootTwiceFailsTheCallWithTheSecondExit()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+        _nextModes.Enqueue(FakeHostMode.BootCrashAtStart);
+        _nextModes.Enqueue(FakeHostMode.BootCrashAtStart);
+
+        SessionException failed = await Assert.ThrowsAnyAsync<SessionException>(() => RunAsync(game, cancellation));
+
+        FakeHost[] launched = [.. _launched];
+        Assert.Equal(2, launched.Length);
+        Assert.Equal(BootCrashFailure(game, launched[1]), failed.Message);
+        Assert.All(launched, host => Assert.True(host.Disposed, "each host was let go of"));
+        Assert.Null(Hosts.ProcessIdOf(game));
+        Assert.Single(_log.Messages, message => message.Contains(HostRetried, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AHostThatCrashesWithTheBootCrashCodeAfterItsHelloIsNotStartedAgain()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+        _nextModes.Enqueue(FakeHostMode.BootCrashAfterHello);
+
+        SessionException failed = await Assert.ThrowsAsync<SessionException>(() => RunAsync(game, cancellation));
+
+        Assert.Equal(
+            $"{What(game)} ended (Godot exited {GodotSession.BootCrashExitCode}) before its warm headless host took its first request. "
+                + $"The last lines of its log, {HeadlessHost.LogPathOf(game, ServerPid)}:\ncrashed after its hello",
+            failed.Message
+        );
+        Assert.True(Assert.Single(_launched).Disposed, "the host was let go of");
+        Assert.DoesNotContain(_log.Messages, message => message.Contains(HostRetried, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AShutdownBegunBeforeAHostsBootCrashRefusesItsRetry()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+        _nextModes.Enqueue(FakeHostMode.BootCrashAtStart);
+        _dialGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Task<JsonObject> run = RunAsync(game, cancellation);
+        // The launch runs synchronously up to the wait for its hello; the gate holds its crash back.
+        Assert.Single(_launched);
+        var shutdown = Task.Run(_registry.Shutdown, cancellation);
+        await RegistryHarness.WaitUntilAsync(IsShuttingDown, shutdown);
+        _dialGate.SetResult();
+        SessionException failed = await Assert.ThrowsAnyAsync<SessionException>(() => run.WaitAsync(Wait, cancellation));
+
+        Assert.Equal(SessionRegistry.ShuttingDown, failed.Message);
+        Assert.Single(_launched);
+        Assert.DoesNotContain(_log.Messages, message => message.Contains(HostRetried, StringComparison.Ordinal));
+        await shutdown.WaitAsync(Wait, cancellation);
+    }
+
+    /// <summary>Whether the class registry's exit has begun, so a start is refused.</summary>
+    private bool IsShuttingDown()
+    {
+        try
+        {
+            _registry.RefuseStartAtShutdown();
+            return false;
+        }
+        catch (SessionException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>The failure of a call whose host crashed at boot and was not started (again).</summary>
+    private static string BootCrashFailure(string game, FakeHost host) =>
+        $"{What(game)} ended (Godot exited {GodotSession.BootCrashExitCode}) before its warm headless host connected. "
+        + $"The last lines of its log, {HeadlessHost.LogPathOf(game, ServerPid)}:\ncrashed at boot (pid {host.Id})";
 
     [Fact]
     public async Task ARefusedRequestFailsWithTheRefusalAndKeepsTheHost()
@@ -1118,7 +1253,7 @@ public sealed class HeadlessHostsTests : IDisposable
         FakeHost host = new(launch)
         {
             EarlierHostsReleasedAtLaunch = released,
-            Mode = _launchMode,
+            Mode = _nextModes.TryDequeue(out FakeHostMode next) ? next : _launchMode,
             DialGate = _dialGate?.Task,
         };
         _launched.Enqueue(host);
@@ -1179,6 +1314,12 @@ public sealed class HeadlessHostsTests : IDisposable
 
         /// <summary>Exits with 7 before it dials.</summary>
         ExitAtStart,
+
+        /// <summary>Exits with 0xC06D007F before it dials, as Godot's boot crash does.</summary>
+        BootCrashAtStart,
+
+        /// <summary>Exits with 0xC06D007F once the server has taken its hello, before its first request.</summary>
+        BootCrashAfterHello,
 
         /// <summary>Exits with 9 once the server has taken its hello, before its first request.</summary>
         ExitAfterHello,
@@ -1298,6 +1439,11 @@ public sealed class HeadlessHostsTests : IDisposable
                 WriteLog("died after its hello");
                 Exit(9);
             }
+            else if (Mode == FakeHostMode.BootCrashAfterHello)
+            {
+                WriteLog("crashed after its hello");
+                Exit(GodotSession.BootCrashExitCode);
+            }
         }
 
         public bool WaitForExit(TimeSpan timeout) => _exited.Task.Wait(timeout);
@@ -1382,6 +1528,14 @@ public sealed class HeadlessHostsTests : IDisposable
             }
         }
 
+        /// <summary>Exits with Godot's boot-crash code before it dials, once its <see cref="DialGate"/> (if any) completes.</summary>
+        private async Task CrashAtBootAsync()
+        {
+            await (DialGate ?? Task.CompletedTask);
+            WriteLog($"crashed at boot (pid {Id})");
+            Exit(GodotSession.BootCrashExitCode);
+        }
+
         /// <summary>What the host does once the server waits on it: dials, stays silent, or exits before its hello.</summary>
         private void Begin()
         {
@@ -1393,6 +1547,9 @@ public sealed class HeadlessHostsTests : IDisposable
                 case FakeHostMode.ExitAtStart:
                     WriteLog("crashed at start");
                     Exit(7);
+                    break;
+                case FakeHostMode.BootCrashAtStart:
+                    _ = CrashAtBootAsync();
                     break;
                 default:
                     _ = ServeAsync();

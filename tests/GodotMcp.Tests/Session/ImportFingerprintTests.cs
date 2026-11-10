@@ -100,7 +100,10 @@ public sealed class ImportFingerprintTests : IDisposable
         string before = File.ReadAllText(ImportFingerprints.PathIn(game));
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            ProjectPrep.RunAsync(new PrepContext(game, NullLogger.Instance, () => ["other"], () => { }), TestContext.Current.CancellationToken)
+            ProjectPrep.RunAsync(
+                new PrepContext(game, NullLogger.Instance, () => ["other"], () => { }) { RetryBootCrashOnce = false },
+                TestContext.Current.CancellationToken
+            )
         );
 
         Assert.Contains("needs a Godot import", refused.Message, StringComparison.Ordinal);

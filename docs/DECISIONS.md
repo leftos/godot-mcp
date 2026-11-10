@@ -733,6 +733,12 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
     - **Unchanged:** an editor session still gets its own close request; the lost-connection quit of a launched game takes the same path a frame later. Rejected: closing the bridge connection when the wait starts (decision 41's teardown grace stays for an acknowledged, closed quit), and skipping the request when a child `Window` is exclusive (the fallback bounds it).
 
 49. **The Compile-items listing runs dotnet directly, never through a project's prepWrapper** (GMCP-492; an orchestrator decision, not an owner ruling). The evaluation takes about a second on one core (measured 0.84 to 1.65 s on a fresh career-driver clone). A gate wrapper put it in a heavy slot, queued behind another session's critical request, and the server's 300 s ceiling, counted from the wrapper's start, ran out before dotnet started. The build and the import keep the wrapper.
+50. **A Godot start that crashed at boot before any request reached it is started once more, in production too** (GMCP-519; an orchestrator decision, not an owner ruling).
+    - **The start is a launch before its bridge connected, a warm headless host before its hello, a cold C# headless run or the prep's import**, and the crash is exit code 0xC06D007F. A second crash, another early exit and anything after the hello fail as before.
+    - **No request is ever retried**, since none had reached the process, so nothing can apply twice; decision 28's "nothing is retried" for a failed request stands.
+    - **The cause is Godot 4.7.2's own Windows start-up race**: the `OS_Windows` constructor hooks dinput8's `GetProcAddress` import before it saves the real function, and a dinput8 threadpool item that calls it in that gap raises the delay-load error about 0.4 s after start, before the project or any script loads.
+
+      Every Windows start passes through it, headless or not, and load widens the gap. Ruled out: retrying only in the itest harness (the warm host died this way in a gate, and production meets the same race) and blaming the GPU driver.
 
 ## Wire
 

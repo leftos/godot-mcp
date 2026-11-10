@@ -314,13 +314,43 @@ internal sealed class HeadlessHost
         return File.Exists(host) ? host : throw new SessionException($"The headless host script was not found at {host}.");
     }
 
-    /// <summary>Starts a host on the folder and waits for its hello, within the launch's handshake time on the launch clock.</summary>
+    /// <summary>
+    /// Starts a host on the folder and waits for its hello, each attempt within the handshake time on the launch clock: a
+    /// second one only after a crash at boot, on a registry that retries it.
+    /// </summary>
     /// <param name="registry">The listener it dials, its clocks, its logger and how its process starts.</param>
     /// <param name="projectDir">The normalised project folder.</param>
     /// <param name="what">"The headless &lt;op&gt; run on &lt;project&gt;", which a failure to start begins with.</param>
     /// <param name="cancellationToken">Withdraws the wait; the process is killed first.</param>
-    /// <exception cref="SessionException">Godot could not be started, exited, or did not say hello in time.</exception>
+    /// <exception cref="SessionException">
+    /// Godot could not be started, exited (crashed at boot twice, or once on a registry that does not retry), or did not say
+    /// hello in time.
+    /// </exception>
     public static async Task<HeadlessHost> StartAsync(SessionRegistry registry, string projectDir, string what, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await StartOnceAsync(registry, projectDir, what, cancellationToken);
+        }
+        catch (BootCrashException) when (registry.RetryBootCrashOnce)
+        {
+            // The crashed host died before Main::setup, was sent nothing and is already let go of, so a fresh host with a new
+            // token repeats nothing; a second crash fails the start. A shutdown or a cancellation since refuses it.
+            cancellationToken.ThrowIfCancellationRequested();
+            registry.RefuseStartAtShutdown();
+            GodotSession.LogBootCrashRetried(registry.Logger, $"the warm headless host for {projectDir}");
+            return await StartOnceAsync(registry, projectDir, what, cancellationToken);
+        }
+    }
+
+    /// <summary>One start of a host and the wait for its hello; see <see cref="StartAsync"/>.</summary>
+    /// <exception cref="BootCrashException">Godot exited with <see cref="GodotSession.BootCrashExitCode"/> before its hello.</exception>
+    private static async Task<HeadlessHost> StartOnceAsync(
+        SessionRegistry registry,
+        string projectDir,
+        string what,
+        CancellationToken cancellationToken
+    )
     {
         string token = GodotSession.CreateToken();
         HostLaunch launch = new(projectDir, registry.Listener.Port, token, LogPathOf(projectDir, registry.ServerProcessId));
@@ -612,7 +642,8 @@ internal sealed class HeadlessHost
             ? $"{what} ended (Godot exited {code}) before its warm headless host connected"
             : $"{what} did not start: its warm headless host did not connect within {LoadDeadline.Seconds(deadline.Budget)} s{backstop}, "
                 + "so it was stopped with its whole process tree";
-        throw new SessionException($"{failed}. The last lines of its log, {log}:\n{tail}");
+        string message = $"{failed}. The last lines of its log, {log}:\n{tail}";
+        throw exitedEarly && code == GodotSession.BootCrashExitCode ? new BootCrashException(message) : new SessionException(message);
     }
 
     /// <summary>Waits out an abandoned hello wait; a bridge that connected after all is closed.</summary>

@@ -13,8 +13,8 @@ namespace GodotMcp.Tests.Session;
 /// <summary>
 /// A launch whose output says Godot could not create a window fails at once, quoting the line its process printed, instead of
 /// waiting out the handshake; the OpenGL 3.3 warning before a working ANGLE fallback is not that failure. A launch whose Godot
-/// crashed at boot with 0xC06D007F is retried once on a registry that says so (the itest harness's), and refused as before
-/// everywhere else. Each launch's process is a fake over a real child process, so a run has a pid and an exit while the test
+/// crashed at boot with 0xC06D007F is retried once on a registry that says so (every registry unless set off), and refused as
+/// before on one set off. Each launch's process is a fake over a real child process, so a run has a pid and an exit while the test
 /// feeds the lines a reader thread would.
 /// </summary>
 [Collection(GodotPathCollection)]
@@ -27,10 +27,13 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
 
     private const string OpenGlWarning = "WARNING: Your video card drivers seem not to support the required OpenGL 3.3 version, switching to ANGLE.";
 
-    /// <summary>The exit code of Godot's crash at boot in the GPU driver's start-up: 0xC06D007F, a delay-load "procedure not found".</summary>
+    /// <summary>
+    /// The exit code of Godot's crash at boot on Windows, in the race between its GetProcAddress import hook and dinput8's
+    /// delay-load: 0xC06D007F, a delay-load "procedure not found".
+    /// </summary>
     private const int BootCrash = -1066598273;
 
-    private const string BootCrashRetried = "Godot crashed at boot with 0xC06D007F; retrying the launch once (itest harness)";
+    private const string BootCrashRetried = "Godot crashed at boot with 0xC06D007F; retrying the launch once";
 
     private readonly TempDirectory _temp = new();
     private readonly FakeTimeProvider _time = new();

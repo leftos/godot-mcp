@@ -722,10 +722,15 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// The exit code of Godot's crash at boot inside the GPU driver's OpenGL start-up: 0xC06D007F, a delay-load "procedure not
-    /// found", which a launch on a registry with <see cref="SessionRegistry.RetryBootCrashOnce"/> retries once.
+    /// The exit code of Godot's crash at boot on Windows: 0xC06D007F, a delay-load "procedure not found" raised by dinput8,
+    /// whose start-up asks GetProcAddress through an import Godot has already hooked but whose real address it has not yet
+    /// saved, before Main::setup, the project or any script. A start on a registry with
+    /// <see cref="SessionRegistry.RetryBootCrashOnce"/> retries it once.
     /// </summary>
     internal const int BootCrashExitCode = unchecked((int)0xC06D007F);
+
+    /// <summary>Whether a Godot run exited on its own with <see cref="BootCrashExitCode"/>.</summary>
+    internal static bool CrashedAtBoot(ToolProcessResult ran) => !ran.WasKilled && ran.ExitCode == BootCrashExitCode;
 
     internal static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
@@ -831,7 +836,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 _logger,
                 () => registry.RunningSessionNames(ProjectDir, this),
                 () => registry.HeadlessHosts.StopFolder(ProjectDir, "import")
-            );
+            )
+            {
+                RetryBootCrashOnce = registry.RetryBootCrashOnce,
+            };
             PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
             string bridgeScript = Installation.FindBridgeScript();
             // A shutdown that began during the prep refuses the start before a restart's old game is stopped.
@@ -1018,7 +1026,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         try
         {
             registry.RefuseStartAtShutdown();
-            LogBootCrashRetried(_logger);
+            LogBootCrashRetried(_logger, "the launch");
             (GodotRun run, string token) = StartGodot(request, crashed.Godot, crashed.Run, started => BootCrashMarker(crashedProcessId, started));
             relaunched = crashed with { Run = run, Token = token };
         }
@@ -1031,8 +1039,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         return relaunched;
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Godot crashed at boot with 0xC06D007F; retrying the launch once (itest harness)")]
-    private static partial void LogBootCrashRetried(ILogger logger);
+    /// <summary>Says a start whose Godot crashed at boot runs once more; <paramref name="start"/> names it ("the launch").</summary>
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Godot crashed at boot with 0xC06D007F; retrying {Start} once")]
+    internal static partial void LogBootCrashRetried(ILogger logger, string start);
 
     /// <returns>
     /// The launch, how the run it replaced ended and how that run's recording ended; both are null for a launch, and the

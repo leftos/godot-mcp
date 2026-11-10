@@ -68,8 +68,8 @@ internal sealed class SessionHarness : IAsyncDisposable
             // time while the server's release waits on the floor. It is under the xUnit hang guard of a test that plays a scene
             // (TestTimeouts.OwnLaunchMs).
             ScratchUntilGuard = scratchUntilGuard ?? ScratchHangGuard,
-            // One retry of a launch whose Godot crashed at boot with 0xC06D007F inside the GPU driver's OpenGL start-up, before
-            // the bridge connected, seen on two machines and gone on rerun; any other early exit fails the launch.
+            // One retry of a start whose Godot crashed at boot with 0xC06D007F, in the race between Godot's GetProcAddress import
+            // hook and dinput8's delay-load, before it was sent anything (production's default too); any other early exit fails.
             RetryBootCrashOnce = true,
             // Hang guards in minutes, not bounds a starved game must beat to quit cleanly: the gate starts Godot at BelowNormal
             // and the listener's clock is wall time, and a stop's kill turns a run red. They are under the xUnit hang guard a

@@ -384,7 +384,7 @@ public sealed class ProjectPrepChecksTests : IDisposable
         string game = ProjectPrepFixtures.CreateGame(_temp, "Missing", "Other.csproj");
 
         PrepResult result = await ProjectPrep.RunAsync(
-            new PrepContext(game, NullLogger.Instance, () => [], () => { }),
+            new PrepContext(game, NullLogger.Instance, () => [], () => { }) { RetryBootCrashOnce = false },
             TestContext.Current.CancellationToken
         );
 
@@ -414,7 +414,10 @@ public sealed class ProjectPrepChecksTests : IDisposable
                 // Thrown so the import after it never runs: the prep ends with this, not with a Godot run.
                 throw new InvalidOperationException("the hook ran");
             }
-        );
+        )
+        {
+            RetryBootCrashOnce = false,
+        };
 
         InvalidOperationException stopped = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             ProjectPrep.RunAsync(context, TestContext.Current.CancellationToken)
@@ -429,7 +432,7 @@ public sealed class ProjectPrepChecksTests : IDisposable
     {
         string game = ImportDueGame();
         bool hooked = false;
-        PrepContext context = new(game, NullLogger.Instance, () => ["game"], () => hooked = true);
+        PrepContext context = new(game, NullLogger.Instance, () => ["game"], () => hooked = true) { RetryBootCrashOnce = false };
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             ProjectPrep.RunAsync(context, TestContext.Current.CancellationToken)
