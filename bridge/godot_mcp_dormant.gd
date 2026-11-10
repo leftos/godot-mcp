@@ -8,10 +8,12 @@ extends Node
 ## while arm_project keeps the folder armed, dormant/<pid>.json while this game waits, and
 ## join-<pid>.json when the server joins it, holding {port, token, shutOutRealGamepads, quiet,
 ## mute} as attach.json does. While dormant it looks every POLL_MS: a join file is read and
-## deleted, and a valid one ends the wait with joined; armed.json gone ends it for good with
-## disarmed.
+## deleted, and a valid one ends the wait with joined; else an attach.json written after the game
+## went dormant ends it with joined too, once per token, and is left for the server to delete;
+## else armed.json gone ends it for good with disarmed.
 
-## A join file held a valid endpoint, {port, token, shutOutRealGamepads, quiet, mute}, to dial.
+## A join file, or an attach.json found while dormant, held a valid endpoint, {port, token,
+## shutOutRealGamepads, quiet, mute}, to dial.
 signal joined(endpoint: Dictionary)
 ## The folder was disarmed while this game waited: nothing will join it now.
 signal disarmed
@@ -55,6 +57,10 @@ var _polling: bool = false
 var _next_poll_ms: int = 0
 ## The dormant file this node wrote and has not deleted yet; empty when there is none.
 var _written: String = ""
+## The token this waiter last took from attach.json; a file still holding it is not taken again.
+var _attach_token: String = ""
+## Whether this waiter has warned about a malformed attach.json; it warns once.
+var _warned_attach: bool = false
 
 
 ## How the bridge runs and whom it serves, {mode, endpoint, source}: the MODE_* decide_mode picks
@@ -164,12 +170,29 @@ static func endpoint_from(values: Dictionary) -> Dictionary:
 ## attached game quiet); empty, with a warning when the file holds no {port, token}, when there is
 ## none.
 static func attach_endpoint(dir: String) -> Dictionary:
+	return read_attach_endpoint(dir, true)
+
+
+## The endpoint in the attach file under dir, as attach_endpoint reads it; a file that holds no
+## {port, token} is warned about only when warn is.
+static func read_attach_endpoint(dir: String, warn: bool) -> Dictionary:
 	var path: String = dir.path_join(ATTACH_FILE)
 	if not FileAccess.file_exists(path):
 		return {}
+	# Opened rather than read whole: a file the server deletes after the check is read as empty,
+	# with no engine error (FileAccess.open from a script prints nothing when the open fails).
+	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	var text: String = file.get_as_text() if file != null else ""
+	return attach_endpoint_from(path, text, warn)
+
+
+## The endpoint in text, read from the attach file at path; a text that holds no {port, token} is
+## warned about when warn is and the file is still there, since one the server deleted before the
+## read is read as empty.
+static func attach_endpoint_from(path: String, text: String, warn: bool) -> Dictionary:
 	var quiet_variable: bool = OS.get_environment(QUIET_VARIABLE) == "1"
-	var found: Dictionary = parse_endpoint(FileAccess.get_file_as_string(path), quiet_variable)
-	if found.is_empty():
+	var found: Dictionary = parse_endpoint(text, quiet_variable)
+	if found.is_empty() and warn and FileAccess.file_exists(path):
 		push_warning("godot-mcp bridge: %s holds no {port, token}; it is not used." % path)
 	return found
 
@@ -241,7 +264,9 @@ static func dormant_content(game_pid: int, started_ms: int) -> Dictionary:
 static func write_dormant_file(dir: String, game_pid: int, started_ms: int) -> String:
 	var path: String = dormant_path(dir, game_pid)
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
-	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	# Written beside it and renamed over it, so the server's listing never reads it half-written.
+	var temp: String = path + ".tmp"
+	var file: FileAccess = FileAccess.open(temp, FileAccess.WRITE)
 	if file == null:
 		var reason: String = error_string(FileAccess.get_open_error())
 		push_warning(
@@ -250,6 +275,16 @@ static func write_dormant_file(dir: String, game_pid: int, started_ms: int) -> S
 		return ""
 	file.store_string(JSON.stringify(dormant_content(game_pid, started_ms)))
 	file.close()
+	var renamed: Error = DirAccess.rename_absolute(temp, path)
+	if renamed != OK:
+		push_warning(
+			(
+				"godot-mcp bridge: cannot write %s (%s); nothing can join it."
+				% [path, error_string(renamed)]
+			)
+		)
+		remove_file(temp)
+		return ""
 	return path
 
 
@@ -306,26 +341,67 @@ func _process(_delta: float) -> void:
 
 
 ## One look: a join file is read and deleted, and a valid one ends the wait (joined); a malformed
-## one is warned about and the wait goes on. Else armed.json gone ends the wait (disarmed).
+## one is warned about and the wait goes on. Else an attach.json written after the game went
+## dormant ends the wait (joined) when it holds a token this waiter has not taken yet, and is left
+## for the server to delete; a malformed one is warned about once. Else armed.json gone ends the
+## wait (disarmed).
 func poll() -> void:
 	var join_file: String = join_path(state_dir, pid)
 	if FileAccess.file_exists(join_file):
-		var quiet_variable: bool = OS.get_environment(QUIET_VARIABLE) == "1"
-		var endpoint: Dictionary = parse_endpoint(
-			FileAccess.get_file_as_string(join_file), quiet_variable
-		)
-		remove_file(join_file)
-		if endpoint.is_empty():
-			_warn("godot-mcp bridge: %s holds no {port, token}; still dormant." % join_file)
-			return
+		_take_join_file(join_file)
+		return
+	var from_attach: Dictionary = _take_attach_file()
+	if not from_attach.is_empty():
 		leave()
-		joined.emit(endpoint)
+		joined.emit(from_attach)
 	elif not FileAccess.file_exists(armed_path(state_dir)):
 		leave()
 		disarmed.emit()
 
 
-## Warns about a join file that cannot be used; overridable, so a test reads the message instead.
+## Reads and deletes join_file; a valid one ends the wait (joined), a malformed one is warned about.
+func _take_join_file(join_file: String) -> void:
+	var quiet_variable: bool = OS.get_environment(QUIET_VARIABLE) == "1"
+	var endpoint: Dictionary = parse_endpoint(
+		FileAccess.get_file_as_string(join_file), quiet_variable
+	)
+	remove_file(join_file)
+	if endpoint.is_empty():
+		_warn("godot-mcp bridge: %s holds no {port, token}; still dormant." % join_file)
+		return
+	leave()
+	joined.emit(endpoint)
+
+
+## The endpoint attach.json holds when its token is one this waiter has not taken yet, which it
+## then remembers; empty otherwise, with a warning the first time the file holds no {port, token}.
+## A file the server deleted between the check and the read is not warned about.
+func _take_attach_file() -> Dictionary:
+	var path: String = state_dir.path_join(ATTACH_FILE)
+	if not FileAccess.file_exists(path):
+		return {}
+	var endpoint: Dictionary = _read_attach(state_dir)
+	if endpoint.is_empty():
+		if not FileAccess.file_exists(path):
+			return {}
+		if not _warned_attach:
+			_warned_attach = true
+			_warn("godot-mcp bridge: %s holds no {port, token}; still dormant." % path)
+		return {}
+	if endpoint["token"] == _attach_token:
+		return {}
+	_attach_token = endpoint["token"]
+	return endpoint
+
+
+## The endpoint in the attach file under dir, unwarned; overridable, so a test can delete the file
+## between the existence check and the read.
+func _read_attach(dir: String) -> Dictionary:
+	return read_attach_endpoint(dir, false)
+
+
+## Warns about a join or attach file that cannot be used; overridable, so a test reads the message
+## instead.
 func _warn(message: String) -> void:
 	push_warning(message)
 

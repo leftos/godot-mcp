@@ -145,6 +145,36 @@ public sealed class DormantGamesTests : IDisposable
     }
 
     [Fact]
+    public void RemovingAJoinFileWaitsOutABridgeRead()
+    {
+        DormantGames.WriteJoinFile(_project.Path, 4101, new BridgeEndpoint(51234, "ABCDEF"), new ArmSettings(false, false, false));
+        string path = DormantGames.JoinPathIn(_project.Path, 4101);
+        FileStream read = AttachFileTests.OpenAsGodotReads(path);
+        int retries = 0;
+        Action<string> onRetried = retried =>
+        {
+            if (retried == path)
+            {
+                retries++;
+                read.Dispose();
+            }
+        };
+        AttachFile.HeldOpenRetried += onRetried;
+        try
+        {
+            Assert.True(DormantGames.RemoveJoinFile(_project.Path, 4101, "ABCDEF"));
+        }
+        finally
+        {
+            AttachFile.HeldOpenRetried -= onRetried;
+            read.Dispose();
+        }
+
+        Assert.False(File.Exists(path));
+        Assert.Equal(1, retries);
+    }
+
+    [Fact]
     public void TheRealProbeFindsThisProcessAndNotAnUnusedPid()
     {
         ProcessStart self = DormantGames.ProbeProcess(Environment.ProcessId);

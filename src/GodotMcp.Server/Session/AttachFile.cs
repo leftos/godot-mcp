@@ -30,7 +30,7 @@ internal static class AttachFile
         // Written whole under another name, then moved into place, as a join file is.
         string temporary = path + ".tmp";
         File.WriteAllText(temporary, EndpointJson(endpoint, settings), Utf8NoBom);
-        File.Move(temporary, path, overwrite: true);
+        RetryWhileHeldOpen(path, () => File.Move(temporary, path, overwrite: true));
     }
 
     /// <summary>
@@ -63,9 +63,52 @@ internal static class AttachFile
             return false;
         }
 
-        File.Delete(path);
+        RetryWhileHeldOpen(path, () => File.Delete(path));
         return true;
     }
+
+    /// <summary>
+    /// Raised with the file's path each time <see cref="RetryWhileHeldOpen"/> tries again, for tests to act on; no product code
+    /// subscribes.
+    /// </summary>
+    internal static event Action<string>? HeldOpenRetried;
+
+    /// <summary>
+    /// Runs <paramref name="operation"/>, a delete or replace of the attach or join file at <paramref name="path"/>, trying
+    /// again every 50 ms while it fails as a file held open fails it, at most <see cref="HeldOpenAttempts"/> attempts in all:
+    /// Godot opens a file for reading sharing read and write but not delete, so a delete landing during a bridge's read fails
+    /// with a sharing violation and a replace with access denied (as a delete of a delete-pending file does) until the read
+    /// ends. The last attempt's exception, and any other, propagates.
+    /// </summary>
+    internal static void RetryWhileHeldOpen(string path, Action operation)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                operation();
+                return;
+            }
+            catch (Exception e) when (IsHeldOpen(e) && attempt < HeldOpenAttempts)
+            {
+                HeldOpenRetried?.Invoke(path);
+                Thread.Sleep(HeldOpenDelay);
+            }
+        }
+    }
+
+    private static bool IsHeldOpen(Exception e) =>
+        e is IOException { HResult: SharingViolation } or UnauthorizedAccessException { HResult: AccessDenied };
+
+    private const int HeldOpenAttempts = 20;
+
+    private static readonly TimeSpan HeldOpenDelay = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>ERROR_SHARING_VIOLATION (32) as an HRESULT.</summary>
+    private const int SharingViolation = unchecked((int)0x80070020);
+
+    /// <summary>ERROR_ACCESS_DENIED (5) as an HRESULT.</summary>
+    private const int AccessDenied = unchecked((int)0x80070005);
 
     /// <summary>
     /// The token the attach or join file at <paramref name="path"/> carries; null when there is none, or when the file is not

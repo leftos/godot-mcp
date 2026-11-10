@@ -14,6 +14,26 @@ var _input_script: GDScript = load_bridge_script("godot_mcp_input.gd")
 var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
 
 
+## Keeps the warnings the engine logs while it is added, for a test that pins one.
+class WarningRecorder:
+	extends Logger
+
+	var warnings: PackedStringArray = []
+
+	func _log_error(
+		_function: String,
+		_file: String,
+		_line: int,
+		code: String,
+		rationale: String,
+		_editor_notify: bool,
+		error_type: int,
+		_script_backtraces: Array[ScriptBacktrace]
+	) -> void:
+		if error_type == ERROR_TYPE_WARNING:
+			warnings.append(rationale if not rationale.is_empty() else code)
+
+
 func test_decide_mode_takes_off_then_environment_then_attach_then_armed() -> void:
 	var decide: Callable = _dormant_script.decide_mode
 	assert_eq(
@@ -243,6 +263,139 @@ func test_a_poll_joins_on_a_valid_join_file_and_deletes_both_files() -> void:
 	_remove_tree(dir)
 
 
+func test_a_poll_takes_an_attach_file_written_after_the_game_went_dormant() -> void:
+	var dir: String = _fresh_dir("late_attach")
+	_write(dir.path_join("armed.json"), "{}")
+	var waiter: Node = _waiter(dir)
+	var joined: Array = []
+	waiter.joined.connect(func(endpoint: Dictionary) -> void: joined.append(endpoint))
+	waiter.enter()
+	var attach_file: String = dir.path_join("attach.json")
+	_write(attach_file, '{"port": 6, "token": "file"}')
+	waiter.poll()
+	var endpoint: Dictionary = joined[0] if not joined.is_empty() else {}
+	assert_eq(joined.size(), 1, "an attach file written while dormant joins")
+	assert_eq(endpoint.get("port"), 6, "with its port")
+	assert_eq(endpoint.get("token"), "file", "and its token")
+	assert_true(FileAccess.file_exists(attach_file), "the attach file is left for the server")
+	assert_true(not waiter.is_polling(), "the wait is over")
+	waiter.free()
+	_remove_tree(dir)
+
+
+func test_a_poll_prefers_its_join_file_to_the_attach_file() -> void:
+	var dir: String = _fresh_dir("join_over_attach")
+	_write(dir.path_join("armed.json"), "{}")
+	var waiter: Node = _waiter(dir)
+	var joined: Array = []
+	waiter.joined.connect(func(endpoint: Dictionary) -> void: joined.append(endpoint))
+	waiter.enter()
+	_write(dir.path_join("attach.json"), '{"port": 6, "token": "file"}')
+	_write(_dormant_script.join_path(dir, 4242), '{"port": 7, "token": "j"}')
+	waiter.poll()
+	assert_eq(joined.size(), 1, "one join")
+	assert_eq(joined[0].get("token") if not joined.is_empty() else null, "j", "the join file's")
+	waiter.free()
+	_remove_tree(dir)
+
+
+func test_a_poll_takes_one_attach_token_once() -> void:
+	var dir: String = _fresh_dir("attach_once")
+	_write(dir.path_join("armed.json"), "{}")
+	var waiter: Node = _waiter(dir)
+	var joined: Array = []
+	waiter.joined.connect(func(endpoint: Dictionary) -> void: joined.append(endpoint))
+	var attach_file: String = dir.path_join("attach.json")
+	_write(attach_file, '{"port": 6, "token": "first"}')
+	waiter.enter()
+	waiter.poll()
+	assert_eq(joined.size(), 1, "the attach file's token is taken")
+	waiter.enter()
+	waiter.poll()
+	assert_eq(joined.size(), 1, "the same token is not taken again")
+	assert_true(waiter.is_polling(), "the game stays dormant")
+	_write(attach_file, '{"port": 6, "token": "second"}')
+	waiter.poll()
+	assert_eq(joined.size(), 2, "a new token is taken")
+	assert_eq(joined[1].get("token") if joined.size() > 1 else null, "second", "the new one")
+	waiter.free()
+	_remove_tree(dir)
+
+
+func test_a_malformed_attach_file_is_warned_about_once_and_the_wait_goes_on() -> void:
+	var dir: String = _fresh_dir("malformed_attach")
+	_write(dir.path_join("armed.json"), "{}")
+	var waiter: Node = _waiter(dir)
+	var joined: Array = []
+	waiter.joined.connect(func(endpoint: Dictionary) -> void: joined.append(endpoint))
+	waiter.enter()
+	_write(dir.path_join("attach.json"), "{broken")
+	waiter.poll()
+	waiter.poll()
+	assert_eq(waiter.warnings.size(), 1, "the malformed attach file is warned about once")
+	var message: String = str(waiter.warnings[0]) if not waiter.warnings.is_empty() else ""
+	assert_true(message.contains("holds no {port, token}"), "it says what it holds: %s" % message)
+	assert_true(joined.is_empty(), "it joins nothing")
+	assert_true(waiter.is_polling(), "the wait goes on")
+	waiter.free()
+	_remove_tree(dir)
+
+
+func test_an_attach_file_that_vanishes_before_its_read_is_not_warned_about() -> void:
+	var dir: String = _fresh_dir("vanishing_attach")
+	_write(dir.path_join("armed.json"), "{}")
+	var waiter: Node = _vanishing_waiter(dir)
+	waiter.enter()
+	var attach_file: String = dir.path_join("attach.json")
+	_write(attach_file, "{broken")
+	waiter.poll()
+	var vanished_warnings: int = waiter.warnings.size()
+	var gone: bool = not FileAccess.file_exists(attach_file)
+	_write(attach_file, "{broken")
+	waiter.poll()
+	waiter.poll()
+	var later_warnings: int = waiter.warnings.size()
+	waiter.free()
+	_remove_tree(dir)
+	assert_true(gone, "the file vanished at the read")
+	assert_eq(vanished_warnings, 0, "a file gone before its read is not warned about")
+	assert_eq(later_warnings, 1, "a later malformed file is still warned about once")
+
+
+func test_an_attach_file_gone_before_the_boot_read_is_not_warned_about() -> void:
+	var dir: String = _fresh_dir("vanishing_boot_attach")
+	var attach_file: String = dir.path_join("attach.json")
+	var recorder := WarningRecorder.new()
+	OS.add_logger(recorder)
+	var gone: Dictionary = _dormant_script.attach_endpoint_from(attach_file, "", true)
+	var gone_warnings: int = recorder.warnings.size()
+	_write(attach_file, "{broken")
+	var malformed: Dictionary = _dormant_script.attach_endpoint_from(attach_file, "{broken", true)
+	OS.remove_logger(recorder)
+	_remove_tree(dir)
+	assert_true(gone.is_empty() and malformed.is_empty(), "neither holds an endpoint")
+	assert_eq(gone_warnings, 0, "a file gone before its read is not warned about")
+	assert_eq(recorder.warnings.size(), 1, "a malformed file that is there is warned about once")
+
+
+func test_writing_the_dormant_file_leaves_no_temp_file() -> void:
+	var dir: String = _fresh_dir("dormant_atomic")
+	_dormant_script.write_dormant_file(dir, 4242, 1)
+	var path: String = _dormant_script.write_dormant_file(dir, 4242, 2)
+	var json := JSON.new()
+	var parsed: int = json.parse(FileAccess.get_file_as_string(path))
+	var content: Variant = json.data if parsed == OK else null
+	var temp_left: bool = FileAccess.file_exists(path + ".tmp")
+	_remove_tree(dir)
+	assert_eq(path, _dormant_script.dormant_path(dir, 4242), "it returns the dormant file's path")
+	assert_true(content is Dictionary, "the file holds an object")
+	var started: Variant = (
+		(content as Dictionary).get("startedUnixMs") if content is Dictionary else null
+	)
+	assert_eq(started, 2, "the second write's content")
+	assert_true(not temp_left, "no temp file is left")
+
+
 func test_a_poll_deletes_a_malformed_join_file_and_stays_dormant() -> void:
 	var dir: String = _fresh_dir("malformed")
 	_write(dir.path_join("armed.json"), "{}")
@@ -463,6 +616,41 @@ func _waiter(dir: String) -> Node:
 				"",
 				"func _warn(message: String) -> void:",
 				"\twarnings.append(message)",
+			]
+		)
+	)
+	script.reload()
+	var waiter: Node = script.new()
+	waiter.state_dir = dir
+	waiter.pid = 4242
+	waiter.started_unix_ms = 1700000000000
+	return waiter
+
+
+## A waiter as _waiter makes whose first read of attach.json finds it deleted between the
+## existence check and the read, as the server's delete can land.
+func _vanishing_waiter(dir: String) -> Node:
+	var script := GDScript.new()
+	script.source_code = (
+		"\n"
+		. join(
+			[
+				'extends "%s"' % _dormant_script.resource_path,
+				"",
+				"var warnings: Array = []",
+				"var vanish: bool = true",
+				"",
+				"",
+				"func _warn(message: String) -> void:",
+				"\twarnings.append(message)",
+				"",
+				"",
+				"func _read_attach(dir: String) -> Dictionary:",
+				"\tif not vanish:",
+				"\t\treturn super(dir)",
+				"\tvanish = false",
+				"\tDirAccess.remove_absolute(dir.path_join(ATTACH_FILE))",
+				"\treturn {}",
 			]
 		)
 	)

@@ -39,6 +39,10 @@ internal sealed class DormantGames(Func<int, ProcessStart> probe, TextWriter err
     public static string JoinPathIn(string projectDir, int pid) =>
         Path.Combine(projectDir, ".godot", "godot-mcp", string.Create(CultureInfo.InvariantCulture, $"join-{pid}.json"));
 
+    /// <summary>The dormant entry of <paramref name="pid"/>, <c>dormant/&lt;pid&gt;.json</c>, which its bridge writes.</summary>
+    public static string EntryPathIn(string projectDir, int pid) =>
+        Path.Combine(FolderIn(projectDir), string.Create(CultureInfo.InvariantCulture, $"{pid}.json"));
+
     /// <summary>
     /// The folder's dormant games, ordered by process id. A dead or reused entry is deleted and left out; an entry that cannot
     /// be read is reported and left out, but kept, since its bridge may be writing it.
@@ -74,7 +78,7 @@ internal sealed class DormantGames(Func<int, ProcessStart> probe, TextWriter err
         // Written whole under another name, then moved into place: the bridge deletes a join file it cannot parse.
         string temporary = path + ".tmp";
         File.WriteAllText(temporary, AttachFile.EndpointJson(endpoint, settings), Utf8NoBom);
-        File.Move(temporary, path, overwrite: true);
+        AttachFile.RetryWhileHeldOpen(path, () => File.Move(temporary, path, overwrite: true));
     }
 
     /// <summary>
@@ -89,7 +93,7 @@ internal sealed class DormantGames(Func<int, ProcessStart> probe, TextWriter err
             return false;
         }
 
-        File.Delete(path);
+        AttachFile.RetryWhileHeldOpen(path, () => File.Delete(path));
         return true;
     }
 

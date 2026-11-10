@@ -42,6 +42,12 @@ internal sealed class BridgeListener : IDisposable
     internal LoadClock Clock { get; init; } = LoadClock.Shared;
 
     /// <summary>
+    /// Raised for each hello the listener has judged, with the token it carries (null when it carries none), true when it was
+    /// handed to its waiter and false when it was refused, for tests to order on; no product code subscribes.
+    /// </summary>
+    internal event Action<string?, bool>? HelloJudged;
+
+    /// <summary>
     /// Waits for the connection whose hello carries the expected token and project; any other connection is closed.
     /// Cancelling <paramref name="cancellationToken"/> withdraws the wait, and a bridge that dials after that is closed.
     /// </summary>
@@ -199,6 +205,7 @@ internal sealed class BridgeListener : IDisposable
         if (token is null || !_waiters.TryGetValue(token, out Waiter? waiter))
         {
             Refuse(client, "no session is waiting for the token its hello carries");
+            HelloJudged?.Invoke(token, false);
             return;
         }
 
@@ -206,6 +213,7 @@ internal sealed class BridgeListener : IDisposable
         if (mismatch is not null)
         {
             Refuse(client, mismatch);
+            HelloJudged?.Invoke(token, false);
             return;
         }
 
@@ -257,11 +265,13 @@ internal sealed class BridgeListener : IDisposable
     {
         if (Withdraw(waiter) && waiter.Completion.TrySetResult(connection))
         {
+            HelloJudged?.Invoke(waiter.Expected.Token, true);
             return;
         }
 
         Log.RefusedBridgeConnection(_logger, "its session stopped waiting for it");
         await connection.DisposeAsync();
+        HelloJudged?.Invoke(waiter.Expected.Token, false);
     }
 
     private void Refuse(TcpClient client, string reason)

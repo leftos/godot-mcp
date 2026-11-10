@@ -534,18 +534,17 @@ public sealed class SessionAttachTests : IAsyncDisposable
     [Fact]
     public async Task AnAttachWritesItsOverrideOnlyOnceThePrepLockIsFree()
     {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = _harness.Project("alpha");
         string overrideFile = OverrideFile.PathIn(alpha);
         SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
-        await folderLock.WaitAsync(TestContext.Current.CancellationToken);
+        await folderLock.WaitAsync(cancellation);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         Task<AttachResult> attach;
         try
         {
-            attach = _harness.Sessions.AttachAsync(
-                new AttachRequest(alpha, "server", TimeSpan.FromSeconds(2), false, false, null),
-                TestContext.Current.CancellationToken
-            );
-            await Task.Delay(200, TestContext.Current.CancellationToken);
+            attach = _harness.Sessions.AttachAsync(new AttachRequest(alpha, "server", RegistryHarness.LongWait, false, false, null), cancel.Token);
+            await Task.Delay(200, cancellation);
             Assert.False(File.Exists(overrideFile));
         }
         finally
@@ -553,8 +552,141 @@ public sealed class SessionAttachTests : IAsyncDisposable
             folderLock.Release();
         }
 
-        await RegistryHarness.WaitUntilAsync(() => File.Exists(overrideFile));
-        await Assert.ThrowsAsync<SessionException>(() => attach);
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(overrideFile), attach);
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attach);
+    }
+
+    // The wait's deadline ends the call even while a prep holds the lock: the attach file goes at once, and the override,
+    // which no game can use any more, is never written.
+    [Fact]
+    public async Task AnAttachWhoseWaitEndsWhileThePrepLockIsHeldWritesNoOverride()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        try
+        {
+            SessionException timedOut = await Assert.ThrowsAsync<SessionException>(() =>
+                _harness.Sessions.AttachAsync(new AttachRequest(alpha, "server", TimeSpan.FromSeconds(2), false, false, null), cancellation)
+            );
+
+            Assert.False(File.Exists(AttachFile.PathIn(alpha)));
+            Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+            Assert.StartsWith($"No game on {alpha} connected within 2 s", timedOut.Message);
+            Assert.Contains(
+                "a prep held the folder for the whole wait, so override.cfg was never written",
+                timedOut.Message,
+                StringComparison.Ordinal
+            );
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
+
+    // A game handed over while the attach still waits on the prep lock belongs to the attach: when the attach then fails, it
+    // closes the game's connection instead of leaving the game connected to nothing.
+    [Fact]
+    public async Task AGameHandedOverToAnAttachThatThenFailsIsClosed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // A completed attach elsewhere starts the listener's accept loop, as a server that has served a session before has it.
+        using FakeBridge other = await _harness.AttachFakeGameAsync(_harness.Project("beta"), "other", new FakeHello());
+        string alpha = _harness.Project("alpha");
+        string attachFile = AttachFile.PathIn(alpha);
+        TaskCompletionSource<bool> judged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Only alpha's own hello: beta's, or a late verdict on another attach's, carries another token.
+        string? alphaToken = null;
+        Action<string?, bool> onJudged = (judgedToken, handedOver) =>
+        {
+            if (judgedToken is not null && judgedToken == Volatile.Read(ref alphaToken))
+            {
+                judged.TrySetResult(handedOver);
+            }
+        };
+        _harness.Listener.HelloJudged += onJudged;
+        SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        FakeBridge game;
+        bool handedOver;
+        try
+        {
+            Task<AttachResult> attach = _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, "server", RegistryHarness.LongWait, false, false, null),
+                cancel.Token
+            );
+            await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile), attach);
+            string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
+            Volatile.Write(ref alphaToken, token);
+            game = await FakeBridge.DialAsync(_harness.Listener.Port, token, alpha, new FakeHello(), cancellation);
+            handedOver = await judged.Task.WaitAsync(RegistryHarness.HangGuard, cancellation);
+            await cancel.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attach);
+        }
+        finally
+        {
+            folderLock.Release();
+            _harness.Listener.HelloJudged -= onJudged;
+        }
+
+        using (game)
+        {
+            Assert.True(handedOver, "the hello sent while the attach waited on the prep lock was refused");
+            Assert.True(await game.IsClosedByServerAsync(RegistryHarness.HangGuard), "the failed attach left the game connected");
+        }
+    }
+
+    // A game that boots while the attach waits on the prep lock reads the attach file and dials before the override is written:
+    // the listener refuses a hello whose token no session awaits, so the attach must await the token before it publishes it.
+    [Fact]
+    public async Task AGameThatDialsAsSoonAsTheAttachFileAppearsIsAccepted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // A completed attach elsewhere starts the listener's accept loop, as a server that has served a session before has it.
+        using FakeBridge other = await _harness.AttachFakeGameAsync(_harness.Project("beta"), "other", new FakeHello());
+        string alpha = _harness.Project("alpha");
+        string attachFile = AttachFile.PathIn(alpha);
+        TaskCompletionSource<bool> judged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Only alpha's own hello: beta's, or a late verdict on another attach's, carries another token.
+        string? alphaToken = null;
+        Action<string?, bool> onJudged = (judgedToken, handedOver) =>
+        {
+            if (judgedToken is not null && judgedToken == Volatile.Read(ref alphaToken))
+            {
+                judged.TrySetResult(handedOver);
+            }
+        };
+        _harness.Listener.HelloJudged += onJudged;
+        SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        Task<AttachResult> attach;
+        FakeBridge game;
+        bool handedOver;
+        try
+        {
+            attach = _harness.Sessions.AttachAsync(new AttachRequest(alpha, "server", RegistryHarness.LongWait, false, false, null), cancellation);
+            await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile), attach);
+            string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
+            Volatile.Write(ref alphaToken, token);
+            game = await FakeBridge.DialAsync(_harness.Listener.Port, token, alpha, new FakeHello(), cancellation);
+            handedOver = await judged.Task.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        }
+        finally
+        {
+            folderLock.Release();
+            _harness.Listener.HelloJudged -= onJudged;
+        }
+
+        using (game)
+        {
+            Assert.True(handedOver, "the hello sent while the attach waited on the prep lock was refused");
+            AttachResult attached = await attach.WaitAsync(RegistryHarness.HangGuard, cancellation);
+            Assert.NotNull(attached);
+        }
     }
 
     [Fact]
@@ -686,6 +818,35 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.StartsWith($"The dormant game (pid 4101) on {alpha} did not answer within 1 s", refused.Message);
         Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    // A plain attach on the folder can take the dormant game a join targets: the join's timeout then says the game is no
+    // longer dormant, not that it may be frozen.
+    [Fact]
+    public async Task AJoinWhoseGameIsNoLongerDormantSaysAnotherAttachTookIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // On fake time, so the deadline ends only once the entry is gone, and never as a backstop.
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+
+        Task<AttachResult> join = harness.Sessions.AttachAsync(
+            new AttachRequest(alpha, null, TimeSpan.FromSeconds(1), false, false, null),
+            cancellation
+        );
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(DormantGames.JoinPathIn(alpha, 4101)), join);
+        File.Delete(DormantGames.EntryPathIn(alpha, 4101));
+        await RegistryHarness.AdvanceUntilDoneAsync(time, join, cancellation);
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() => join);
+
+        Assert.Equal(
+            $"The dormant game (pid 4101) on {alpha} did not answer within 1 s and is no longer dormant: another attach_project took "
+                + "it, or it quit. The join is abandoned and its join file is removed; call attach_project again.",
+            refused.Message
+        );
     }
 
     [Fact]

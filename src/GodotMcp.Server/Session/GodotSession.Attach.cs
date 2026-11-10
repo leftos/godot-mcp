@@ -307,14 +307,61 @@ internal sealed partial class GodotSession
         CancellationToken cancellationToken
     )
     {
-        // The attach file goes first: a game that starts between the two writes then finds it once override.cfg loads the bridge.
-        // Under the folder list's hold, so it never lands between another server's read of the file's token and its delete.
-        registry.OverrideFolders.Hold(
-            $"writing the attach file in {ProjectDir}",
-            () => AttachFile.Write(ProjectDir, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute))
-        );
-        await WriteOverrideUnderPrepLockAsync(bridgeScript, cancellationToken);
-        return await AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, cancellationToken);
+        // The wait is registered first, since the listener refuses a hello whose token no session awaits and a game may dial as
+        // soon as the attach file lands. The attach file goes before the override: a game that starts between the two writes then
+        // finds it once override.cfg loads the bridge. Under the folder list's hold, so it never lands between another server's
+        // read of the file's token and its delete.
+        using var abandon = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<BridgeConnection> accepted = AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, abandon.Token);
+        try
+        {
+            registry.OverrideFolders.Hold(
+                $"writing the attach file in {ProjectDir}",
+                () => AttachFile.Write(ProjectDir, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute))
+            );
+        }
+        catch
+        {
+            await AbandonAcceptAsync(abandon, accepted);
+            throw;
+        }
+
+        // The override's write races the accept: a deadline or cancel that ends the accept while a prep holds the lock ends the
+        // call at once, and a game that dials before the override lands is kept until the write is done.
+        Task writing = WriteOverrideUnderPrepLockAsync(bridgeScript, abandon.Token);
+        await Task.WhenAny(writing, accepted);
+        if (accepted.IsCompleted && !accepted.IsCompletedSuccessfully)
+        {
+            await abandon.CancelAsync();
+            await writing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            return await accepted;
+        }
+
+        try
+        {
+            await writing;
+        }
+        catch
+        {
+            await AbandonAcceptAsync(abandon, accepted);
+            throw;
+        }
+
+        return await accepted;
+    }
+
+    /// <summary>
+    /// Ends a wait for the game that the attach gives up on, and closes the connection when a game was handed over meanwhile:
+    /// the attach owns it, so nothing else would.
+    /// </summary>
+    private static async Task AbandonAcceptAsync(CancellationTokenSource abandon, Task<BridgeConnection> accepted)
+    {
+        await abandon.CancelAsync();
+        await ((Task)accepted).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (accepted.IsCompletedSuccessfully)
+        {
+            await accepted.Result.DisposeAsync();
+        }
     }
 
     /// <summary>
@@ -334,8 +381,7 @@ internal sealed partial class GodotSession
         }
         catch
         {
-            await abandon.CancelAsync();
-            await ((Task)accepted).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await AbandonAcceptAsync(abandon, accepted);
             throw;
         }
 
@@ -399,19 +445,44 @@ internal sealed partial class GodotSession
         }
     }
 
+    /// <summary>What a timed-out attach removed: its override.cfg too, or why that stays or was never there.</summary>
+    private string DescribeRemovedFiles(bool overrideRemoved)
+    {
+        if (overrideRemoved)
+        {
+            return "its override.cfg and attach file are removed";
+        }
+
+        // The deadline ended while a prep held the lock the override is written under.
+        return File.Exists(OverrideFile.PathIn(ProjectDir))
+            ? "its attach file is removed (override.cfg stays while another live session uses the folder or it is armed)"
+            : "its attach file is removed (a prep held the folder for the whole wait, so override.cfg was never written)";
+    }
+
+    private string DescribeJoinTimeout(int pid, TimeSpan wait, string backstop)
+    {
+        if (!File.Exists(DormantGames.EntryPathIn(ProjectDir, pid)))
+        {
+            // Another attach on the folder took the game, which read the attach file before the join file arrived, or it quit.
+            return $"The dormant game (pid {pid}) on {ProjectDir} did not answer within {wait.TotalSeconds:0} s{backstop} and is no longer "
+                + "dormant: another attach_project took it, or it quit. The join is abandoned and its join file is removed; call "
+                + "attach_project again.";
+        }
+
+        return $"The dormant game (pid {pid}) on {ProjectDir} did not answer within {wait.TotalSeconds:0} s{backstop}, so the join is "
+            + "abandoned and its join file is removed. It may be paused under a debugger or frozen; resume it, then call "
+            + "attach_project again.";
+    }
+
     private string DescribeAttachTimeout(TimeSpan wait, LoadDeadline? deadline, bool overrideRemoved)
     {
         string backstop = deadline is { Reason: DeadlineReason.Backstop } ? deadline.BackstopClause() : string.Empty;
         if (JoinPid is int pid)
         {
-            return $"The dormant game (pid {pid}) on {ProjectDir} did not answer within {wait.TotalSeconds:0} s{backstop}, so the join is "
-                + "abandoned and its join file is removed. It may be paused under a debugger or frozen; resume it, then call "
-                + "attach_project again.";
+            return DescribeJoinTimeout(pid, wait, backstop);
         }
 
-        string removed = overrideRemoved
-            ? "its override.cfg and attach file are removed"
-            : "its attach file is removed (override.cfg stays while another live session uses the folder or it is armed)";
+        string removed = DescribeRemovedFiles(overrideRemoved);
         return $"No game on {ProjectDir} connected within {wait.TotalSeconds:0} s{backstop}, so the attach is abandoned and {removed}. A game "
             + "attaches only when it starts after attach_project has written them: launch it (a script, godot --path <project>, "
             + "the editor's Play button) within waitSeconds of the call, then call attach_project again, or arm_project the "

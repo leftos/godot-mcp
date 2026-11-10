@@ -268,13 +268,15 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `attach_project`
 
-- **Does:** on an armed folder with a dormant game, joins that game at once; otherwise injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects: `{session, projectPath, quiet, version, window, joinedPid?}` (`window` `{width, height}` the game window's size in pixels; `joinedPid` the dormant game joined).
+- **Does:** on an armed folder with a dormant game, joins that game at once; otherwise injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects (a dormant game a listing missed too, since a dormant game also reads the attach file), or ends with a timeout once `waitSeconds` runs out, counted from the call even while a prep holds the folder: `{session, projectPath, quiet, version, window, joinedPid?}` (`window` `{width, height}` the game window's size in pixels; `joinedPid` the dormant game joined).
 - **Use:** for a game `run_project` does not start: a second client, a `--server` run, a smoke script, the editor's Play button. Start the launch in the background delayed a second or two (`Start-Sleep 2; godot --path <project>`) just before this call, or launch within `waitSeconds` (1 to 600, default 60, load-adjusted) after it.
 
   A game the editor plays (`editor {action: play}`) is a plain game with its own window, joined like any other. The call blocks while it waits, so a sequential agent cannot play during it: `arm_project` the folder, `editor {action: play}`, then this call, which joins the dormant game by pid; to end it, `editor {action: stop}` (or `stop_project` on the attached session), `detach_project`, `disarm_project`. The other way is this call and `editor {action: play}` in one parallel tool-call block. Give a C# project's attach a long `waitSeconds` (120 or more), since `play` builds first.
 
   For a game already running, `arm_project` the folder before it starts, then call this at any time. `options {quiet, shutOutRealGamepads, mute, session, pid}`: `pid` picks one of several dormant games; `mute` (left out: the arm's, else false) silences the game by muting its Master bus, and `quiet` mutes it too. After a detach the game goes back to the arm's mute, or to its own when it goes idle.
 - **Edges:** with one dormant game and no `pid`, that game is joined rather than a new launch waited for; with several and no `pid`, and with a `pid` that is not dormant, the call is refused with the dormant games listed.
+
+  A join whose dormant game another attach took, or which quit, times out saying "The dormant game (pid <pid>) on <dir> did not answer within <n> s and is no longer dormant: another attach_project took it, or it quit. The join is abandoned and its join file is removed; call attach_project again."
 
   Joins of different dormant games wait at once, beside each other and beside a plain attach; a second join of the same pid is refused naming the session that waits for it. A game started before `arm_project`, or on a folder not armed, has no bridge and never attaches: relaunch it while the folder is armed.
 

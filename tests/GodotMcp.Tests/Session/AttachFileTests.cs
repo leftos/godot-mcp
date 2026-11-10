@@ -100,6 +100,125 @@ public sealed class AttachFileTests : IDisposable
         Assert.Equal(content, File.ReadAllText(path));
     }
 
+    // Godot opens a file for reading sharing read and write but not delete, so a delete or replace landing during a bridge's
+    // read fails with a sharing violation until the read ends.
+    [Fact]
+    public void ARemoveWaitsOutABridgeRead()
+    {
+        AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ABCDEF"), Plain);
+        string path = AttachFile.PathIn(_project.Path);
+        FileStream read = OpenAsGodotReads(path);
+        int retries = 0;
+        Action<string> onRetried = retried =>
+        {
+            if (retried == path)
+            {
+                retries++;
+                read.Dispose();
+            }
+        };
+        AttachFile.HeldOpenRetried += onRetried;
+        try
+        {
+            Assert.True(AttachFile.Remove(_project.Path, "ABCDEF"));
+        }
+        finally
+        {
+            AttachFile.HeldOpenRetried -= onRetried;
+            read.Dispose();
+        }
+
+        Assert.False(File.Exists(path));
+        Assert.Equal(1, retries);
+    }
+
+    [Fact]
+    public void AWriteWaitsOutABridgeRead()
+    {
+        AttachFile.Write(_project.Path, new BridgeEndpoint(1111, "OLD"), Plain);
+        string path = AttachFile.PathIn(_project.Path);
+        FileStream read = OpenAsGodotReads(path);
+        int retries = 0;
+        Action<string> onRetried = retried =>
+        {
+            if (retried == path)
+            {
+                retries++;
+                read.Dispose();
+            }
+        };
+        AttachFile.HeldOpenRetried += onRetried;
+        try
+        {
+            AttachFile.Write(_project.Path, new BridgeEndpoint(2222, "NEW"), Plain);
+        }
+        finally
+        {
+            AttachFile.HeldOpenRetried -= onRetried;
+            read.Dispose();
+        }
+
+        Assert.Equal("NEW", AttachFile.TokenIn(path));
+        Assert.Equal(1, retries);
+    }
+
+    [Fact]
+    public void ARemoveGivesUpAfterItsRetries()
+    {
+        AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ABCDEF"), Plain);
+        string path = AttachFile.PathIn(_project.Path);
+        int retries = 0;
+        Action<string> onRetried = retried =>
+        {
+            if (retried == path)
+            {
+                retries++;
+            }
+        };
+        AttachFile.HeldOpenRetried += onRetried;
+        try
+        {
+            using FileStream read = OpenAsGodotReads(path);
+            Assert.Throws<IOException>(() => AttachFile.Remove(_project.Path, "ABCDEF"));
+        }
+        finally
+        {
+            AttachFile.HeldOpenRetried -= onRetried;
+        }
+
+        Assert.Equal(19, retries);
+    }
+
+    [Fact]
+    public void AWriteGivesUpAfterItsRetries()
+    {
+        AttachFile.Write(_project.Path, new BridgeEndpoint(1111, "OLD"), Plain);
+        string path = AttachFile.PathIn(_project.Path);
+        int retries = 0;
+        Action<string> onRetried = retried =>
+        {
+            if (retried == path)
+            {
+                retries++;
+            }
+        };
+        AttachFile.HeldOpenRetried += onRetried;
+        try
+        {
+            using FileStream read = OpenAsGodotReads(path);
+            Assert.Throws<UnauthorizedAccessException>(() => AttachFile.Write(_project.Path, new BridgeEndpoint(2222, "NEW"), Plain));
+        }
+        finally
+        {
+            AttachFile.HeldOpenRetried -= onRetried;
+        }
+
+        Assert.Equal(19, retries);
+    }
+
+    /// <summary>Opens the file as Godot's reader does on Windows: sharing read and write, not delete.</summary>
+    internal static FileStream OpenAsGodotReads(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
     private bool WrittenMute(ArmSettings settings)
     {
         AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ABCDEF"), settings);
