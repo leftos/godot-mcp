@@ -9,6 +9,7 @@ extends RefCounted
 
 const SceneFiles := preload("scene_files.gd")
 const SceneSplice := preload("scene_splice.gd")
+const SceneTabs := preload("scene_tabs.gd")
 const Json := preload("../bridge/godot_mcp_json.gd")
 const RES_PREFIX := "res://"
 ## A packed node record's fields before its property count: parent, owner, type, name, instance.
@@ -79,6 +80,7 @@ static func _restore_hidden(root: Node, state: SceneState, depth: int) -> void:
 		if inner != null:
 			_restore_hidden(node, inner.get_state(), depth + 1)
 		_restore_values(node, state, index)
+		SceneTabs.restore_current(node, state, index)
 
 
 ## Sets on node, through ClassDB, each hidden engine property the record at index of state stores,

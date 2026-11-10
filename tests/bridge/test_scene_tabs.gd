@@ -16,6 +16,15 @@ const PAGES := [
 ]
 ## The fixture's Tabs lines after its layout_mode: Gameplay's title, Controls disabled.
 const TABS_LINES := ["current_tab = 0", 'tab_1/title = "Net"', "tab_3/disabled = true"]
+## PAGES as the editor saves them with Server, page 2, the current one: every other page hidden.
+const SERVER_CURRENT_PAGES := [
+	["Sound", 1003, true, ""],
+	["Gameplay", 1004, true, "Net"],
+	["Server", 1005, false, ""],
+	["Controls", 1006, true, ""],
+]
+## TABS_LINES with Server, page 2, the current one.
+const SERVER_CURRENT_LINES := ["current_tab = 2", 'tab_1/title = "Net"', "tab_3/disabled = true"]
 
 var tabs_scene: String = RunDir.path("tabs_edit.tscn")
 var _ops: GDScript = load(
@@ -160,6 +169,46 @@ func test_duplicating_the_current_page_keeps_it_current() -> void:
 	_remove_scene(tabs_scene)
 
 
+func test_an_unrelated_edit_keeps_a_stored_current_tab() -> void:
+	var text: String = _tabs_text(SERVER_CURRENT_PAGES, SERVER_CURRENT_LINES)
+	_write(tabs_scene, text)
+
+	var edited: Dictionary = _ops.edit_scene("set_node_properties", _side_text_update("b"))
+
+	assert_eq(_warning_of(edited), "", "no warning: %s" % edited)
+	var saved: String = _saved(tabs_scene)
+	assert_eq(_visible_lines(saved), _visible_lines(text), "every page keeps its visibility")
+	var expected: String = _with_side_edited(text)
+	assert_eq(saved, expected, "current_tab = 2 is kept, only Side's text changes")
+	_remove_scene(tabs_scene)
+
+
+func test_an_out_of_range_current_tab_is_left_to_the_engine() -> void:
+	var tab_lines: Array = ["current_tab = 9", 'tab_1/title = "Net"', "tab_3/disabled = true"]
+	var text: String = _tabs_text(PAGES, tab_lines)
+	_write(tabs_scene, text)
+
+	var edited: Dictionary = _ops.edit_scene("set_node_properties", _side_text_update("b"))
+
+	assert_eq(_warning_of(edited), "", "no warning: %s" % edited)
+	var expected: String = _with_side_edited(text.replace("current_tab = 9", "current_tab = 0"))
+	assert_eq(_saved(tabs_scene), expected, "the save holds the tab bar's current page, 0")
+	_remove_scene(tabs_scene)
+
+
+func test_a_batch_edit_keeps_a_stored_current_tab() -> void:
+	var text: String = _tabs_text(SERVER_CURRENT_PAGES, SERVER_CURRENT_LINES)
+	_write(tabs_scene, text)
+	var step: Dictionary = {"op": "set_node_properties", "params": _side_text_update("b")}
+
+	var batch: Dictionary = _ops.batch_scene({"scene": tabs_scene, "steps": [step]})
+
+	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
+	var expected: String = _with_side_edited(text)
+	assert_eq(_saved(tabs_scene), expected, "current_tab = 2 is kept, only Side's text changes")
+	_remove_scene(tabs_scene)
+
+
 func test_a_non_tab_parent_is_unaffected() -> void:
 	var head: Array = [
 		'[gd_scene format=3 uid="%s"]' % TABS_UID,
@@ -262,6 +311,29 @@ func _add_page(position: Variant) -> Dictionary:
 	if position != null:
 		params["position"] = position
 	return params
+
+
+## set_node_properties' params setting Side's text to value, an edit away from the TabContainer.
+func _side_text_update(value: String) -> Dictionary:
+	var update: Dictionary = {"nodePath": "Side", "property": "text", "value": value}
+	return {"scene": tabs_scene, "updates": [update]}
+
+
+## text with Side's text set to "b" as the save writes it: the section the edit changed in Godot's
+## pack form, its text before its size_flags_vertical.
+func _with_side_edited(text: String) -> String:
+	return text.replace(
+		'size_flags_vertical = 4\ntext = "a"', 'text = "b"\nsize_flags_vertical = 4'
+	)
+
+
+## Each section's node line and its visible line, in order, for the pages' visibility in text.
+func _visible_lines(text: String) -> Array:
+	var lines: Array = []
+	for line in text.split("\n"):
+		if line.begins_with("[node ") or line.begins_with("visible = "):
+			lines.append(line)
+	return lines
 
 
 ## The warning of an edit's result, "" when it has none; a failed edit's error, so it shows.

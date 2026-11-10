@@ -143,7 +143,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Every other node keeps its source text; only a trimmed scene that cannot be loaded at all keeps the pack form throughout, and the warning then names every path.
 
-  On a `TabContainer`, a page's tab title, icon and disabled state follow the page after an insert, move or delete among the pages, because Godot's tab bar moves them with it and the save checks every line it leaves out by loading it. `current_tab` follows the current page after an insert or move among the pages. The later pages' `metadata/_tab_index` lines are renumbered, as Godot does on every move; that is correct.
+  On a `TabContainer`, a page's tab title, icon and disabled state follow the page after an insert, move or delete among the pages, because Godot's tab bar moves them with it and the save checks every line it leaves out by loading it. `current_tab` follows the current page after an insert or move among the pages, and a stored `current_tab` (say 2) stays in the saved text, so the game opens on that page; a stored value out of range saves as `current_tab = 0`. The later pages' `metadata/_tab_index` lines are renumbered, as Godot does on every move; that is correct.
 
   A new child is a page, and is saved without `visible = false`, only when it is a Control that is not `top_level`. `duplicate_node` of a page keeps its tab title, icon, disabled and hidden state and keeps the current page current.
 

@@ -549,6 +549,8 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   A `TabContainer` stores `tab_N/title`, `icon`, `disabled` and `hidden` by page position, but Godot's tab bar moves them with the page and the keep logic loads every dropped or put-back line, so after an insert, move or delete they follow their pages. The later pages' `metadata/_tab_index` lines are renumbered, as Godot sets them on every `move_child`, and `current_tab` follows the current page after an insert or move among pages.
 
+  Out of the tree `TabContainer.set_current_tab` only keeps the value for entering the tree, its getter reads the tab bar, and the bar's first `add_tab` makes tab 0 current, so `pack` would save `current_tab = 0`. `SceneEdit._restore_hidden` (every headless open of packed text: the edit ops, `batch_scene_operations` and the check's re-opens) calls `SceneTabs.restore_current`, which sets the bar's current tab from the SceneState's stored value when in range and different from the bar's. It blocks the bar's signals: out of the tree a `tab_changed` runs the TabContainer's repaint at once and changes the pages' stored visibility.
+
   `metadata/_tab_index` is refused as a property to set. A new child is a page, and is saved without `visible = false`, only when it is a Control that is not `top_level`: Godot hides every page it adds, so the loaded page reads hidden anyway.
 
   `duplicate_node` of a page puts its tab title, icon, disabled and hidden state and the current page back after the pack under the holder, since a page taken out of its container loses them (`SceneNodes._tab_state`, `_restore_tab_state`).
