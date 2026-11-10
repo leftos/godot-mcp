@@ -14,7 +14,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class StressTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
     private static readonly StressPool JumpAndButton = new(Actions: ["probe_jump"], Elements: ["SmallButton"]);
     private readonly SharedProbeSession _shared = shared;

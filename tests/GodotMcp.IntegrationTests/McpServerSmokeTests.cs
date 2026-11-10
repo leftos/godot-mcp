@@ -34,7 +34,7 @@ public sealed class McpServerSmokeTests : IDisposable
 
     // xUnit's timeouts are wall time: the headroom lets a run on a busy machine reach the server's own load-adjusted
     // deadlines, which end at 5 x their budget in wall time, before xUnit kills it.
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ListsTheToolsRunsTheProbeReadsItClicksItAndStopsIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -159,7 +159,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.False(File.Exists(_probe.OverrideFile));
     }
 
-    [Fact(Timeout = 120_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ToolsCarryTheirAnnotations()
     {
         await using McpClient client = await ConnectAsync();
@@ -264,7 +264,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 
-    [Fact(Timeout = 120_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AWrongKindArgumentIsRefusedByName()
     {
         await using McpClient client = await ConnectAsync();
@@ -278,7 +278,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Contains("options.prepare takes a string, not true.", Text(run), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = 120_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnUnknownOptionKeyIsRefused()
     {
         await using McpClient client = await ConnectAsync();
@@ -292,7 +292,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Contains("options has no 'prepar'", Text(run), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheFrontIsToldBusyBeforeARunAnswersAndFreeAfterTheStop()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -345,7 +345,7 @@ public sealed class McpServerSmokeTests : IDisposable
         }
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task WithoutTheFrontNoBusyNotificationIsSent()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -373,7 +373,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Empty(Snapshot(sent));
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGameQuitsByItselfWhenItsServerIsKilled()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

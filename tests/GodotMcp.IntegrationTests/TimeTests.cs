@@ -19,7 +19,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
     private const string Probe = "scene_tree.root.get_node(\"TimeProbe\")";
     private const string PausedRefusal =
@@ -1340,7 +1341,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     // A 120-frame step's deadline is 10 s + 120 x 100 ms = 22 s, and the server waits 5 s longer for its answer.
-    [Fact(Timeout = 60_000)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepWhoseFramesStopDrawingEndsAtItsDeadlineAndFreesTheNextStep()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);

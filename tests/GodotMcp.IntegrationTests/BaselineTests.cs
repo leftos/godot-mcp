@@ -18,7 +18,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
     private const string Full = "probe_full";
     private const string Compat = "compat";

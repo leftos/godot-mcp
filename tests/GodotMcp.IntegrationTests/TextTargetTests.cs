@@ -12,7 +12,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
 
     // Card (mouse-ignoring) at (400, 200), 160 x 100, as an instanced scene holds it: Hit, a text-less Button filling the

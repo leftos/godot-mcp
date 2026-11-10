@@ -16,7 +16,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed partial class PrepTests : IAsyncDisposable
 {
-    private const int BuildTestTimeoutMs = 240_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int BuildTestTimeoutMs = TestTimeouts.OwnLaunchMs;
 
     // A 1 x 1 PNG, so an import has something to import.
     private const string OnePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";

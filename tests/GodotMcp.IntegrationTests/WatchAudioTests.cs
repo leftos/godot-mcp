@@ -17,7 +17,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class WatchAudioTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
     private const int ToneMixRate = 22_050;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());

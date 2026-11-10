@@ -11,7 +11,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class FiredSignalsTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
     private const string Drawn = "await scene_tree.process_frame\n\tawait scene_tree.process_frame\n\treturn true";
     private const string HideMain = "scene_tree.root.get_node(\"Main\").visible = false\n\t";

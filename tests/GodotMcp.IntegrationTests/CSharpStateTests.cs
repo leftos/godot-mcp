@@ -17,7 +17,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixture<SharedCsProbeSession>
 {
-    private const int TestTimeoutMs = 150_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
 
     // A hang guard: a helper load that has not ended in two minutes of load-adjusted time is broken, not slow.

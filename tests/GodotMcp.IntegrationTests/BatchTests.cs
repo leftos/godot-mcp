@@ -17,7 +17,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const string SmallButton = "Main/SmallButton";
 
     // A Button named Ready at (400, 250) under the root, drawn before a click picks it.

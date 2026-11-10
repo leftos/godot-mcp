@@ -14,7 +14,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed partial class WatchdogTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 180_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
 
     // Blocks the main thread for twice the test's own timeout, so however late a busy machine lets a stop decide, the game is
     // still stuck: only a kill ends it.

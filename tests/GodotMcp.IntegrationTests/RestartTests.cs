@@ -17,7 +17,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class RestartTests : IAsyncDisposable
 {
-    private const int BuildTestTimeoutMs = 240_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int BuildTestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int AttachWaitSeconds = 30;
 
     // The line InputProbe prints once each time it starts, so a run's file holds one per launch.

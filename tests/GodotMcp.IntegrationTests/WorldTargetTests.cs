@@ -13,7 +13,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class WorldTargetTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 45_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
 
     // The probe's viewport is 640 x 360. A Camera2D at (1000, 500) zoomed 2x puts world (1040, 535) at

@@ -24,7 +24,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<SharedCsToolsSession>
 {
-    private const int GameToolTestTimeoutMs = 150_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int GameToolTestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
 
     // Every tool CsProbe marks, as list_game_tools sorts them: by name, then by on.

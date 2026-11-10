@@ -17,7 +17,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class PreviewTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 90_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
 
     // preview_3d.tscn's box: an unshaded BoxMesh of Color(1, 0, 1), beside an OmniLight3D of range 200 whose 400 m box,
     // framed too, would shrink the 1 m box to nothing.

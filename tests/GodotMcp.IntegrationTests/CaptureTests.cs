@@ -12,7 +12,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
-    private const int TestTimeoutMs = 60_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
     private const string QuietWarning =
         "this session is quiet: its window gets no real input, so only the server's gestures are captured. Run with quiet:false, "

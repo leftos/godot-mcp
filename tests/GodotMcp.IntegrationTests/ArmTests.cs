@@ -12,7 +12,8 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>arm_project, disarm_project and attach_project's join of a dormant game, against InputProbes the test launches itself.</summary>
 public sealed class ArmTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 60_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int AttachWaitSeconds = 30;
     private static readonly TimeSpan DormantWait = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan FileWait = TimeSpan.FromSeconds(10);

@@ -11,7 +11,8 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>attach_project and detach_project against an InputProbe the test launches itself, with no godot-mcp environment.</summary>
 public sealed class AttachTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 60_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int AttachWaitSeconds = 30;
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan GameExitHangGuard = TimeSpan.FromMinutes(2);

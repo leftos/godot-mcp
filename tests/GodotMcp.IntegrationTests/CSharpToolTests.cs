@@ -17,7 +17,8 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture<SharedCsProbeSession>
 {
-    private const int CSharpTestTimeoutMs = 150_000;
+    // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
+    private const int CSharpTestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int PingTimeoutMs = 30_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string ExtensionFileName = "godot_mcp_dotnet.gdextension";
