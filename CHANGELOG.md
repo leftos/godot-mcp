@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `get_scene_file_tree` reads an imported `.glb`, `.gltf`, `.fbx`, `.blend` or `.dae` model as Godot imported it, importing it first when needed.
+
 ### Fixed
 
 - An import error behind a gate's line stamp now runs the import's second pass, as a bare `ERROR:` line does.
