@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Reflection.Metadata;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -86,6 +87,11 @@ internal static partial class PrepScan
     );
 
     private const string UidPrefix = "uid://";
+
+    // How two paths on this system's file system compare: without case on Windows.
+    private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
 
     /// <summary>What every import sidecar of a source is named: the source's own path plus this.</summary>
     internal const string ImportSuffix = ".import";
@@ -274,6 +280,174 @@ internal static partial class PrepScan
             // A stamp that cannot be read or parsed says nothing about which build left the assembly, so only a build can.
             return true;
         }
+    }
+
+    /// <summary>
+    /// Whether the prep's build of <paramref name="assemblyName"/> can be skipped: the assembly is not stale against the prep's
+    /// own record (<see cref="IsStale"/>), or another builder left it and MSBuild's own intermediate corroborates it
+    /// (<see cref="CorroboratedByMsBuild"/>), which is then recorded as a green prep build would be (<see cref="WriteStamp"/>).
+    /// </summary>
+    internal static bool BuildIsCurrent(string projectDir, string assemblyName, IReadOnlyList<string> inputs, bool buildWhenUnsaved, ILogger logger)
+    {
+        string assembly = AssemblyPath(projectDir, assemblyName);
+        string stamp = StampPath(projectDir);
+        if (!IsStale(assembly, stamp, projectDir, inputs))
+        {
+            return true;
+        }
+
+        if (!MayAdopt(projectDir, assembly, buildWhenUnsaved) || !CorroboratedByMsBuild(projectDir, assemblyName, inputs, logger))
+        {
+            return false;
+        }
+
+        WriteStamp(assembly, stamp, projectDir, inputs);
+        return true;
+    }
+
+    /// <summary>
+    /// Whether an assembly the prep did not record may be adopted at all: there is one, the run does not report the build
+    /// (<see cref="PrepContext.BuildWhenUnsaved"/>, validate's), and no saved build (<see cref="SavedBuild"/>) is older than it,
+    /// since only a build refreshes that record and validate would read the older build's diagnostics as the last build.
+    /// </summary>
+    private static bool MayAdopt(string projectDir, string assembly, bool buildWhenUnsaved)
+    {
+        string saved = SavedBuild.PathIn(projectDir);
+        return !buildWhenUnsaved
+            && File.Exists(assembly)
+            && (!File.Exists(saved) || File.GetLastWriteTimeUtc(saved) >= File.GetLastWriteTimeUtc(assembly));
+    }
+
+    /// <summary>
+    /// Whether MSBuild's own intermediate shows the assembly current, whoever built it: the bin assembly is byte-identical to
+    /// the intermediate one in <c>.godot/mono/temp/obj/Debug</c>, every listed build input is on disk, the intermediate is at
+    /// least as new as the newest of them, and the portable pdb beside it compiled exactly the project's <c>.cs</c> inputs, at
+    /// least one (its documents and the inputs each taken under the project folder and outside its <c>.godot</c> folder). The
+    /// pdb catches a project source deleted or put back with its old time, which the times alone accept. False, logged at
+    /// Debug with the reason, on any other outcome, a read failure included.
+    /// </summary>
+    private static bool CorroboratedByMsBuild(string projectDir, string assemblyName, IReadOnlyList<string> inputs, ILogger logger)
+    {
+        string assembly = AssemblyPath(projectDir, assemblyName);
+        // AssemblyPath's .godot/mono/temp/bin/Debug/<name>.dll has MSBuild's intermediate at .godot/mono/temp/obj/Debug/<name>.dll.
+        string temp = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(assembly)))!;
+        string intermediate = Path.Combine(temp, "obj", ProjectPrep.Configuration, assemblyName + ".dll");
+        string reading = assembly;
+        string? reason;
+        try
+        {
+            reason = UncorroboratedReason(assembly, intermediate, projectDir, inputs, file => reading = file);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or ArgumentException)
+        {
+            reason = $"{reading} could not be read ({e.GetType().Name}: {e.Message})";
+        }
+
+        if (reason is not null)
+        {
+            NotCorroborated(logger, reason);
+        }
+
+        return reason is null;
+    }
+
+    /// <summary>Why MSBuild's intermediate does not corroborate the assembly (<see cref="CorroboratedByMsBuild"/>), or null when it does.</summary>
+    /// <param name="reading">Told each file before it is read, so a read failure names it.</param>
+    private static string? UncorroboratedReason(
+        string assembly,
+        string intermediate,
+        string projectDir,
+        IReadOnlyList<string> inputs,
+        Action<string> reading
+    )
+    {
+        if (!SameBytes(assembly, intermediate, reading))
+        {
+            return $"{assembly} is not byte-identical to MSBuild's intermediate {intermediate}, or one is missing";
+        }
+
+        if (inputs.FirstOrDefault(input => !File.Exists(input)) is { } gone)
+        {
+            return $"the build input {gone} is listed but not on disk";
+        }
+
+        DateTime newest = inputs.Select(File.GetLastWriteTimeUtc).DefaultIfEmpty(DateTime.MinValue).Max();
+        if (File.GetLastWriteTimeUtc(intermediate) < newest)
+        {
+            return $"MSBuild's intermediate {intermediate} is older than the newest build input";
+        }
+
+        string pdb = Path.ChangeExtension(intermediate, ".pdb");
+        reading(pdb);
+        return SameSources(projectDir, inputs, PdbDocuments(pdb))
+            ? null
+            : $"the sources {pdb} names under {projectDir} are not the project's .cs build inputs there, or there are none";
+    }
+
+    /// <summary>
+    /// Whether a pdb's documents and the build inputs name the same <c>.cs</c> files under the project folder and outside its
+    /// <c>.godot</c> folder (<see cref="ProjectSources"/>), and at least one: a folder spelled otherwise than the paths (a subst
+    /// drive, a junction, an 8.3 name) leaves both sides empty, which proves nothing.
+    /// </summary>
+    private static bool SameSources(string projectDir, IReadOnlyList<string> inputs, IReadOnlyList<string> documents)
+    {
+        HashSet<string> sources = new(
+            ProjectSources(projectDir, inputs.Where(input => HasExtension(input, ".cs"))),
+            StringComparer.FromComparison(PathComparison)
+        );
+        return sources.Count > 0 && sources.SetEquals(ProjectSources(projectDir, documents));
+    }
+
+    /// <summary>Whether both files exist and hold the same bytes, compared in chunks up to the first difference.</summary>
+    private static bool SameBytes(string first, string second, Action<string> reading)
+    {
+        FileInfo a = new(first);
+        FileInfo b = new(second);
+        if (!a.Exists || !b.Exists || a.Length != b.Length)
+        {
+            return false;
+        }
+
+        reading(first);
+        using FileStream left = a.OpenRead();
+        reading(second);
+        using FileStream right = b.OpenRead();
+        byte[] leftChunk = new byte[81920];
+        byte[] rightChunk = new byte[leftChunk.Length];
+        int read;
+        while ((read = left.ReadAtLeast(leftChunk, leftChunk.Length, throwOnEndOfStream: false)) > 0)
+        {
+            if (
+                right.ReadAtLeast(rightChunk.AsSpan(0, read), read, throwOnEndOfStream: false) != read
+                || !leftChunk.AsSpan(0, read).SequenceEqual(rightChunk.AsSpan(0, read))
+            )
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>The full paths of <paramref name="files"/> that are rooted, under the project folder and outside its <c>.godot</c> folder.</summary>
+    private static IEnumerable<string> ProjectSources(string projectDir, IEnumerable<string> files)
+    {
+        StringComparison comparison = PathComparison;
+        string folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(projectDir)) + Path.DirectorySeparatorChar;
+        string godot = Path.Combine(folder, ".godot") + Path.DirectorySeparatorChar;
+        return files
+            .Where(Path.IsPathFullyQualified)
+            .Select(Path.GetFullPath)
+            .Where(file => file.StartsWith(folder, comparison) && !file.StartsWith(godot, comparison));
+    }
+
+    /// <summary>The document names a portable pdb lists; a pdb that is not portable throws <see cref="BadImageFormatException"/>.</summary>
+    private static List<string> PdbDocuments(string pdb)
+    {
+        using FileStream stream = File.OpenRead(pdb);
+        using var provider = MetadataReaderProvider.FromPortablePdbStream(stream);
+        MetadataReader reader = provider.GetMetadataReader();
+        return [.. reader.Documents.Select(handle => reader.GetString(reader.GetDocument(handle).Name))];
     }
 
     /// <summary>Whether a record's <c>assembly</c> object holds the assembly's own size and last-write time.</summary>
@@ -923,6 +1097,9 @@ internal static partial class PrepScan
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "{Cache} does not parse as a uid cache, so the prep imports to rewrite it.")]
     private static partial void UidCacheUnreadable(ILogger logger, Exception exception, string cache);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "The prep builds the C# assembly another builder left: {Reason}.")]
+    private static partial void NotCorroborated(ILogger logger, string reason);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "'{Text}' is not uid:// text Godot decodes, so the uid cache check skips it.")]
     private static partial void UidUndecodable(ILogger logger, string text);

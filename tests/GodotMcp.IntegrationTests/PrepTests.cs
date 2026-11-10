@@ -94,6 +94,29 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(csProbe.Directory));
     }
 
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task AnAssemblyBuiltWithoutThePrepsRecordIsAdoptedUpToDate()
+    {
+        // The game repo's own build (Godot's --build-solutions) writes the same Debug assembly and intermediate, but no record.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+
+        LaunchResult first = await LaunchAsync(csProbe.Directory, prepare: true, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+        string assembly = PrepScan.AssemblyPath(csProbe.Directory, "CsProbe");
+        DateTime builtAt = File.GetLastWriteTimeUtc(assembly);
+        File.Delete(PrepScan.StampPath(csProbe.Directory));
+        LaunchResult second = await LaunchAsync(csProbe.Directory, prepare: true, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Equal("built", first.Prep.Build);
+        Assert.Equal(builtAt, File.GetLastWriteTimeUtc(assembly));
+        Assert.Equal("up-to-date", second.Prep.Build);
+        Assert.Null(second.Prep.BuildMs);
+        Assert.Null(second.Prep.BuildLog);
+        Assert.True(File.Exists(PrepScan.StampPath(csProbe.Directory)), "the adopted assembly was not recorded");
+    }
+
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task NeverLaunchesAnUnbuiltCopyAsItIs()
     {

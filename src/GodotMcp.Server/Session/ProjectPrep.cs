@@ -200,8 +200,8 @@ internal static partial class ProjectPrep
     }
 
     /// <summary>
-    /// A rebuild when the context asks for saved diagnostics and none are saved, else a build when the assembly is stale
-    /// (<see cref="PrepScan.IsStale"/>), else none.
+    /// A rebuild when the context asks for saved diagnostics and none are saved, else none when the assembly is current
+    /// (<see cref="PrepScan.BuildIsCurrent"/>), else a build.
     /// </summary>
     private static BuildNeed BuildNeeded(PrepContext context, ProjectFiles files, string assemblyName)
     {
@@ -211,9 +211,9 @@ internal static partial class ProjectPrep
             return BuildNeed.Rebuild;
         }
 
-        return PrepScan.IsStale(PrepScan.AssemblyPath(projectDir, assemblyName), PrepScan.StampPath(projectDir), projectDir, files.BuildInputs)
-            ? BuildNeed.Build
-            : BuildNeed.None;
+        return PrepScan.BuildIsCurrent(projectDir, assemblyName, files.BuildInputs, context.BuildWhenUnsaved, context.Logger)
+            ? BuildNeed.None
+            : BuildNeed.Build;
     }
 
     /// <summary>Saves the build's errors and warnings as the project's <see cref="SavedBuild"/>, and returns them.</summary>
