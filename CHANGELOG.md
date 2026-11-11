@@ -8,6 +8,11 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `list_sessions` with `projectPath` reports who holds that folder's `override.cfg` and `armed.json`, and whether `stop_project` would remove them.
 - `stop_project` results carry `folder`: whether the folder is clean afterwards, and the running owners of any file left.
+- `run_scratches` takes a ceiling per batch (an `options.ceilings` array, or `--ceiling <scene>#<batch>=<seconds>`), and the profile's `scratch.ceilings` one per headless or windowed run.
+
+### Changed
+
+- `run_scratches` and `--run-scratches` play up to 100 batches of a scene in one call.
 
 ### Fixed
 

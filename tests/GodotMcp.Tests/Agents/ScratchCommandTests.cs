@@ -172,15 +172,16 @@ public sealed class ScratchCommandTests : IDisposable
     public void ParseReadsCeilingsMemoryCeilingsAndBatches()
     {
         ScratchArguments? parsed = ScratchCommand.Parse(
-            Words("--run-scratches C:/game --ceiling A=30 --ceiling B=1.5 --memory-ceiling A=2048 " + "--batch A=0,2-4 --batch A=6-9 --batch B=calm"),
+            Words("--run-scratches C:/game --ceiling A=30 --ceiling B=1.5 --memory-ceiling A=2048 --batch A=0,2-4 --batch A=6-9 --batch B=calm"),
             out string? error
         );
 
         Assert.Null(error);
         Assert.NotNull(parsed);
-        Assert.Equal(2, parsed.Options.Ceilings!.Count);
-        Assert.Equal(30d, parsed.Options.Ceilings["A"]);
-        Assert.Equal(1.5d, parsed.Options.Ceilings["B"]);
+        JsonObject ceilings = JsonNode.Parse(parsed.Options.Ceilings!.Value.GetRawText())!.AsObject();
+        Assert.Equal(2, ceilings.Count);
+        Assert.Equal(30d, ceilings["A"]!.GetValue<double>());
+        Assert.Equal(1.5d, ceilings["B"]!.GetValue<double>());
         Assert.Single(parsed.Options.MemoryCeilings!);
         Assert.Equal(2048d, parsed.Options.MemoryCeilings!["A"]);
         Assert.Equal("""{"A":[["0","2-4"],["6-9"]],"B":[["calm"]]}""", JsonNode.Parse(parsed.Options.Steps!.Value.GetRawText())!.ToJsonString());
@@ -193,16 +194,81 @@ public sealed class ScratchCommandTests : IDisposable
 
         Assert.Null(error);
         Assert.NotNull(parsed);
-        KeyValuePair<string, double> ceiling = Assert.Single(parsed.Options.Ceilings!);
+        JsonObject ceilings = JsonNode.Parse(parsed.Options.Ceilings!.Value.GetRawText())!.AsObject();
+        KeyValuePair<string, JsonNode?> ceiling = Assert.Single(ceilings);
         Assert.Equal("A=B", ceiling.Key);
-        Assert.Equal(5d, ceiling.Value);
+        Assert.Equal(5d, ceiling.Value!.GetValue<double>());
         Assert.Equal("""{"S":[["x=y"]]}""", JsonNode.Parse(parsed.Options.Steps!.Value.GetRawText())!.ToJsonString());
     }
 
+    [Fact]
+    public void ParseReadsADerivedCeilingAndOneValuePerBatch()
+    {
+        ScratchArguments? parsed = ScratchCommand.Parse(
+            Words("--run-scratches C:/game --ceiling A=derived --ceiling B#0=10 --ceiling B#1=derived --ceiling B#2=2.5"),
+            out string? error
+        );
+
+        Assert.Null(error);
+        Assert.NotNull(parsed);
+        Assert.Equal("""{"A":null,"B":[10,null,2.5]}""", JsonNode.Parse(parsed.Options.Ceilings!.Value.GetRawText())!.ToJsonString());
+    }
+
+    [Fact]
+    public void ParseSplitsACeilingsSceneFromItsBatchAtTheLastHash()
+    {
+        ScratchArguments? parsed = ScratchCommand.Parse(
+            Words("--run-scratches C:/game --ceiling Foo#2#0=5 --ceiling Foo#0=1 --ceiling Foo#1=2 --ceiling Foo#2=3"),
+            out string? error
+        );
+
+        Assert.Null(error);
+        Assert.NotNull(parsed);
+        JsonObject ceilings = JsonNode.Parse(parsed.Options.Ceilings!.Value.GetRawText())!.AsObject();
+        Assert.Equal(2, ceilings.Count);
+        Assert.Equal("[5]", ceilings["Foo#2"]!.ToJsonString());
+        Assert.Equal("[1,2,3]", ceilings["Foo"]!.ToJsonString());
+    }
+
     [Theory]
-    [InlineData("--ceiling A", "--ceiling takes <scene>=<seconds>, not 'A'.")]
-    [InlineData("--ceiling =5", "--ceiling takes <scene>=<seconds>, not '=5'.")]
-    [InlineData("--ceiling A=soon", "--ceiling takes <scene>=<seconds>, not 'A=soon'.")]
+    [InlineData("A=NaN")]
+    [InlineData("A#0=Infinity")]
+    [InlineData("A=1e999")]
+    public void ANonFiniteCeilingIsRefusedWithExitTwo(string value)
+    {
+        StringWriter output = new();
+        StringWriter error = new();
+
+        int status = ScratchCommand.Run(["--run-scratches", "game", "--ceiling", value], output, error);
+
+        Assert.Equal(2, status);
+        Assert.Equal("", output.ToString());
+        Assert.StartsWith(
+            $"godot-mcp: --ceiling takes <scene>=<seconds|derived> or <scene>#<batch>=<seconds|derived>, not '{value}'. ",
+            error.ToString(),
+            StringComparison.Ordinal
+        );
+    }
+
+    [Theory]
+    [InlineData("--ceiling A=1 --ceiling A#0=2", "--ceiling gives 'A' twice; give it once.")]
+    [InlineData("--ceiling A#1=5", "--ceiling gives 'A' batch 1 but not batch 0; give every batch from 0, or give the scene one ceiling.")]
+    [InlineData(
+        "--ceiling A#0=1 --ceiling A#2=3",
+        "--ceiling gives 'A' batch 2 but not batch 1; give every batch from 0, or give the scene one ceiling."
+    )]
+    [InlineData("--ceiling A#0=1 --ceiling A#0=2", "--ceiling gives 'A#0' twice; give it once.")]
+    public void ParseRefusesACeilingGivenTwiceOrWithABatchMissing(string line, string refusal)
+    {
+        Assert.Null(ScratchCommand.Parse(Words($"--run-scratches game {line}"), out string? error));
+        Assert.Equal(refusal, error);
+    }
+
+    [Theory]
+    [InlineData("--ceiling A", "--ceiling takes <scene>=<seconds|derived> or <scene>#<batch>=<seconds|derived>, not 'A'.")]
+    [InlineData("--ceiling =5", "--ceiling takes <scene>=<seconds|derived> or <scene>#<batch>=<seconds|derived>, not '=5'.")]
+    [InlineData("--ceiling A=soon", "--ceiling takes <scene>=<seconds|derived> or <scene>#<batch>=<seconds|derived>, not 'A=soon'.")]
+    [InlineData("--ceiling A#0=soon", "--ceiling takes <scene>=<seconds|derived> or <scene>#<batch>=<seconds|derived>, not 'A#0=soon'.")]
     [InlineData("--memory-ceiling A=", "--memory-ceiling takes <scene>=<megabytes>, not 'A='.")]
     [InlineData("--batch A", "--batch takes <scene>=<token>[,<token>]..., not 'A'.")]
     [InlineData("--batch =0", "--batch takes <scene>=<token>[,<token>]..., not '=0'.")]

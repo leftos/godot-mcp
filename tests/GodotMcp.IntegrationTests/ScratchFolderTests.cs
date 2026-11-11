@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Tools;
@@ -69,7 +70,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
     /// The folder run's ceilings: ScratchBusy's spinning step is killed at a ceiling it is given, since the harness floors the
     /// ceiling its pace gives and its calls' timeouts at a hang guard in minutes.
     /// </summary>
-    internal static Dictionary<string, double> FolderCeilings => new() { ["ScratchBusy"] = 5 };
+    internal static JsonElement FolderCeilings => JsonSerializer.SerializeToElement(new Dictionary<string, double> { ["ScratchBusy"] = 5 });
 
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();

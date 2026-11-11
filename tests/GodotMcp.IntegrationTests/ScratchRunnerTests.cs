@@ -148,7 +148,7 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         JsonObject result = await RunAsync(
             _probe.Directory,
             ["ScratchBusy"],
-            new ScratchOptions(Ceilings: new() { ["ScratchBusy"] = 5 }),
+            new ScratchOptions(Ceilings: JsonSerializer.SerializeToElement(new Dictionary<string, double> { ["ScratchBusy"] = 5 })),
             TestContext.Current.CancellationToken
         );
 
@@ -169,7 +169,7 @@ public sealed class ScratchRunnerTests : ScratchRunBase
             await RunAsync(
                 _probe.Directory,
                 ["ScratchStepPace"],
-                new ScratchOptions(Pace: 2, Ceilings: new() { ["ScratchStepPace"] = 1 }),
+                new ScratchOptions(Pace: 2, Ceilings: JsonSerializer.SerializeToElement(new Dictionary<string, double> { ["ScratchStepPace"] = 1 })),
                 TestContext.Current.CancellationToken
             )
         );

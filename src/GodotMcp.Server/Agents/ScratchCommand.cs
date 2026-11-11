@@ -56,9 +56,9 @@ internal static class ScratchCommand
             return null;
         }
 
-        if (Combined(flags) is string combined)
+        if (Problem(flags) is string problem)
         {
-            error = combined;
+            error = problem;
             return null;
         }
 
@@ -72,6 +72,35 @@ internal static class ScratchCommand
         flags.Steps.Count > 0 && flags.Batches.Count > 0
             ? "--steps and --batch cannot be combined: --steps gives every scene one list, --batch gives a scene its own batches."
             : null;
+
+    /// <summary>Why the options cannot be read together, as <see cref="Combined"/> and <see cref="CeilingsGiven"/> find it.</summary>
+    private static string? Problem(Flags flags) => Combined(flags) ?? CeilingsGiven(flags);
+
+    /// <summary>
+    /// The refusal for a --ceiling scene given for every batch and for one of its batches too, or for one whose batches skip a
+    /// place: null when each scene is given one way and every batch from 0 up.
+    /// </summary>
+    private static string? CeilingsGiven(Flags flags)
+    {
+        foreach ((string scene, SortedDictionary<int, double?> batches) in flags.BatchCeilings)
+        {
+            if (flags.Ceilings.ContainsKey(scene))
+            {
+                return $"--ceiling gives '{scene}' twice; give it once.";
+            }
+
+            int missing = Enumerable.Range(0, batches.Count).FirstOrDefault(batch => !batches.ContainsKey(batch), -1);
+            if (missing < 0)
+            {
+                continue;
+            }
+
+            return $"--ceiling gives '{scene}' batch {batches.Keys.First(batch => batch > missing)} but not batch {missing}; give every "
+                + "batch from 0, or give the scene one ceiling.";
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Runs <paramref name="arguments"/> through <paramref name="tools"/> and prints the result: the verdict lines, or with
@@ -356,8 +385,8 @@ internal static class ScratchCommand
         option is "--batch" ? Batch(flags, value) : Ceiling(flags, option, value);
 
     /// <summary>
-    /// A --ceiling or --memory-ceiling value, split at its last = since the amount holds none: the scene's ceiling set, or the
-    /// refusal its form or its second appearance gives it.
+    /// A --ceiling or --memory-ceiling value, split at its last = since an amount holds none: a scene's ceiling for every batch
+    /// set, or one of its batches, or the refusal its form or its second appearance gives it.
     /// </summary>
     private static string? Ceiling(Flags flags, string option, string value)
     {
@@ -367,14 +396,86 @@ internal static class ScratchCommand
             return Form(option, value);
         }
 
-        if (!double.TryParse(value[(split + 1)..], NumberStyles.Float, CultureInfo.InvariantCulture, out double amount))
+        return option is "--memory-ceiling"
+            ? MemoryCeiling(flags, value[..split], value[(split + 1)..], value)
+            : SceneCeiling(flags, value[..split], value[(split + 1)..], value);
+    }
+
+    /// <summary>One --memory-ceiling value, refused when the scene is given twice.</summary>
+    private static string? MemoryCeiling(Flags flags, string scene, string amount, string value)
+    {
+        if (!double.TryParse(amount, NumberStyles.Float, CultureInfo.InvariantCulture, out double megabytes))
         {
-            return Form(option, value);
+            return Form("--memory-ceiling", value);
         }
 
-        string scene = value[..split];
-        Dictionary<string, double> ceilings = option is "--ceiling" ? flags.Ceilings : flags.MemoryCeilings;
-        return ceilings.TryAdd(scene, amount) ? null : $"{option} gives '{scene}' twice; give it once.";
+        return flags.MemoryCeilings.TryAdd(scene, megabytes) ? null : $"--memory-ceiling gives '{scene}' twice; give it once.";
+    }
+
+    /// <summary>One --ceiling value: a scene's amount for every batch of it, or for one batch.</summary>
+    private static string? SceneCeiling(Flags flags, string given, string amount, string value)
+    {
+        if (!AmountOf(amount, out double? seconds))
+        {
+            return Form("--ceiling", value);
+        }
+
+        int batch = BatchOf(given, out string scene);
+        if (batch < 0)
+        {
+            return flags.Ceilings.TryAdd(scene, seconds) ? null : $"--ceiling gives '{scene}' twice; give it once.";
+        }
+
+        return BatchCeiling(flags, scene, batch, seconds);
+    }
+
+    /// <summary>What a --ceiling amount writes for the ceiling derived from the played steps.</summary>
+    private const string Derived = "derived";
+
+    /// <summary>
+    /// A --ceiling amount: "derived" for the derived ceiling, else a finite number of seconds; false when it is neither, NaN and
+    /// infinities (a number too large for a double parses as one) included.
+    /// </summary>
+    private static bool AmountOf(string text, out double? seconds)
+    {
+        seconds = null;
+        if (text is Derived)
+        {
+            return true;
+        }
+
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) || !double.IsFinite(parsed))
+        {
+            return false;
+        }
+
+        seconds = parsed;
+        return true;
+    }
+
+    /// <summary>The batch a --ceiling scene part names, "&lt;scene&gt;#&lt;i&gt;", and the scene itself; -1 when it names no batch.</summary>
+    private static int BatchOf(string given, out string scene)
+    {
+        int hash = given.LastIndexOf('#');
+        if (hash > 0 && int.TryParse(given[(hash + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int batch))
+        {
+            scene = given[..hash];
+            return batch;
+        }
+
+        scene = given;
+        return -1;
+    }
+
+    /// <summary>One batch's --ceiling value, refused when the scene sets that batch twice.</summary>
+    private static string? BatchCeiling(Flags flags, string scene, int batch, double? seconds)
+    {
+        if (!flags.BatchCeilings.TryGetValue(scene, out SortedDictionary<int, double?>? batches))
+        {
+            flags.BatchCeilings[scene] = batches = [];
+        }
+
+        return batches.TryAdd(batch, seconds) ? null : $"--ceiling gives '{scene}#{batch}' twice; give it once.";
     }
 
     /// <summary>
@@ -403,7 +504,7 @@ internal static class ScratchCommand
     private static string Form(string option, string value) =>
         option switch
         {
-            "--ceiling" => $"--ceiling takes <scene>=<seconds>, not '{value}'.",
+            "--ceiling" => $"--ceiling takes <scene>=<seconds|derived> or <scene>#<batch>=<seconds|derived>, not '{value}'.",
             "--memory-ceiling" => $"--memory-ceiling takes <scene>=<megabytes>, not '{value}'.",
             _ => $"--batch takes <scene>=<token>[,<token>]..., not '{value}'.",
         };
@@ -591,8 +692,14 @@ internal static class ScratchCommand
         /// <summary>The --steps values in the order given, which the tool reads as its list for every scene.</summary>
         public List<string> Steps { get; } = [];
 
-        /// <summary>Each --ceiling value by its scene, which the tool checks against its own range.</summary>
-        public Dictionary<string, double> Ceilings { get; } = new(StringComparer.Ordinal);
+        /// <summary>Each --ceiling value by its scene for every batch of it, null for the derived ceiling; the tool checks its range.</summary>
+        public Dictionary<string, double?> Ceilings { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Each --ceiling value by its scene and batch, a scene written "&lt;scene&gt;#&lt;i&gt;": every batch of the scene is
+        /// given, or none.
+        /// </summary>
+        public Dictionary<string, SortedDictionary<int, double?>> BatchCeilings { get; } = new(StringComparer.Ordinal);
 
         /// <summary>Each --memory-ceiling value by its scene, which the tool checks against its own range.</summary>
         public Dictionary<string, double> MemoryCeilings { get; } = new(StringComparer.Ordinal);
@@ -622,7 +729,7 @@ internal static class ScratchCommand
                 Only: Only,
                 UserArgs: UserArgs.Count == 0 ? null : [.. UserArgs],
                 EngineArgs: EngineArgs.Count == 0 ? null : [.. EngineArgs],
-                Ceilings: GivenAmounts(Ceilings),
+                Ceilings: CeilingOptions(),
                 MemoryCeilings: GivenAmounts(MemoryCeilings),
                 Windowed: Windowed ? true : null,
                 Audible: Audible ? true : null,
@@ -637,6 +744,31 @@ internal static class ScratchCommand
 
         /// <summary>The scene-keyed amounts as the tool reads them, null when none is given, so the tool's default holds.</summary>
         private static Dictionary<string, double>? GivenAmounts(Dictionary<string, double> amounts) => amounts.Count == 0 ? null : amounts;
+
+        /// <summary>
+        /// The --ceiling values as the tool reads them: a scene's number or null, or an array of those for its batches in place
+        /// order; null when none is given.
+        /// </summary>
+        private JsonElement? CeilingOptions()
+        {
+            if (Ceilings.Count == 0 && BatchCeilings.Count == 0)
+            {
+                return null;
+            }
+
+            Dictionary<string, object?> ceilings = new(StringComparer.Ordinal);
+            foreach ((string scene, double? seconds) in Ceilings)
+            {
+                ceilings[scene] = seconds;
+            }
+
+            foreach ((string scene, SortedDictionary<int, double?> batches) in BatchCeilings)
+            {
+                ceilings[scene] = batches.Values.ToArray();
+            }
+
+            return JsonSerializer.SerializeToElement(ceilings);
+        }
 
         /// <summary>
         /// The --batch values as the tool's map form: each scene's batches in first-appearance order, each its own array of the

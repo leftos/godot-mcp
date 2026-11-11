@@ -25,7 +25,9 @@ internal static class ServerCommands
         + "godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] "
         + "[--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] "
         + "[--user-arg <arg>]... [--engine-arg <arg>]... [--json] [--windowed] [--audible] [--steps <token>]... "
-        + "[--ceiling <scene>=<seconds>]... [--memory-ceiling <scene>=<megabytes>]... "
+        + "[--ceiling <scene>[#<batch>]=<seconds|derived>]... "
+        + "(the last # splits a scene from its batch, so Foo#2#0=5 is batch 0 of Foo#2) "
+        + "[--memory-ceiling <scene>=<megabytes>]... "
         + "[--batch <scene>=<token>[,<token>]]... [--capture [--capture-step <token>]...]";
 
     /// <summary>

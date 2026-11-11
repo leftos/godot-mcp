@@ -124,6 +124,37 @@ public sealed class ScratchCommandRunTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APerBatchCeilingKillsItsBatchAndLeavesTheDerivedOneGreen()
+    {
+        (int status, string[] output, string error) = await RunCommandAsync(
+            TestContext.Current.CancellationToken,
+            "--scene",
+            "ScratchTwoRed",
+            "--pace",
+            "2",
+            "--batch",
+            "ScratchTwoRed=calm",
+            "--batch",
+            "ScratchTwoRed=0,last",
+            "--ceiling",
+            "ScratchTwoRed#0=0.05",
+            "--ceiling",
+            "ScratchTwoRed#1=derived",
+            "--json"
+        );
+
+        Assert.True(status == 1, error);
+        JsonObject result = JsonNode.Parse(string.Join('\n', output))!.AsObject();
+        JsonArray scenes = result["scenes"]!.AsArray();
+        Assert.Equal(2, scenes.Count);
+        JsonObject killed = scenes.Single(scene => scene!["batch"]!.GetValue<int>() == 0)!.AsObject();
+        JsonObject green = scenes.Single(scene => scene!["batch"]!.GetValue<int>() == 1)!.AsObject();
+        Assert.Equal("killed", killed["verdict"]!.GetValue<string>());
+        Assert.True(killed.ToJsonString().Contains("set by options.ceilings", StringComparison.Ordinal), killed.ToJsonString());
+        Assert.Equal("green", green["verdict"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AWindowedCaptureRunNamesTheFolderHoldingTheShots()
     {
         (int status, string[] output, string error) = await RunCommandAsync(

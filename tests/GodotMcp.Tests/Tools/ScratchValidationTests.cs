@@ -250,21 +250,40 @@ public sealed class ScratchValidationTests : IDisposable
         );
 
     [Theory]
-    [InlineData(0.0, "0")]
-    [InlineData(-1.0, "-1")]
-    [InlineData(3600.5, "3600.5")]
-    [InlineData(double.NaN, "NaN")]
-    public void AnOptionsCeilingOutsideItsRangeIsRefused(double seconds, string shown)
+    [InlineData("""{ "Other": 0 }""", "0")]
+    [InlineData("""{ "Other": -1 }""", "-1")]
+    [InlineData("""{ "Other": 3600.5 }""", "3600.5")]
+    public void AnOptionsCeilingOutsideItsRangeIsRefused(string ceilings, string shown)
     {
-        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Ceilings: new() { ["Other"] = seconds })));
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Ceilings: Tokens(ceilings))));
 
         Assert.Equal($"options.ceilings.Other must be a number of seconds above 0 and at most 3600; got {shown}.", message);
     }
 
+    [Theory]
+    [InlineData("""{ "Other": [10, 0] }""", "options.ceilings.Other[1] must be a number of seconds above 0 and at most 3600; got 0.")]
+    [InlineData(
+        """{ "Other": "12" }""",
+        "options.ceilings.Other must be a number of seconds above 0 and at most 3600, null for the derived ceiling, or an array of "
+            + "those; got a string."
+    )]
+    [InlineData("""{ "Other": [true] }""", "options.ceilings.Other[0] must be a number of seconds above 0 and at most 3600 or null; got a boolean.")]
+    [InlineData("""{ "Other": [[1]] }""", "options.ceilings.Other[0] must be a number of seconds above 0 and at most 3600 or null; got an array.")]
+    [InlineData(
+        """{ "Other": {} }""",
+        "options.ceilings.Other must be a number of seconds above 0 and at most 3600, null for the derived ceiling, or an array of "
+            + "those; got an object."
+    )]
+    [InlineData("5", "ceilings is a number; it must be an object mapping a scene name to a number of seconds, null, or an array of those.")]
+    [InlineData("true", "ceilings is a boolean; it must be an object mapping a scene name to a number of seconds, null, or an array of those.")]
+    [InlineData("[5]", "ceilings is an array; it must be an object mapping a scene name to a number of seconds, null, or an array of those.")]
+    public void AnOptionsCeilingOfAnotherShapeIsRefused(string ceilings, string refusal) =>
+        Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Ceilings: Tokens(ceilings)))));
+
     [Fact]
     public void OptionsCeilingsNamingASceneOutsideThePlanIsRefused()
     {
-        string message = Refused(() => Plan(["res://Scratch/Beta.tscn"], new ScratchOptions(Ceilings: new() { ["Alpha"] = 5 })));
+        string message = Refused(() => Plan(["res://Scratch/Beta.tscn"], new ScratchOptions(Ceilings: Tokens("""{ "Alpha": 5 }"""))));
 
         Assert.Equal(
             "options.ceilings scene 'Alpha' is not in the plan; its scenes are Beta. Pass one of those, or leave the scene's ceiling "
@@ -278,11 +297,106 @@ public sealed class ScratchValidationTests : IDisposable
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Beta": 20, "Alpha": 30 } } }""");
 
-        ScratchPlan plan = Plan(["Beta", "Alpha", "res://Other.tscn"], new ScratchOptions(Ceilings: new() { ["Beta"] = 5 }));
+        ScratchPlan plan = Plan(["Beta", "Alpha", "res://Other.tscn"], new ScratchOptions(Ceilings: Tokens("""{ "Beta": 5 }""")));
 
         Assert.Equal(new ScratchCeiling(5, ScratchCeiling.OptionsSource), plan.Scenes[0].Ceiling);
         Assert.Equal(new ScratchCeiling(30, ScratchCeiling.ProfileSource), plan.Scenes[1].Ceiling);
         Assert.Null(plan.Scenes[2].Ceiling);
+    }
+
+    [Fact]
+    public void APerBatchCeilingGivesEachBatchItsOwn()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan plan = Plan(
+            ["Beta"],
+            new ScratchOptions(Steps: Tokens("""{ "Beta": [[0], ["2-4"]] }""")) { Ceilings = Tokens("""{ "Beta": [10, 20] }""") }
+        );
+
+        Assert.Equal(new ScratchCeiling(10, ScratchCeiling.OptionsSource), plan.Scenes[0].Ceiling);
+        Assert.Equal(new ScratchCeiling(20, ScratchCeiling.OptionsSource), plan.Scenes[1].Ceiling);
+    }
+
+    [Fact]
+    public void ACeilingArrayForAScenePlayedWholeIsItsOneBatch()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        Assert.Equal(
+            new ScratchCeiling(15, ScratchCeiling.OptionsSource),
+            Assert.Single(Plan(["Beta"], new ScratchOptions(Ceilings: Tokens("""{ "Beta": [15] }"""))).Scenes).Ceiling
+        );
+    }
+
+    [Theory]
+    [InlineData("""{ "Beta": [10] }""", "ceilings for Beta: 1 values for 2 batches.")]
+    [InlineData("""{ "Beta": [10, 20, 30] }""", "ceilings for Beta: 3 values for 2 batches.")]
+    public void ACeilingArrayOfTheWrongLengthIsRefused(string ceilings, string refusal) =>
+        Assert.Equal(
+            refusal,
+            Refused(() =>
+                Plan(["res://Scratch/Beta.tscn"], new ScratchOptions(Steps: Tokens("""{ "Beta": [[0], ["2-4"]] }""")) { Ceilings = Tokens(ceilings) })
+            )
+        );
+
+    [Fact]
+    public void ACeilingArrayLongerThanAPlainSceneIsRefused() =>
+        Assert.Equal(
+            "ceilings for Beta: 2 values for 1 batches.",
+            Refused(() => Plan(["res://Scratch/Beta.tscn"], new ScratchOptions(Ceilings: Tokens("""{ "Beta": [15, 25] }"""))))
+        );
+
+    [Fact]
+    public void ADerivedCeilingBeatsTheProfileForItsScene()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Beta": 20 } } }""");
+
+        ScratchScenePlan planned = Assert.Single(Plan(["Beta"], new ScratchOptions(Ceilings: Tokens("""{ "Beta": null }"""))).Scenes);
+
+        Assert.Null(planned.Ceiling);
+    }
+
+    [Fact]
+    public void AWindowedRunDerivesACeilingItsProfilesHeadlessRowWouldSet()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Beta": { "headless": 60 } } } }""");
+
+        Assert.Null(Assert.Single(Plan(["Beta"], new ScratchOptions(Windowed: true)).Scenes).Ceiling);
+    }
+
+    [Fact]
+    public void AHeadlessRunUsesItsProfilesHeadlessRow()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Beta": { "headless": 60 } } } }""");
+
+        Assert.Equal(new ScratchCeiling(60, ScratchCeiling.ProfileSource), Assert.Single(Plan(["Beta"]).Scenes).Ceiling);
+    }
+
+    [Fact]
+    public void AProfileNumberCeilingAppliesToBothModes()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Beta": 30 } } }""");
+
+        Assert.Equal(new ScratchCeiling(30, ScratchCeiling.ProfileSource), Assert.Single(Plan(["Beta"]).Scenes).Ceiling);
+        Assert.Equal(
+            new ScratchCeiling(30, ScratchCeiling.ProfileSource),
+            Assert.Single(Plan(["Beta"], new ScratchOptions(Windowed: true)).Scenes).Ceiling
+        );
+    }
+
+    [Fact]
+    public void APerBatchDerivedCeilingBeatsTheProfileForThatBatchOnly()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Beta": 30 } } }""");
+
+        ScratchPlan plan = Plan(
+            ["Beta"],
+            new ScratchOptions(Steps: Tokens("""{ "Beta": [[0], ["2-4"]] }""")) { Ceilings = Tokens("""{ "Beta": [null, 5] }""") }
+        );
+
+        Assert.Null(plan.Scenes[0].Ceiling);
+        Assert.Equal(new ScratchCeiling(5, ScratchCeiling.OptionsSource), plan.Scenes[1].Ceiling);
     }
 
     [Theory]
@@ -675,7 +789,7 @@ public sealed class ScratchValidationTests : IDisposable
             ["Beta", "Alpha"],
             new ScratchOptions(Steps: Tokens("""{ "Beta": [[0, "2-4"], ["6-9"]] }"""))
             {
-                Ceilings = new Dictionary<string, double> { ["Beta"] = 30 },
+                Ceilings = Tokens("""{ "Beta": 30 }"""),
                 MemoryCeilings = new Dictionary<string, double> { ["Beta"] = 256 },
             }
         );
@@ -723,13 +837,24 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
-    public void MoreThanTwentyBatchesAreRefused()
+    public void MoreThanAHundredBatchesAreRefused()
     {
-        string batches = string.Join(", ", Enumerable.Repeat("[0]", 21));
+        string batches = string.Join(", ", Enumerable.Repeat("[0]", 101));
 
         string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens($"{{ \"Other\": [{batches}] }}"))));
 
-        Assert.Equal("steps for Other: 21 batches; at most 20.", message);
+        Assert.Equal("steps for Other: 101 batches; at most 100.", message);
+    }
+
+    [Fact]
+    public void AHundredBatchesAreAccepted()
+    {
+        string batches = string.Join(", ", Enumerable.Repeat("[0]", 100));
+
+        ScratchPlan plan = Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens($"{{ \"Other\": [{batches}] }}")));
+
+        Assert.Equal(100, plan.Scenes.Count);
+        Assert.Equal(99, plan.Scenes[^1].Batch);
     }
 
     [Theory]

@@ -59,8 +59,12 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     private const string UserArgsSeparator = "--";
     private const string AlternateUserArgsSeparator = "++";
 
-    /// <summary>The most batches a scene's options.steps map entry may give it.</summary>
-    private const int MaxBatches = 20;
+    /// <summary>
+    /// The most batches a scene's options.steps map entry may give it: each is one fresh game run in turn and one scene entry in
+    /// the result, which stays near 40 KB at 100 green entries since ScratchView shrinks only details and watch, and the whole
+    /// result is also written to scratch-result-*.json.
+    /// </summary>
+    private const int MaxBatches = 100;
 
     private static readonly string[] RunnerEngineArgs = ["--headless", "--time-scale", ScratchAuto];
 
@@ -174,8 +178,11 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "scratch.pace entry has \"timeScale\": 1 kept at normal speed; userArgs "
                 + "appended after the profile's; "
                 + "engineArgs placed before -- after the profile's scratch.engineArgs; "
-                + "ceilings {<scene>: seconds} the scene's own ceiling of load-adjusted time from its first step, replacing the one "
-                + "derived from the paces and beating the profile's scratch.ceilings, and not scaled by timeScale; "
+                + "ceilings {<scene>: seconds | null | [seconds | null, ...]} the scene's own ceiling of load-adjusted time from its "
+                + "first step: a number for every batch of it, null for the derived ceiling that the profile's does not replace, or an "
+                + "array with one entry per batch, each a number or null, refused when its length is not the scene's batch count; it "
+                + "beats the profile's scratch.ceilings, whose entry is a number for both modes or {headless, windowed}, and is not "
+                + "scaled by timeScale; "
                 + "memoryCeilings {<scene>: megabytes} stops a scene's game, killed, once its private memory passes that many megabytes "
                 + "(at least 64, at most 1048576), checked about once a second while its steps play, beating the profile's "
                 + "scratch.memoryCeilings, a scene in neither left unbounded; "
@@ -478,19 +485,20 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         List<string> userArgs = UserArgs(profile, scratch, options);
         List<string> engineArgs = EngineArgs(profile, scratch, options);
         List<string> resPaths = ResolveScenes(profile, scratch, scenes);
-        CheckCeilings(options.Ceilings, resPaths);
+        Dictionary<string, SceneCeilings> ceilings = CeilingChoices(options.Ceilings, resPaths);
         CheckMemoryCeilings(options.MemoryCeilings, resPaths);
         (
             IReadOnlyList<ScratchStepToken>? steps,
             Dictionary<string, IReadOnlyList<ScratchStepToken>> stepsByScene,
             Dictionary<string, IReadOnlyList<IReadOnlyList<ScratchStepToken>>> batches
         ) = PlanSteps(options.Steps, resPaths);
+        CheckCeilingCounts(ceilings, batches);
         List<ScratchScenePlan> plans = [];
         foreach (string resPath in resPaths)
         {
             string name = Path.GetFileNameWithoutExtension(resPath);
             ScratchScenePlan scene = ScenePlan(name, resPath, scratch, options, userArgs, engineArgs);
-            plans.AddRange(ScenePlans(scene, batches.GetValueOrDefault(name)));
+            plans.AddRange(ScenePlans(scene, batches.GetValueOrDefault(name), batch => CeilingFor(name, batch, ceilings, scratch, options)));
         }
 
         return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, details)
@@ -765,13 +773,20 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 
     /// <summary>
     /// The plans a scene resolves to: its own, or one per batch options.steps gave it, each played in a fresh game and carrying its
-    /// batch's place, count and tokens.
+    /// batch's place, count, tokens and own ceiling.
     /// </summary>
-    private static IEnumerable<ScratchScenePlan> ScenePlans(ScratchScenePlan scene, IReadOnlyList<IReadOnlyList<ScratchStepToken>>? batches)
+    private static IEnumerable<ScratchScenePlan> ScenePlans(
+        ScratchScenePlan scene,
+        IReadOnlyList<IReadOnlyList<ScratchStepToken>>? batches,
+        Func<int?, ScratchCeiling?> ceilingFor
+    )
     {
         if (batches is null)
         {
-            yield return scene;
+            yield return scene with
+            {
+                Ceiling = ceilingFor(null),
+            };
             yield break;
         }
 
@@ -782,6 +797,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 Batch = batch,
                 Batches = batches.Count,
                 StepTokens = batches[batch],
+                Ceiling = ceilingFor(batch),
             };
         }
     }
@@ -905,8 +921,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
     /// step; the profile pace's exit hold, which options.pace keeps; and options.timeScale, else 1, unless the profile's pace has
-    /// "timeScale": 1, which keeps the scene at normal speed even beside options.pace; the ceiling options.ceilings or the
-    /// profile's scratch.ceilings gives the scene, if either does; the memory ceiling options.memoryCeilings or the profile's
+    /// "timeScale": 1, which keeps the scene at normal speed even beside options.pace; the memory ceiling options.memoryCeilings or the profile's
     /// scratch.memoryCeilings gives it, if either does; the setup steps the profile's scratch.setup declares for the
     /// scene; the patterns its scratch.expect and scratch.expectFor make the scene's output match a line of; and the engine
     /// arguments its game launches with.
@@ -930,7 +945,6 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             Guard = entry?.Guard,
             TimeScale = TimeScaleFor(entry, options),
             EngineArgs = engineArgs,
-            Ceiling = CeilingFor(name, scratch, options),
             MemoryCeiling = MemoryCeilingFor(name, scratch, options),
             Setup = SetupFor(name, scratch),
             Expect = ExpectFor(name, scratch),
@@ -952,17 +966,25 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         scratch.ExpectFor.TryGetValue(name, out IReadOnlyList<ScratchPattern>? own) ? [.. scratch.Expect, .. own] : scratch.Expect;
 
     /// <summary>
-    /// The scene's own ceiling: options.ceilings for it, else the profile's scratch.ceilings, else none, which derives it from the
-    /// paces.
+    /// One batch's own ceiling: the call's options.ceilings entry for the scene, which keeps its per-batch value for this batch,
+    /// else the profile's scratch.ceilings for the mode the run plays in, else none, which derives it from the paces.
     /// </summary>
-    private static ScratchCeiling? CeilingFor(string name, ScratchProfile scratch, ScratchOptions options)
+    private static ScratchCeiling? CeilingFor(
+        string name,
+        int? batch,
+        Dictionary<string, SceneCeilings> choices,
+        ScratchProfile scratch,
+        ScratchOptions options
+    )
     {
-        if (options.Ceilings is { } ceilings && ceilings.TryGetValue(name, out double given))
+        if (choices.TryGetValue(name, out SceneCeilings? given))
         {
-            return new ScratchCeiling(given, ScratchCeiling.OptionsSource);
+            return given.For(batch) is { } seconds ? new ScratchCeiling(seconds, ScratchCeiling.OptionsSource) : null;
         }
 
-        return scratch.Ceilings.TryGetValue(name, out double profiled) ? new ScratchCeiling(profiled, ScratchCeiling.ProfileSource) : null;
+        return scratch.Ceilings.TryGetValue(name, out ProfileCeilings? profiled) && profiled.For(options.Windowed ?? false) is { } fromProfile
+            ? new ScratchCeiling(fromProfile, ScratchCeiling.ProfileSource)
+            : null;
     }
 
     /// <summary>
@@ -981,32 +1003,120 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             : null;
     }
 
-    /// <summary>Checks options.ceilings: each key a planned scene, each value a number of seconds above 0 and at most 3600.</summary>
-    /// <exception cref="McpException">A key names no scene of the plan, or a value is outside (0, 3600].</exception>
-    private static void CheckCeilings(Dictionary<string, double>? ceilings, List<string> resPaths)
+    /// <summary>
+    /// options.ceilings as each planned scene's choice: each key a planned scene, each value a number of seconds above 0 and at
+    /// most 3600 for every batch, null for the derived ceiling, or an array with one entry per batch, each a number or null.
+    /// </summary>
+    /// <exception cref="McpException">A key names no scene of the plan, or a value is none of those.</exception>
+    private static Dictionary<string, SceneCeilings> CeilingChoices(JsonElement? ceilings, List<string> resPaths)
     {
-        if (ceilings is null)
+        Dictionary<string, SceneCeilings> choices = [];
+        if (ceilings is not { } given || given.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
-            return;
+            return choices;
+        }
+
+        if (given.ValueKind != JsonValueKind.Object)
+        {
+            throw new McpException(
+                $"ceilings is {KindPhrase(given)}; it must be an object mapping a scene name to a number of seconds, null, or an array of those."
+            );
         }
 
         List<string> names = [.. resPaths.Select(Path.GetFileNameWithoutExtension).Select(name => name!)];
-        foreach ((string scene, double seconds) in ceilings)
+        foreach (JsonProperty entry in given.EnumerateObject())
         {
-            if (!names.Contains(scene))
+            if (!names.Contains(entry.Name))
             {
                 throw new McpException(
-                    $"options.ceilings scene '{scene}' is not in the plan; its scenes are {string.Join(", ", names)}. Pass one of those, "
-                        + "or leave the scene's ceiling to its paces."
+                    $"options.ceilings scene '{entry.Name}' is not in the plan; its scenes are {string.Join(", ", names)}. Pass one of "
+                        + "those, or leave the scene's ceiling to its paces."
                 );
             }
 
-            if (!ScratchProfile.IsCeiling(seconds))
+            choices[entry.Name] = CeilingChoice(entry.Name, entry.Value);
+        }
+
+        return choices;
+    }
+
+    /// <summary>One options.ceilings value: a number of seconds, null for the derived ceiling, or an array of those.</summary>
+    /// <exception cref="McpException">It is none of those, or a number is outside (0, 3600].</exception>
+    private static SceneCeilings CeilingChoice(string scene, JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Null => new SceneCeilings(null, null),
+            JsonValueKind.Array => new SceneCeilings(null, [.. value.EnumerateArray().Select((entry, batch) => CeilingSeconds(scene, entry, batch))]),
+            _ => new SceneCeilings(CeilingSeconds(scene, value, null), null),
+        };
+
+    /// <summary>One options.ceilings value: seconds above 0 and at most <see cref="ScratchProfile.MaxCeilingSeconds"/>, or null.</summary>
+    /// <exception cref="McpException">It is neither, or a number is outside (0, 3600].</exception>
+    private static double? CeilingSeconds(string scene, JsonElement value, int? batch)
+    {
+        if (value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double seconds) && ScratchProfile.IsCeiling(seconds))
+        {
+            return seconds;
+        }
+
+        throw RefusedCeiling(scene, value, batch);
+    }
+
+    /// <summary>The refusal of one options.ceilings value: the scene's key, and the batch's place when an array holds it.</summary>
+    private static McpException RefusedCeiling(string scene, JsonElement value, int? batch)
+    {
+        string key = batch is { } place ? $"options.ceilings.{scene}[{place}]" : $"options.ceilings.{scene}";
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            return new McpException(
+                $"{key} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}; got {value.GetRawText()}."
+            );
+        }
+
+        string allowed = batch is null
+            ? $"a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}, null for the derived ceiling, or an array of those"
+            : $"a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds} or null";
+        return new McpException($"{key} must be {allowed}; got {KindPhrase(value)}.");
+    }
+
+    /// <summary>A JSON value's kind as a noun phrase, "a boolean" or "an array", as <see cref="MatchMode"/> names it.</summary>
+    private static string KindPhrase(JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Number => "a number",
+            JsonValueKind.String => "a string",
+            JsonValueKind.True or JsonValueKind.False => "a boolean",
+            JsonValueKind.Object => "an object",
+            JsonValueKind.Array => "an array",
+            _ => "null",
+        };
+
+    /// <summary>
+    /// Checks each array of a scene's options.ceilings: as many values as the scene has batches, a scene played whole having one,
+    /// so a one-value array sets it.
+    /// </summary>
+    /// <exception cref="McpException">An array's length is not the scene's batch count.</exception>
+    private static void CheckCeilingCounts(
+        Dictionary<string, SceneCeilings> choices,
+        Dictionary<string, IReadOnlyList<IReadOnlyList<ScratchStepToken>>> batches
+    )
+    {
+        foreach ((string scene, SceneCeilings choice) in choices)
+        {
+            if (choice.PerBatch is not { } values)
             {
-                throw new McpException(
-                    $"options.ceilings.{scene} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}; "
-                        + $"got {seconds.ToString(CultureInfo.InvariantCulture)}."
-                );
+                continue;
+            }
+
+            int count = batches.TryGetValue(scene, out IReadOnlyList<IReadOnlyList<ScratchStepToken>>? own) ? own.Count : 1;
+            if (values.Count != count)
+            {
+                throw new McpException($"ceilings for {scene}: {values.Count} values for {count} batches.");
             }
         }
     }
@@ -1381,6 +1491,16 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 }
 
+/// <summary>
+/// One scene's options.ceilings entry: a number of seconds for every batch of it, null for the derived ceiling for every batch,
+/// or one value per batch, each a number or null.
+/// </summary>
+internal sealed record SceneCeilings(double? EveryBatch, IReadOnlyList<double?>? PerBatch)
+{
+    /// <summary>One batch's ceiling in seconds; null derives it from the batch's played steps.</summary>
+    public double? For(int? batch) => PerBatch is { } values ? values[batch ?? 0] : EveryBatch;
+}
+
 /// <summary>run_scratches' pace, time scale, user arguments, engine arguments, prepare, whether every scene lists its steps, how
 /// many scenes play at once, the prefix for the scenes' session names, and whether a scene plays on past a failed step.</summary>
 internal sealed record ScratchOptions(
@@ -1408,12 +1528,15 @@ internal sealed record ScratchOptions(
     )]
         string[]? EngineArgs = null,
     [property: Description(
-        "Per-scene ceilings of load-adjusted time, scene name to seconds from that scene's first step: each above 0 and at most "
-            + "3600, fixed seconds that options.timeScale does not scale, and replacing the ceiling derived from the paces, lower "
-            + "or higher. A scene's entry wins over the profile's scratch.ceilings for the scene; a scene in neither keeps the "
+        "Per-scene ceilings of load-adjusted time, scene name to a number of seconds from that scene's first step, null, or an "
+            + "array with one entry per batch of the scene: a number sets every batch, null derives each batch's ceiling from its own "
+            + "played steps and beats the profile's, and an array sets the batches by their place, refused when its length is not the "
+            + "scene's batch count. Each number is above 0 and at most 3600, fixed seconds that options.timeScale does not scale, "
+            + "replacing the ceiling derived from the paces, lower or higher. An entry beats the profile's scratch.ceilings, whose own "
+            + "entry is a number for both modes or {headless, windowed} and is read for the run's mode; a scene in neither keeps the "
             + "derived ceiling, and a name that is not a planned scene is refused."
     )]
-        Dictionary<string, double>? Ceilings = null,
+        JsonElement? Ceilings = null,
     [property: Description(
         "{<scene>: megabytes}: stops a scene's game, killed, once its private memory passes that many megabytes (at least 64, at "
             + "most 1048576), checked about once a second while its steps play; beats the profile's scratch.memoryCeilings. Left "

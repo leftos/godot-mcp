@@ -507,16 +507,30 @@ public sealed class ProjectProfileTests : IDisposable
         ScratchProfile unset = ProjectProfile.Load(_temp.Path).Scratch!;
 
         Assert.Equal(2, set.Ceilings.Count);
-        Assert.Equal(12.5, set.Ceilings["Combat"]);
-        Assert.Equal(3600, set.Ceilings["Tray"]);
+        Assert.Equal(12.5, set.Ceilings["Combat"].Both);
+        Assert.Equal(3600, set.Ceilings["Tray"].Both);
         Assert.Empty(unset.Ceilings);
+    }
+
+    [Fact]
+    public void ScratchCeilingsAreReadPerMode()
+    {
+        Write("""{ "scratch": { "ceilings": { "Combat": { "headless": 60, "windowed": 600 }, "Tray": { "headless": 30 }, "Arena": {} } } }""");
+
+        ScratchProfile profile = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal(60, profile.Ceilings["Combat"].For(windowed: false));
+        Assert.Equal(600, profile.Ceilings["Combat"].For(windowed: true));
+        Assert.Equal(30, profile.Ceilings["Tray"].For(windowed: false));
+        Assert.Null(profile.Ceilings["Tray"].For(windowed: true));
+        Assert.Null(profile.Ceilings["Arena"].For(windowed: false));
+        Assert.Null(profile.Ceilings["Arena"].For(windowed: true));
     }
 
     [Theory]
     [InlineData("""{ "scratch": { "ceilings": { "Combat": 0 } } }""", "0")]
     [InlineData("""{ "scratch": { "ceilings": { "Combat": -1 } } }""", "-1")]
     [InlineData("""{ "scratch": { "ceilings": { "Combat": 3601 } } }""", "3601")]
-    [InlineData("""{ "scratch": { "ceilings": { "Combat": "12" } } }""", "a string")]
     public void AScratchCeilingOutsideItsRangeIsRefused(string json, string shown)
     {
         Write(json);
@@ -525,6 +539,38 @@ public sealed class ProjectProfileTests : IDisposable
             $"{FilePath} (scratch): scratch.ceilings.Combat must be a number of seconds above 0 and at most 3600; got {shown}.",
             Refused(() => ProjectProfile.Load(_temp.Path))
         );
+    }
+
+    [Fact]
+    public void AScratchCeilingOfAnotherKindIsRefused()
+    {
+        Write("""{ "scratch": { "ceilings": { "Combat": "12" } } }""");
+
+        Assert.Equal(
+            $"{FilePath} (scratch): scratch.ceilings.Combat must be a number of seconds above 0 and at most 3600, or an object of "
+                + "\"headless\" and \"windowed\"; got a string.",
+            Refused(() => ProjectProfile.Load(_temp.Path))
+        );
+    }
+
+    [Theory]
+    [InlineData(
+        """{ "scratch": { "ceilings": { "Combat": { "headless": 60, "capped": 5 } } } }""",
+        "(scratch, ceilings of \"Combat\"): unknown key \"capped\"; the allowed keys are headless, windowed. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "ceilings": { "Combat": { "headless": 0 } } } }""",
+        "(scratch, ceilings of \"Combat\"): scratch.ceilings.Combat.headless must be a number of seconds above 0 and at most 3600; got 0."
+    )]
+    [InlineData(
+        """{ "scratch": { "ceilings": { "Combat": { "windowed": "12" } } } }""",
+        "(scratch, ceilings of \"Combat\"): scratch.ceilings.Combat.windowed must be a number of seconds above 0 and at most 3600; got a string."
+    )]
+    public void ABadScratchCeilingObjectIsRefused(string json, string refusal)
+    {
+        Write(json);
+
+        Assert.Equal($"{FilePath} {refusal}", Refused(() => ProjectProfile.Load(_temp.Path)));
     }
 
     [Fact]
@@ -552,7 +598,7 @@ public sealed class ProjectProfileTests : IDisposable
         Write(json);
 
         Assert.Equal(
-            $"{FilePath} (scratch): scratch.memoryCeilings.Combat must be a number of megabytes at least 64 and at most " + $"1048576; got {shown}.",
+            $"{FilePath} (scratch): scratch.memoryCeilings.Combat must be a number of megabytes at least 64 and at most 1048576; got {shown}.",
             Refused(() => ProjectProfile.Load(_temp.Path))
         );
     }

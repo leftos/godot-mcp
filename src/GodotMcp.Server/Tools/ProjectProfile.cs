@@ -147,6 +147,10 @@ internal sealed partial class ProjectProfile
     private const string WarningsKey = "warnings";
     private const string WarningsRed = "red";
     private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description", PrepKey];
+
+    private static readonly string[] CeilingModeKeys = [HeadlessKey, WindowedKey];
+    private const string HeadlessKey = "headless";
+    private const string WindowedKey = "windowed";
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
     private const string TimeScaleKey = "timeScale";
@@ -1171,14 +1175,44 @@ internal sealed partial class ProjectProfile
             ? reason
             : throw Refused(place, $"\"known\" of \"{scene}\" must be a non-empty string, the reason the scene is known to fail");
 
-    /// <summary>One scene's ceiling: a number of seconds above 0 and at most <see cref="ScratchProfile.MaxCeilingSeconds"/>.</summary>
-    private static double ReadCeiling(string scene, JsonElement value, Place place) =>
+    /// <summary>
+    /// One scene's ceiling: a number of seconds for both modes, or an object of the optional "headless" and "windowed", each a
+    /// number of seconds; a mode the object does not name derives its ceiling from the paces.
+    /// </summary>
+    /// <exception cref="McpException">It is neither, a mode is not a number in range, or it names an unknown key.</exception>
+    private static ProfileCeilings ReadCeiling(string scene, JsonElement value, Place place)
+    {
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            return new ProfileCeilings(CeilingSeconds(scene, value, place), null, null);
+        }
+
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw Refused(
+                place,
+                $"scratch.ceilings.{scene} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}, or an "
+                    + $"object of \"{HeadlessKey}\" and \"{WindowedKey}\"; got {Shown(value)}"
+            );
+        }
+
+        Place modes = new(place.Path, $"{place.Where}, ceilings of \"{scene}\"");
+        Dictionary<string, JsonElement> keys = Keys(value, CeilingModeKeys, modes);
+        return new ProfileCeilings(
+            null,
+            keys.TryGetValue(HeadlessKey, out JsonElement headless) ? CeilingSeconds($"{scene}.{HeadlessKey}", headless, modes) : null,
+            keys.TryGetValue(WindowedKey, out JsonElement windowed) ? CeilingSeconds($"{scene}.{WindowedKey}", windowed, modes) : null
+        );
+    }
+
+    /// <summary>A ceiling's seconds: a number above 0 and at most <see cref="ScratchProfile.MaxCeilingSeconds"/>.</summary>
+    /// <exception cref="McpException">It is no such number.</exception>
+    private static double CeilingSeconds(string key, JsonElement value, Place place) =>
         value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double seconds) && ScratchProfile.IsCeiling(seconds)
             ? seconds
             : throw Refused(
                 place,
-                $"scratch.ceilings.{scene} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}; "
-                    + $"got {Shown(value)}"
+                $"scratch.ceilings.{key} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}; got {Shown(value)}"
             );
 
     /// <summary>
@@ -1446,11 +1480,21 @@ internal sealed record ScratchSetup(IReadOnlyList<string> Always, IReadOnlyDicti
 }
 
 /// <summary>
+/// One scene's ceiling in the profile: a number of seconds for both modes, or an object naming "headless" and/or "windowed";
+/// a mode it does not name derives the scene's ceiling from the paces.
+/// </summary>
+internal sealed record ProfileCeilings(double? Both, double? Headless, double? Windowed)
+{
+    /// <summary>The ceiling a run in one mode uses, in seconds; null derives it from the paces.</summary>
+    public double? For(bool windowed) => (windowed ? Windowed : Headless) ?? Both;
+}
+
+/// <summary>
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
 /// scratch run starts with in place of the top-level ones (null when the section sets none), the engine arguments each scene's
 /// game launches with before --, after the runner's own --headless and --time-scale (null when the section sets none), each
-/// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds, each scene's own memory ceiling in
-/// megabytes, each scene's declared setup steps,
+/// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds for both modes or one, each
+/// scene's own memory ceiling in megabytes, each scene's declared setup steps,
 /// the scenes known to fail with the reason, the patterns a step's output lines fail it by, the patterns every scene's output
 /// and each scene's own must match a line of, and how many scenes play at once.
 /// </summary>
@@ -1459,7 +1503,7 @@ internal sealed record ScratchProfile(
     IReadOnlyList<string>? UserArgs,
     IReadOnlyList<string>? EngineArgs,
     IReadOnlyDictionary<string, ScratchPace> Pace,
-    IReadOnlyDictionary<string, double> Ceilings,
+    IReadOnlyDictionary<string, ProfileCeilings> Ceilings,
     IReadOnlyDictionary<string, string> Known,
     IReadOnlyList<ScratchPattern> Patterns
 )
@@ -1531,7 +1575,7 @@ internal sealed record ScratchProfile(
         null,
         null,
         new Dictionary<string, ScratchPace>(),
-        new Dictionary<string, double>(),
+        new Dictionary<string, ProfileCeilings>(),
         new Dictionary<string, string>(),
         DefaultPatterns
     );
