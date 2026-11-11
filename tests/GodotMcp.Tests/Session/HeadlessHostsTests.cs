@@ -14,9 +14,9 @@ namespace GodotMcp.Tests.Session;
 /// <summary>
 /// The pool of warm headless hosts on a fake clock, each host a fake process that dials the real listener over loopback:
 /// reuse, invalidation by the fingerprint, C# projects kept cold, a host that exits mid-request, passes its ceiling, stalls,
-/// is cancelled, refuses or answers with no object, one that never says hello, exits before it or right after it, a folder
-/// that became C#, a slow release, the stops, a start that finishes after the server's shutdown, and a host's log current
-/// on disk while it runs; the idle limit and its reset,
+/// is cancelled, refuses or answers with no object, one that never says hello, one that dials as it launches, exits before it
+/// or right after it, a folder that became C#, a slow release, the stops, a start that finishes after the server's shutdown,
+/// and a host's log current on disk while it runs; the idle limit and its reset,
 /// the cap's eviction of the least recently used idle host and never a busy one, a stale reply, the listing, and
 /// stop_project on a folder with only a host.
 /// </summary>
@@ -51,6 +51,10 @@ public sealed class HeadlessHostsTests : IDisposable
     private readonly RecordingLogger<GodotSession> _log = new();
     private readonly ConcurrentQueue<FakeHostMode> _nextModes = new();
     private FakeHostMode _launchMode = FakeHostMode.Answer;
+
+    // When set, the launcher throws instead of making the fake, keeping the launch it was given.
+    private bool _launchFails;
+    private HostLaunch? _refusedLaunch;
 
     // When set, hosts launched from then on dial only once it completes, so their starts stay under way together.
     private TaskCompletionSource? _dialGate;
@@ -320,6 +324,43 @@ public sealed class HeadlessHostsTests : IDisposable
         Assert.True(Assert.Single(_launched).Disposed, "the host was let go of");
         Assert.Null(Hosts.ProcessIdOf(game));
         Assert.DoesNotContain(_log.Messages, message => message.Contains("0xC06D007F", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AHostThatDialsAsItLaunchesIsAccepted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+        await StartAcceptLoopAsync();
+        _nextModes.Enqueue(FakeHostMode.DialAtLaunch);
+
+        Task<JsonObject> run = RunAsync(game, cancellation);
+        // The launch runs synchronously to the end of the host's own dial.
+        FakeHost host = Assert.Single(_launched);
+        Assert.True(host.LaunchVerdict, "a hello that arrived as its host launched was refused");
+        JsonObject reply = await run.WaitAsync(Wait, cancellation);
+
+        Assert.Equal(host.Id, PidIn(reply));
+        Assert.Equal(1, host.HeadlessRequests);
+    }
+
+    [Fact]
+    public async Task AHostWhoseLauncherThrowsWithdrawsItsWait()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+        await StartAcceptLoopAsync();
+        _launchFails = true;
+
+        SessionException failed = await Assert.ThrowsAsync<SessionException>(() => RunAsync(game, cancellation));
+
+        Assert.Contains("cannot start", failed.Message, StringComparison.Ordinal);
+        HostLaunch refused = Assert.IsType<HostLaunch>(_refusedLaunch);
+        (FakeBridge late, bool accepted) = await DialAndJudgeAsync(refused.Token, game, cancellation);
+        using (late)
+        {
+            Assert.False(accepted, "a launcher that threw left the start's handshake wait registered");
+        }
     }
 
     // The class registry never sets the flag, so it holds the registry's default.
@@ -1248,15 +1289,62 @@ public sealed class HeadlessHostsTests : IDisposable
 
     private FakeHost Launch(HostLaunch launch)
     {
+        if (_launchFails)
+        {
+            _refusedLaunch = launch;
+            throw new SessionException("cannot start");
+        }
+
+        FakeHostMode mode = _nextModes.TryDequeue(out FakeHostMode next) ? next : _launchMode;
         bool released = _launched.All(earlier => earlier.Disposed);
-        FakeHost host = new(launch)
+        FakeHost host = new(launch, mode == FakeHostMode.DialAtLaunch ? _listener : null)
         {
             EarlierHostsReleasedAtLaunch = released,
-            Mode = _nextModes.TryDequeue(out FakeHostMode next) ? next : _launchMode,
+            Mode = mode,
             DialGate = _dialGate?.Task,
         };
         _launched.Enqueue(host);
         return host;
+    }
+
+    /// <summary>
+    /// Starts the listener's accept loop, so a bridge that dials is judged at once rather than left in the socket's backlog until
+    /// a session first waits.
+    /// </summary>
+    private async Task StartAcceptLoopAsync()
+    {
+        // A wait that is withdrawn at once starts the accept loop, which then runs for the listener's life.
+        using CancellationTokenSource withdrawn = new();
+        Task<BridgeConnection> accept = _listener.AcceptBridgeAsync(
+            new HandshakeExpectation(GodotSession.CreateToken(), _temp.Path),
+            withdrawn.Token
+        );
+        await withdrawn.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => accept);
+    }
+
+    /// <summary>Dials the bridge with <paramref name="token"/> and returns the bridge and the listener's verdict on its hello.</summary>
+    private async Task<(FakeBridge Bridge, bool Accepted)> DialAndJudgeAsync(string token, string project, CancellationToken cancellationToken)
+    {
+        TaskCompletionSource<bool> judged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnJudged(string? judgedToken, bool accepted)
+        {
+            if (judgedToken == token)
+            {
+                judged.TrySetResult(accepted);
+            }
+        }
+
+        _listener.HelloJudged += OnJudged;
+        try
+        {
+            FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, token, project, cancellationToken);
+            return (bridge, await judged.Task.WaitAsync(RegistryHarness.HangGuard, cancellationToken));
+        }
+        finally
+        {
+            _listener.HelloJudged -= OnJudged;
+        }
     }
 
     private string Game(string name)
@@ -1311,6 +1399,9 @@ public sealed class HeadlessHostsTests : IDisposable
         /// <summary>Never dials the listener.</summary>
         Silent,
 
+        /// <summary>Dials the listener as its process is launched, as a Godot that loads fast does, and never later.</summary>
+        DialAtLaunch,
+
         /// <summary>Exits with 7 before it dials.</summary>
         ExitAtStart,
 
@@ -1332,18 +1423,18 @@ public sealed class HeadlessHostsTests : IDisposable
 
     /// <summary>
     /// A warm host's process without Godot: dials the listener with its hello once the host waits on it (a real Godot takes
-    /// longer to start than the server takes to listen for it), answers each headless request with its own pid after
-    /// writing its marker to the log, and exits on shutdown or a kill. It holds its log from its launch to its disposal as a
-    /// real host does, started afresh and shared for reading only, so a second host opening the same log while this one
-    /// holds it fails.
+    /// longer to start than the server takes to listen for it), or, given a listener to dial at its launch, as it is
+    /// constructed, as a Godot that loads fast does; answers each headless request with its own pid after writing its marker to
+    /// the log, and exits on shutdown or a kill. It holds its log from its launch to its disposal as a real host does, started
+    /// afresh and shared for reading only, so a second host opening the same log while this one holds it fails.
     /// </summary>
-    private sealed class FakeHost(HostLaunch launch) : IHostProcess
+    private sealed class FakeHost : IHostProcess
     {
         private static int _nextId = 40_000;
-        private readonly HostLaunch _launch = launch;
+        private readonly HostLaunch _launch;
         private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly Lock _logLock = new();
-        private readonly StreamWriter _log = OpenLog(launch.LogPath);
+        private readonly StreamWriter _log;
         private TaskCompletionSource? _releaseGate;
         private FakeBridge? _bridge;
         private int _dialled;
@@ -1352,6 +1443,21 @@ public sealed class HeadlessHostsTests : IDisposable
         private int _headless;
         private volatile FakeHostMode _mode;
         private volatile bool _cpuMeasurable;
+
+        /// <summary>
+        /// The host over <paramref name="launch"/>, holding its log from now; with <paramref name="dialAtLaunch"/>, it dials
+        /// that listener as it is constructed, as a Godot that loads fast does, and blocks until the listener has judged the
+        /// hello, so the dial is out as the server's launcher returns the process.
+        /// </summary>
+        public FakeHost(HostLaunch launch, BridgeListener? dialAtLaunch = null)
+        {
+            _launch = launch;
+            _log = OpenLog(launch.LogPath);
+            if (dialAtLaunch is not null)
+            {
+                DialAtLaunch(dialAtLaunch);
+            }
+        }
 
         public int Id { get; } = Interlocked.Increment(ref _nextId);
 
@@ -1370,6 +1476,9 @@ public sealed class HeadlessHostsTests : IDisposable
 
         /// <summary>Completes once the server waits for this host's hello (or its exit), when it dials unless it is silent.</summary>
         public TaskCompletionSource HelloAwaited { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The listener's verdict on the hello this host dialled at its launch; false when it dialled none then.</summary>
+        public bool LaunchVerdict { get; private set; }
 
         /// <summary>The process id the server kept a handle on from the hello; null before it did.</summary>
         public int? KeptGameProcessId { get; private set; }
@@ -1542,6 +1651,55 @@ public sealed class HeadlessHostsTests : IDisposable
             HelloAwaited.TrySetResult();
         }
 
+        /// <summary>
+        /// Dials <paramref name="listener"/> as a Godot that loads fast does, before the server waits on it, and blocks until
+        /// the listener has judged the hello, keeping the verdict: a host is made as the server's launcher returns it, so its
+        /// hello is out before the start's own wait exists.
+        /// </summary>
+        private void DialAtLaunch(BridgeListener listener)
+        {
+            Interlocked.Exchange(ref _dialled, 1);
+            TaskCompletionSource<bool> judged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnJudged(string? judgedToken, bool accepted)
+            {
+                if (judgedToken == _launch.Token)
+                {
+                    judged.TrySetResult(accepted);
+                }
+            }
+
+            listener.HelloJudged += OnJudged;
+            try
+            {
+                FakeBridge dialled = Task.Run(() =>
+                        FakeBridge.DialAsync(
+                            _launch.Port,
+                            _launch.Token,
+                            _launch.ProjectDir,
+                            new FakeHello { ProcessId = Id },
+                            CancellationToken.None
+                        )
+                    )
+                    .WaitAsync(RegistryHarness.HangGuard)
+                    .GetAwaiter()
+                    .GetResult();
+                LaunchVerdict = judged.Task.WaitAsync(RegistryHarness.HangGuard).GetAwaiter().GetResult();
+                _bridge = dialled;
+                if (LaunchVerdict)
+                {
+                    _ = AnswerRequestsAsync(dialled);
+                    return;
+                }
+
+                WriteLog("quit: its bridge was refused");
+                Exit(1);
+            }
+            finally
+            {
+                listener.HelloJudged -= OnJudged;
+            }
+        }
+
         private async Task ServeAsync()
         {
             try
@@ -1558,10 +1716,23 @@ public sealed class HeadlessHostsTests : IDisposable
                     new FakeHello { ProcessId = Id },
                     CancellationToken.None
                 );
+                await AnswerRequestsAsync(_bridge);
+            }
+            catch (Exception e) when (e is IOException or ObjectDisposedException or SocketException or InvalidOperationException)
+            {
+                // Killed, or the server closed the connection.
+            }
+        }
+
+        /// <summary>Answers each headless request over <paramref name="bridge"/> until the connection ends or the host exits.</summary>
+        private async Task AnswerRequestsAsync(FakeBridge bridge)
+        {
+            try
+            {
                 while (!_exited.Task.IsCompleted)
                 {
-                    JsonObject request = await _bridge.ReadRequestAsync(CancellationToken.None);
-                    await AnswerAsync(_bridge, request);
+                    JsonObject request = await bridge.ReadRequestAsync(CancellationToken.None);
+                    await AnswerAsync(bridge, request);
                 }
             }
             catch (Exception e) when (e is IOException or ObjectDisposedException or SocketException or InvalidOperationException)

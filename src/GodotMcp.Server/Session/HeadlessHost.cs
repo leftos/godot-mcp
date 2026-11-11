@@ -354,10 +354,29 @@ internal sealed class HeadlessHost
     {
         string token = GodotSession.CreateToken();
         HostLaunch launch = new(projectDir, registry.Listener.Port, token, LogPathOf(projectDir, registry.ServerProcessId));
-        IHostProcess process = registry.HostLauncher(launch);
+        // The wait is registered before the host starts, since it dials as soon as it initialises and the listener refuses a
+        // hello whose token no session awaits.
+        HandshakeWait handshake = new(
+            registry.LaunchClock,
+            registry.Listener,
+            new HandshakeExpectation(launch.Token, launch.ProjectDir),
+            registry.HandshakeTimeout,
+            cancellationToken
+        );
+        IHostProcess process;
         try
         {
-            BridgeConnection connection = await AwaitHelloAsync(registry, process, launch, what, cancellationToken);
+            process = registry.HostLauncher(launch);
+        }
+        catch
+        {
+            handshake.Dispose();
+            throw;
+        }
+
+        try
+        {
+            BridgeConnection connection = await AwaitHelloAsync(process, handshake, launch, what, cancellationToken);
             if (connection.GameProcessId is int game)
             {
                 process.KeepGameHandle(game);
@@ -607,27 +626,25 @@ internal sealed class HeadlessHost
     public Task ReleaseAsync() => _release.Value;
 
     private static async Task<BridgeConnection> AwaitHelloAsync(
-        SessionRegistry registry,
         IHostProcess process,
+        HandshakeWait handshake,
         HostLaunch launch,
         string what,
         CancellationToken cancellationToken
     )
     {
-        using LoadDeadline deadline = registry.LaunchClock.Start(registry.HandshakeTimeout, cancellationToken);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
-        Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(new HandshakeExpectation(launch.Token, launch.ProjectDir), timeout.Token);
-        Task exited = process.WaitForExitAsync(timeout.Token);
-        await Task.WhenAny(accept, exited);
-        if (accept.IsCompletedSuccessfully)
+        using HandshakeWait wait = handshake;
+        Task exited = process.WaitForExitAsync(wait.Token);
+        await Task.WhenAny(wait.Accept, exited);
+        if (wait.Accept.IsCompletedSuccessfully)
         {
-            await timeout.CancelAsync();
+            await wait.CancelAsync();
             await exited.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            return await accept;
+            return await wait.TakeAccept();
         }
 
-        await timeout.CancelAsync();
-        await ObserveAbandonedAsync(accept, exited);
+        await wait.CancelAsync();
+        await ObserveAbandonedAsync(wait.TakeAccept(), exited);
         bool exitedEarly = process.HasExited;
         int code = exitedEarly ? process.ExitCode : -1;
         process.Kill();
@@ -637,10 +654,10 @@ internal sealed class HeadlessHost
         cancellationToken.ThrowIfCancellationRequested();
         string log = launch.LogPath;
         string tail = string.Join('\n', LogLines(log, lines).TakeLast(LogTailLines));
-        string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
+        string backstop = wait.Deadline.Reason == DeadlineReason.Backstop ? wait.Deadline.BackstopClause() : string.Empty;
         string failed = exitedEarly
             ? $"{what} ended (Godot exited {code}) before its warm headless host connected"
-            : $"{what} did not start: its warm headless host did not connect within {LoadDeadline.Seconds(deadline.Budget)} s{backstop}, "
+            : $"{what} did not start: its warm headless host did not connect within {LoadDeadline.Seconds(wait.Deadline.Budget)} s{backstop}, "
                 + "so it was stopped with its whole process tree";
         string message = $"{failed}. The last lines of its log, {log}:\n{tail}";
         throw exitedEarly && code == GodotSession.BootCrashExitCode ? new BootCrashException(message) : new SessionException(message);
