@@ -47,6 +47,10 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
     // The exit codes the next launches' processes exit with, in order, each at once or once the test releases it (held); a
     // launch with none left gets a stand-in game.
     private readonly ConcurrentQueue<(int Code, bool Held)> _crashes = new();
+
+    // What the next launches' stand-in processes do as they start, in order (dial the bridge, throw, cancel the call); a launch
+    // that takes a queued crash takes none of these, and one with none left only starts.
+    private readonly ConcurrentQueue<Action<FakeRunProcess>> _starts = new();
     private readonly string? _configuredGodot;
 
     public LaunchRefusesNoGlTests()
@@ -376,6 +380,206 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
         Assert.Single(_retryingLog.Warnings, warning => warning == BootCrashRetried);
     }
 
+    [Fact]
+    public async Task ABridgeThatDialsAsGodotStartsIsAccepted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        await QueueDialOnStartAsync(project);
+
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+        FakeRunProcess run = await StartedAsync(launch);
+        bool accepted = await run.Judged.Task.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        using FakeBridge game = run.Bridge!;
+
+        Assert.True(accepted, "the hello of a bridge that dialled as Godot started was refused");
+        LaunchResult started = await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        Assert.Equal(run.Process.Id, started.ProcessId);
+    }
+
+    [Fact]
+    public async Task ABridgeThatDialsAsTheRetryStartsIsAccepted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        QueueCrash(BootCrash);
+        await QueueDialOnStartAsync(project);
+
+        Task<LaunchResult> launch = _retrying.LaunchAsync(Request(project), "server", cancellation);
+        await RegistryHarness.WaitUntilAsync(() => _launched.Count == 2, launch);
+        FakeRunProcess retry = _launched.Last();
+        bool accepted = await retry.Judged.Task.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        using FakeBridge game = retry.Bridge!;
+
+        Assert.True(accepted, "the hello of a bridge that dialled as the retry started was refused");
+        LaunchResult started = await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        Assert.Equal(retry.Process.Id, started.ProcessId);
+    }
+
+    [Fact]
+    public async Task ABridgeThatDialsAsTheRestartStartsIsAccepted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+        FakeRunProcess first = await StartedAsync(launch);
+        using FakeBridge oldGame = await FakeBridge.DialAsync(_listener.Port, first.Token, project, cancellation);
+        await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        await QueueDialOnStartAsync(project);
+
+        Task<object> restart = _sessions.RestartAsync("server", prepare: false, cancellation);
+        int shutdowns = 0;
+        while (shutdowns == 0)
+        {
+            string? command = await oldGame.AnswerOneAsync("quit", cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation);
+            shutdowns += command == "shutdown" ? 1 : 0;
+        }
+
+        await first.EndAsync(cancellation);
+        await RegistryHarness.WaitUntilAsync(() => _launched.Count == 2, restart);
+        FakeRunProcess second = _launched.Last();
+        bool accepted = await second.Judged.Task.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        using FakeBridge newGame = second.Bridge!;
+
+        Assert.True(accepted, "the hello of a bridge that dialled as the restart started was refused");
+        var restarted = (RestartResult)await restart.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        Assert.Equal(first.Pid, restarted.PreviousProcessId);
+        Assert.Equal(second.Pid, restarted.ProcessId);
+        Assert.Null(restarted.PreviousKillReason);
+        Assert.Equal(2, _launched.Count);
+    }
+
+    [Fact]
+    public async Task ALaunchWhoseProcessCannotStartWithdrawsItsWait()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        await StartAcceptLoopAsync();
+        _starts.Enqueue(_ => throw new SessionException("cannot start"));
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _sessions.LaunchAsync(Request(project), "server", cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation)
+        );
+
+        Assert.Contains("cannot start", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(_sessions.List(includeStopped: true), session => session.Name == "server");
+        (FakeBridge late, bool accepted) = await DialAndJudgeAsync(_launched.Single().Token, project, cancellation);
+        using (late)
+        {
+            Assert.False(accepted, "a launch whose process could not start left its handshake wait registered");
+        }
+    }
+
+    [Fact]
+    public async Task ALaunchCancelledAsGodotStartsKillsItAndWithdrawsItsWait()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        await StartAcceptLoopAsync();
+        using var cancelLaunch = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        _starts.Enqueue(_ => cancelLaunch.Cancel());
+
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancelLaunch.Token);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => launch.WaitAsync(RegistryHarness.HangGuard, cancellation));
+        FakeRunProcess run = _launched.Single();
+        await run.ExitedAsync(cancellation);
+        (FakeBridge late, bool accepted) = await DialAndJudgeAsync(run.Token, project, cancellation);
+        using (late)
+        {
+            Assert.False(accepted, "a launch cancelled as Godot started left its handshake wait registered");
+        }
+    }
+
+    [Fact]
+    public async Task ALaunchsHandshakeBudgetCountsFromGodotsStart()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _starts.Enqueue(_ => started.TrySetResult());
+        SemaphoreSlim folderLock = _sessions.PrepLock(project);
+        await folderLock.WaitAsync(cancellation);
+        Task<LaunchResult> launch;
+        try
+        {
+            launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+            // Time spent before Godot starts, here on the folder's prep lock, is not the handshake's.
+            _time.Advance(TimeSpan.FromSeconds(20));
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+
+        await started.Task.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        _time.Advance(_sessions.HandshakeTimeout - TimeSpan.FromSeconds(1));
+        (FakeBridge game, bool accepted) = await DialAndJudgeAsync(_launched.Single().Token, project, cancellation);
+        using (game)
+        {
+            Assert.True(accepted, "a bridge that dialled within the handshake budget of Godot's start was refused");
+            await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        }
+    }
+
+    /// <summary>
+    /// Queues a launch whose process, as it starts, dials the bridge with its token and blocks until the listener has judged its
+    /// hello, keeping the bridge and the verdict on the process.
+    /// </summary>
+    private async Task QueueDialOnStartAsync(string project)
+    {
+        await StartAcceptLoopAsync();
+        _starts.Enqueue(run =>
+        {
+            (FakeBridge bridge, bool accepted) = Task.Run(() => DialAndJudgeAsync(run.Token, project, CancellationToken.None))
+                .WaitAsync(RegistryHarness.HangGuard)
+                .GetAwaiter()
+                .GetResult();
+            run.Bridge = bridge;
+            run.Judged.TrySetResult(accepted);
+        });
+    }
+
+    /// <summary>
+    /// Starts the listener's accept loop, so a bridge that dials is judged at once rather than left in the socket's backlog until
+    /// a session first waits.
+    /// </summary>
+    private async Task StartAcceptLoopAsync()
+    {
+        // A wait that is withdrawn at once starts the accept loop, which then runs for the listener's life.
+        using CancellationTokenSource withdrawn = new();
+        Task<BridgeConnection> accept = _listener.AcceptBridgeAsync(
+            new HandshakeExpectation(GodotSession.CreateToken(), _temp.Path),
+            withdrawn.Token
+        );
+        await withdrawn.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => accept);
+    }
+
+    /// <summary>Dials the bridge with <paramref name="token"/> and returns the bridge and the listener's verdict on its hello.</summary>
+    private async Task<(FakeBridge Bridge, bool Accepted)> DialAndJudgeAsync(string token, string project, CancellationToken cancellationToken)
+    {
+        TaskCompletionSource<bool> judged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnJudged(string? judgedToken, bool accepted)
+        {
+            if (judgedToken == token)
+            {
+                judged.TrySetResult(accepted);
+            }
+        }
+
+        _listener.HelloJudged += OnJudged;
+        try
+        {
+            FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, token, project, cancellationToken);
+            return (bridge, await judged.Task.WaitAsync(RegistryHarness.HangGuard, cancellationToken));
+        }
+        finally
+        {
+            _listener.HelloJudged -= OnJudged;
+        }
+    }
+
     private SessionRegistry NewRegistry(string name, ILogger<GodotSession> logger, bool retryBootCrashOnce) =>
         new(_listener, logger)
         {
@@ -394,7 +598,12 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
     {
         FakeRunProcess run = _crashes.TryDequeue(out (int Code, bool Held) crash)
             ? new FakeRunProcess(startInfo, crash.Code, crash.Held)
-            : new FakeRunProcess(startInfo, crashExitCode: null, held: false);
+            : new FakeRunProcess(
+                startInfo,
+                crashExitCode: null,
+                held: false,
+                _starts.TryDequeue(out Action<FakeRunProcess>? onStart) ? onStart : null
+            );
         _launched.Enqueue(run);
         return run;
     }
@@ -426,6 +635,7 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
     private sealed class FakeRunProcess : IRunProcess, IDisposable
     {
         private readonly bool _crashes;
+        private readonly Action<FakeRunProcess>? _onStart;
         private Action<string>? _stdout;
         private Action<string>? _stderr;
         private Action? _ended;
@@ -438,10 +648,14 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
         /// <param name="startInfo">The start info the launch built.</param>
         /// <param name="crashExitCode">The code the child exits with; null for a stand-in game that runs until killed.</param>
         /// <param name="held">Whether a crashing child waits for <see cref="ReleaseCrash"/> before it exits.</param>
-        public FakeRunProcess(ProcessStartInfo startInfo, int? crashExitCode, bool held)
+        /// <param name="onStart">
+        /// What <see cref="Start"/> does before it returns, as a real Godot's start may race the launch; null for nothing.
+        /// </param>
+        public FakeRunProcess(ProcessStartInfo startInfo, int? crashExitCode, bool held, Action<FakeRunProcess>? onStart = null)
         {
             StartInfo = startInfo;
             _crashes = crashExitCode is not null;
+            _onStart = onStart;
             Process = crashExitCode is int exitCode ? CrashingChild(exitCode, held) : RegistryHarness.StartStandInGame();
             if (!_crashes)
             {
@@ -467,6 +681,12 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
         /// <summary>Whether the run stopped reading this process's output, as a restart or a retry does to the run it replaces.</summary>
         public bool ReadCancelled => _readCancelled;
 
+        /// <summary>The bridge a process that dials as it starts dialled with; null until it has.</summary>
+        public FakeBridge? Bridge { get; set; }
+
+        /// <summary>The listener's verdict on the hello of a process that dials as it starts: true when it was handed to a waiter.</summary>
+        public TaskCompletionSource<bool> Judged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         /// <summary>Lets a held crashing child exit with its code.</summary>
         public void ReleaseCrash() => Process.StandardInput.WriteLine("crash");
 
@@ -479,6 +699,8 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
                 Process.Start();
                 _pid = Process.Id;
             }
+
+            _onStart?.Invoke(this);
         }
 
         public void BeginRead(Action<string> stdout, Action<string> stderr, Action ended)

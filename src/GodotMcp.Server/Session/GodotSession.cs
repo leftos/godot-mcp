@@ -658,8 +658,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning, int? QuitMs);
 
     /// <summary>
-    /// A run <see cref="PrepareAndStartAsync"/> started: the run, its prep, the token its bridge's hello must carry and the
-    /// Godot it runs, plus, for a restart, how the run it replaced ended and how that run's recording ended.
+    /// A run <see cref="PrepareAndStartAsync"/> started: the run, its prep, the wait for its bridge's hello (registered before
+    /// Godot started, and disposed by whoever ends the start) and the Godot it runs, plus, for a restart, how the run it
+    /// replaced ended and how that run's recording ended.
     /// </summary>
     private sealed record PreparedRun
     {
@@ -667,7 +668,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         public required PrepResult Prep { get; init; }
 
-        public required string Token { get; init; }
+        public required HandshakeWait Handshake { get; init; }
 
         public required string Godot { get; init; }
 
@@ -869,12 +870,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             MakeScratchUserData(request, previous);
             Func<int, string>? marker = previous is not null && ProcessId is int replaced ? started => RestartMarker(replaced, started) : null;
-            (GodotRun run, string token) = StartGodot(request, godotPath, previous, marker);
+            (GodotRun run, HandshakeWait handshake) = StartGodot(request, godotPath, previous, marker, cancellationToken);
             return new PreparedRun
             {
                 Run = run,
                 Prep = prep,
-                Token = token,
+                Handshake = handshake,
                 Previous = previousEnd,
                 PreviousRecording = previousRecording,
                 Godot = godotPath,
@@ -895,8 +896,15 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <param name="marker">
     /// The marker line the carried output gets once the new process has its pid, from that pid; null for no marker.
     /// </param>
-    /// <returns>The started run and the token its bridge's hello must carry.</returns>
-    private (GodotRun Run, string Token) StartGodot(LaunchRequest request, string godotPath, GodotRun? carried, Func<int, string>? marker)
+    /// <param name="cancellationToken">The caller's token; cancelling it withdraws the handshake wait.</param>
+    /// <returns>The started run and the wait for its bridge's hello, which the caller disposes.</returns>
+    private (GodotRun Run, HandshakeWait Handshake) StartGodot(
+        LaunchRequest request,
+        string godotPath,
+        GodotRun? carried,
+        Func<int, string>? marker,
+        CancellationToken cancellationToken
+    )
     {
         string token = CreateToken();
         string? moviePath = PrepareMoviePath(request);
@@ -909,13 +917,25 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             run.OutputLogPath = logPath;
         }
 
-        StartProcess(run, marker);
+        // The wait is registered before Godot starts, since its bridge may dial at once and the listener refuses a hello whose
+        // token no session awaits; its deadline starts here, so the prep never counts.
+        HandshakeWait handshake = new(registry.LaunchClock, registry.Listener, ExpectHello(token), CurrentHandshakeTimeout, cancellationToken);
+        try
+        {
+            StartProcess(run, marker);
+        }
+        catch
+        {
+            handshake.Dispose();
+            throw;
+        }
+
         MarkGameStarted();
         _exitHandled = NewExitHandled();
         _run = run;
         _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
         ProcessId = run.Process.Id;
-        return (run, token);
+        return (run, handshake);
     }
 
     /// <summary>
@@ -1030,15 +1050,30 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             registry.RefuseStartAtShutdown();
             LogBootCrashRetried(_logger, "the launch");
-            (GodotRun run, string token) = StartGodot(request, crashed.Godot, crashed.Run, started => BootCrashMarker(crashedProcessId, started));
-            relaunched = crashed with { Run = run, Token = token };
+            (GodotRun run, HandshakeWait handshake) = StartGodot(
+                request,
+                crashed.Godot,
+                crashed.Run,
+                started => BootCrashMarker(crashedProcessId, started),
+                cancellationToken
+            );
+            relaunched = crashed with { Run = run, Handshake = handshake };
         }
         finally
         {
             folderLock.Release();
         }
 
-        await crashed.Run.DisposeAsync();
+        try
+        {
+            await crashed.Run.DisposeAsync();
+        }
+        catch
+        {
+            relaunched.Handshake.Dispose();
+            throw;
+        }
+
         return relaunched;
     }
 
@@ -1061,12 +1096,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         BridgeConnection connection;
         try
         {
-            connection = await WaitForHandshakeAsync(prepared.Run, ExpectHello(prepared.Token), cancellationToken);
+            connection = await WaitForHandshakeAsync(prepared.Run, prepared.Handshake, cancellationToken);
         }
         catch (SessionException) when (IsBootCrashToRetry(prepared.Run))
         {
             prepared = await RelaunchAfterBootCrashAsync(request, prepared, cancellationToken);
-            connection = await WaitForHandshakeAsync(prepared.Run, ExpectHello(prepared.Token), cancellationToken);
+            connection = await WaitForHandshakeAsync(prepared.Run, prepared.Handshake, cancellationToken);
         }
 
         GodotRun run = prepared.Run;
@@ -1251,22 +1286,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeExpectation expected, CancellationToken cancellationToken)
+    private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeWait handshake, CancellationToken cancellationToken)
     {
-        using LoadDeadline deadline = registry.LaunchClock.Start(CurrentHandshakeTimeout, cancellationToken);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
-        Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
-        Task exited = run.Process.WaitForExitAsync(timeout.Token);
+        using HandshakeWait wait = handshake;
+        Task exited = run.Process.WaitForExitAsync(wait.Token);
         Task<string> noGl = run.NoGlWindowLine;
         // A bridge that connected wins over a line that arrived beside it: a game that dialled in has its window.
-        await Task.WhenAny(accept, exited, noGl);
-        if (accept.IsCompletedSuccessfully)
+        await Task.WhenAny(wait.Accept, exited, noGl);
+        if (wait.Accept.IsCompletedSuccessfully)
         {
-            return await accept;
+            return await wait.TakeAccept();
         }
 
-        await timeout.CancelAsync();
-        await ObserveAbandonedAsync(accept, exited);
+        await wait.CancelAsync();
+        await ObserveAbandonedAsync(wait.TakeAccept(), exited);
         bool exitedEarly = !run.IsRunning;
         if (noGl.IsCompletedSuccessfully)
         {
@@ -1281,7 +1314,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         // The failed run stays the session's, so its file is closed here rather than left pinning the project folder.
         await CloseOutputLogAsync(run);
         cancellationToken.ThrowIfCancellationRequested();
-        throw DescribeFailedLaunch(run, exitedEarly, deadline);
+        throw DescribeFailedLaunch(run, exitedEarly, wait.Deadline);
     }
 
     /// <summary>
