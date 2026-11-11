@@ -189,7 +189,8 @@ internal static class CaptureWindows
         );
         if (!enumerated)
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "EnumWindows failed");
+            int error = Marshal.GetLastWin32Error();
+            throw new Win32Exception(error, $"EnumWindows failed (Windows error {error})");
         }
 
         return windows;
