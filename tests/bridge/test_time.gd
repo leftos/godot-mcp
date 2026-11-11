@@ -5,7 +5,8 @@ extends "res://gd_test.gd"
 ## The clock's pure logic (bridge/godot_mcp_time.gd): wait_for's reading of the server's fields
 ## (test_conditions.gd has its condition kinds and expression parsing, test_equals_conditions.gd
 ## its JSON comparison).
-## The node is never added to the tree; only functions that do not need it are called.
+## The clock is given a stand-in tree only where a wait reads one; every other test calls only
+## functions that do not need it.
 
 ## Stands in for the tree's process_frame in a game-time wait, so its connections can be read.
 signal test_frame
@@ -28,6 +29,45 @@ func test_paused_refusal_lets_a_game_time_limited_wait_run_while_paused() -> voi
 	var time: Node = _time_script.new()
 	assert_eq(time._paused_refusal(true, 1, true), "", "a limitGameMs wait while paused")
 	assert_eq(time._paused_refusal(true, 1, false), time.PAUSED_REFUSAL, "a plain wait is refused")
+	time.free()
+
+
+## A wait reports its start to the godot_mcp_wait_started group before it checks anything, which is
+## the hook a scratch fixture times its own event from. The tree is a stand-in, since a runner's
+## nodes have none before its root enters; its call_group is what reaches the fixture. The wait ends
+## on its first check, so no frame runs between the report and the answer.
+func test_a_wait_reports_its_start_to_the_group_before_it_answers() -> void:
+	var time: Node = _time_script.new()
+	var fixture: Node = (
+		_compile(
+			(
+				"\n"
+				. join(
+					[
+						"extends Node",
+						"",
+						"var started: Array = []",
+						"",
+						"",
+						"func _on_godot_mcp_wait_started(kind: String) -> void:",
+						"\tstarted.append(kind)",
+					]
+				)
+			)
+		)
+		as Node
+	)
+	var tree: Object = _wait_tree_rig(fixture)
+	time.wait_tree = tree
+	var outcome: Dictionary = await time.wait_for({"kind": "frames", "frames": 1, "timeoutMs": 0})
+	assert_eq(
+		tree.calls,
+		[["godot_mcp_wait_started", "_on_godot_mcp_wait_started", "frames"]],
+		"the wait's kind, told to the group as the wait starts, exactly once"
+	)
+	assert_eq(fixture.get("started"), ["frames"], "a node in the group hears it")
+	assert_eq(outcome["result"]["met"], false, "the check-once wait is unmet at 0 frames")
+	fixture.free()
 	time.free()
 
 
@@ -631,6 +671,35 @@ func _tree_then_rig() -> Dictionary:
 	rig["time"].then_tree = tree
 	rig["tree"] = tree
 	return rig
+
+
+## A tree a wait reads and told its start to: paused and a process_frame signal as a game's has,
+## and a call_group that records each call and forwards it to fixture, which stands in for a scene
+## in the group, since a real tree's group map cannot hold a node in a gdtest.
+func _wait_tree_rig(fixture: Node) -> Object:
+	var tree: Object = _compile(
+		(
+			"\n"
+			. join(
+				[
+					"extends RefCounted",
+					"",
+					"signal process_frame",
+					"",
+					"var paused: bool = false",
+					"var fixture: Node",
+					"var calls: Array = []",
+					"",
+					"",
+					"func call_group(group: String, method: String, kind: String) -> void:",
+					"\tcalls.append([group, method, kind])",
+					"\tfixture.call(method, kind)",
+				]
+			)
+		)
+	)
+	tree.fixture = fixture
+	return tree
 
 
 ## An instance of a script compiled from source.

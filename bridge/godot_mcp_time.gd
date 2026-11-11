@@ -47,12 +47,21 @@ const NOT_DRAWN_WARNING := (
 	"The frame the condition was met on was not drawn (is the window minimized, or the game in "
 	+ "low-processor mode?), so there is no screenshot."
 )
+## The group a wait tells it started, before any check: each node in it gets
+## _on_godot_mcp_wait_started(kind), so a scene times something from a wait's start (the scratch
+## fixtures whose event must fall in the wait after their last step). A game with no such node
+## pays one group lookup per wait.
+const WAIT_STARTED_GROUP := "godot_mcp_wait_started"
 
 ## The bridge this clock belongs to, for its node lookup, JSON conversion and screenshots.
 var bridge: Node
 ## The tree a met then pauses, get_tree() when null: gdtest's stand-ins replace it, since its nodes
 ## are outside any tree.
 var then_tree: Object = null
+## The tree wait_for reads paused and process_frame from at its start, and tells it started,
+## get_tree() when null: a gdtest's stand-in replaces it, since its nodes are outside any tree. The
+## probe and game-clock paths still read get_tree().
+var wait_tree: Object = null
 ## The SignalWait child (godot_mcp_signal_wait.gd beside this script), which runs a signal wait.
 var signal_wait: Node
 ## What runs now, "step" or "frames" (capture_frames), or empty: while one runs, pause, resume, a
@@ -458,17 +467,22 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 ## | args[, call, then, screenshot | warning]}}, with last instead of value on a timeout, or
 ## {error}. A timeoutMs of 0 checks the condition once, now, paused or not; with call, once right
 ## after the call (_start_probe_wait). With screenshot, a met wait captures the frame it was met
-## on; a met wait runs then, once, in that frame (see _poll_capturing).
+## on; a met wait runs then, once, in that frame (see _poll_capturing). Calls
+## _on_godot_mcp_wait_started(kind) on every node in the godot_mcp_wait_started group as the wait
+## starts, before any check: a scene that must time something from the wait's start (a scratch test
+## fixture) joins the group. _tree() is the tree it reads and tells.
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
+	var tree: Object = _tree()
+	tree.call_group(WAIT_STARTED_GROUP, "_on_godot_mcp_wait_started", kind)
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
 	if kind == "signal":
-		return await signal_wait._wait_for_signal(params, timeout_ms, get_tree().process_frame)
-	var refusal: String = _paused_refusal(get_tree().paused, timeout_ms, params.has("limitGameMs"))
+		return await signal_wait._wait_for_signal(params, timeout_ms, tree.process_frame)
+	var refusal: String = _paused_refusal(tree.paused, timeout_ms, params.has("limitGameMs"))
 	if not refusal.is_empty():
 		return {"error": refusal}
 	if kind in GAME_TIME_KINDS:
-		return await _wait_for_game_time(kind, params, timeout_ms, get_tree().process_frame)
+		return await _wait_for_game_time(kind, params, timeout_ms, tree.process_frame)
 	var failures: Dictionary = {}
 	var probe: Variant = bridge._conditions.make_probe(kind, params, failures)
 	if probe is String:
@@ -480,6 +494,11 @@ func wait_for(params: Dictionary) -> Dictionary:
 	var outcome: Dictionary = await _poll_capturing(probe, timeout_ms, params)
 	bridge._conditions.add_failed_checks(outcome, failures)
 	return _with_call(outcome, called)
+
+
+## The tree wait_for reads and tells it started: the stand-in a gdtest sets, else the game's own.
+func _tree() -> Object:
+	return wait_tree if wait_tree != null else get_tree()
 
 
 ## Readies a probe wait's first check. With params.call: waits for the next process_frame and

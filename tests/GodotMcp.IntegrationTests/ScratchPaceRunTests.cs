@@ -111,9 +111,9 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Contains("error in the last step's pace after it", scene["exit"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
-    // ScratchExitHold's last step is an until step met at once, its 30 s pace only its default wait, then the 3 s exit hold: its timer's
-    // line at 2 s of game time falls inside the hold, which the profile expects, and its error at 10 s falls past it, inside the
-    // 30 s the step's pace would have waited.
+    // ScratchExitHold's last step is an until step met at once, its 30 s pace only its default wait, then the 3 s exit hold: the
+    // fixture starts its timers as that hold's wait starts, so its line at 1 s of game time falls inside the hold, which the
+    // profile expects, and its error at 25 s falls past it, inside the 30 s the step's pace would have waited.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnExitHoldIsTheWaitAfterTheLastStepInPlaceOfItsPace()
     {
@@ -130,8 +130,9 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Null(scene["exit"]!["missing"]);
     }
 
-    // ScratchQuitInHold's last step arms a timer that quits the game with code 0 after 1 s of game time, inside its 3 s exit hold:
-    // the game closes the bridge connection in the wait after its last step, a clean exit, not an error of that wait.
+    // ScratchQuitInHold's last step arms a flag, and the hold's wait starts a timer that quits the game with code 0 after 1 s of
+    // game time, inside its 3 s exit hold: the game closes the bridge connection in the wait after its last step, a clean exit,
+    // not an error of that wait.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ASceneThatQuitsWithCodeZeroInsideItsExitHoldIsGreen()
     {
