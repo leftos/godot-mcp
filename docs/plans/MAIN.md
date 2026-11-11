@@ -41,8 +41,7 @@
 
 ## Singles
 
-### Tests and the itest harness (7/34 done)
-- [ ] GMCP-494 Route the capture itest group as its own command so the routed itest moves to gate's hidden desktop
+### Tests and the itest harness (8/34 done)
 - [ ] GMCP-82 Let run.ps1 drive run twice in one tree under its own log names
 - [ ] GMCP-103 Map scratch fixture changes to the scratch itest group alone
 - [ ] GMCP-159 itest: move scratch and reads out of the timing lane
@@ -92,7 +91,7 @@
 - [ ] GMCP-361 override-folders list: a hold past its budget runs its work unprotected, any IOException is retried, a cut rewrite empties the list
 - [ ] GMCP-362 A session stays live while Godot's console wrapper outlives its game
 - [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time'
-- [ ] GMCP-529 Session exit hardening: no process-lock reads under the registry locks, and the restart-after-exit window · release vNext+1
+- [ ] GMCP-529 Session exit hardening: no process-lock reads under the registry locks, and the restart-after-exit window
 
 ### Scratch runner (4/18 done)
 - [ ] GMCP-149 Keep run_scratches' exit lines as short as a failing step's
@@ -182,19 +181,19 @@
 - [ ] GMCP-292 LoadClock credits a starved server's gap at its last free share
 - [ ] GMCP-391 Property paths: take the ClassDB route on every segment a script member could hide
 - [ ] GMCP-447 watch: the unknown-monitor refusal does not name frame_work_ms
-- [ ] GMCP-534 RuntimeTools.ReadInt cannot read an int-backed JsonValue built in memory · release vNext+1
-- [ ] GMCP-535 capture_frames sends window and viewport once per reply, not on every frame entry · release vNext+1
-- [ ] GMCP-537 Scratch late-error tests: split a step's errors from the exit's without a game-time margin · release vNext+1
-- [ ] GMCP-539 override.cfg is written atomically, so a booting game never reads half a file · release vNext+1
-- [ ] GMCP-540 SessionAttachTests: the prep-lock override test asserts absence after a 200 ms sleep · release vNext+1
-- [ ] GMCP-542 The run path registers its handshake waiter before it starts Godot · release vNext+1
-- [ ] GMCP-543 run.ps1 gdtest says no FAIL line when its log holds them · release vNext+1
-- [ ] GMCP-544 Server reads of a dormant entry or an attach file block the bridge's delete · release vNext+1
-- [ ] GMCP-545 run_scratches: an error logged during the early until reads reaches no verdict · release vNext+1
-- [ ] GMCP-546 attach_project: a join's waitSeconds starts only after the prep lock frees · release vNext+1
-- [ ] GMCP-549 run.ps1: a stalled routed itest is reported with "no kill line" instead of its stall · release vNext+1
-- [ ] GMCP-550 restart_project: a cancelled restart of a process session leaves its new program running · release vNext+1
-- [ ] GMCP-551 run.ps1 test names a hung unit test, as itest groups now do · release vNext+1
+- [ ] GMCP-534 RuntimeTools.ReadInt cannot read an int-backed JsonValue built in memory
+- [ ] GMCP-535 capture_frames sends window and viewport once per reply, not on every frame entry
+- [ ] GMCP-537 Scratch late-error tests: split a step's errors from the exit's without a game-time margin · release vNext
+- [ ] GMCP-539 override.cfg is written atomically, so a booting game never reads half a file
+- [ ] GMCP-540 SessionAttachTests: the prep-lock override test asserts absence after a 200 ms sleep · release vNext
+- [ ] GMCP-542 The run path registers its handshake waiter before it starts Godot
+- [ ] GMCP-543 run.ps1 gdtest says no FAIL line when its log holds them · release vNext
+- [ ] GMCP-544 Server reads of a dormant entry or an attach file block the bridge's delete
+- [ ] GMCP-545 run_scratches: an error logged during the early until reads reaches no verdict · release vNext
+- [ ] GMCP-546 attach_project: a join's waitSeconds starts only after the prep lock frees
+- [ ] GMCP-549 run.ps1: a stalled routed itest is reported with "no kill line" instead of its stall · release vNext
+- [ ] GMCP-550 restart_project: a cancelled restart of a process session leaves its new program running
+- [ ] GMCP-551 run.ps1 test names a hung unit test, as itest groups now do · release vNext
 
 ## Docs
 
