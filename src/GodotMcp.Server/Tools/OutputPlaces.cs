@@ -40,7 +40,8 @@ internal sealed record OutputPlaces(string Project, string? Checkout, bool Check
 
     /// <summary>
     /// Asks git where the project's checkout and main checkout are, and whether the checkout tracks the project, and reads
-    /// each folder's final path.
+    /// each folder's final path. A checkout whose final path does not hold the project's (a git whose core.worktree names
+    /// a folder elsewhere) is no place, and neither is its main checkout: the project is then taken as in no checkout.
     /// </summary>
     /// <param name="projectDir">The session's project folder.</param>
     /// <param name="logger">Where a missing or stopped git is reported.</param>
@@ -57,8 +58,21 @@ internal sealed record OutputPlaces(string Project, string? Checkout, bool Check
         string checkout = Normalize(topLevel);
         GitResult tracked = GitRunner.RunForResult(project, logger, GitRunner.Ceiling, ["ls-files", "--error-unmatch", "--", "project.godot"]);
         string? listed = GitRunner.Run(project, logger, "worktree", "list", "--porcelain", "-z");
-        return WithFinalForms(new OutputPlaces(project, checkout, tracked.Succeeded, listed is null ? null : MainOf(listed, checkout)));
+        return Contained(WithFinalForms(new OutputPlaces(project, checkout, tracked.Succeeded, listed is null ? null : MainOf(listed, checkout))));
     }
+
+    /// <summary>The places as given when the checkout's final path holds the project's; else the project alone.</summary>
+    private static OutputPlaces Contained(OutputPlaces places) =>
+        places.FinalCheckout is { } checkout && !HeadlessTools.IsOutside(Path.GetRelativePath(checkout, places.FinalProject))
+            ? places
+            : places with
+            {
+                Checkout = null,
+                CheckoutTracksProject = false,
+                MainCheckout = null,
+                FinalCheckout = null,
+                FinalMainCheckout = null,
+            };
 
     /// <summary>The places a path may lie in, as given; a res:// path only in the project.</summary>
     internal IReadOnlyList<OutputPlace> Allowed(bool projectOnly) => PlacesOf(Project, Checkout, MainCheckout, projectOnly);

@@ -21,6 +21,13 @@ internal enum LinkKind
 /// <param name="Relative">Whether a symbolic link's target is relative to the link's own folder.</param>
 internal sealed record StoredLink(LinkKind Kind, string Target, bool Relative);
 
+/// <summary>A folder entry as it stands, read without following it.</summary>
+/// <param name="Exists">Whether anything is there.</param>
+/// <param name="IsFolder">Whether the entry is a folder (a folder link counts as one).</param>
+/// <param name="Tag">The entry's reparse tag; 0 when it is no reparse point.</param>
+/// <param name="Link">The symbolic link or mount point it stores; null for none and for any other reparse point.</param>
+internal sealed record LinkEntry(bool Exists, bool IsFolder, uint Tag, StoredLink? Link);
+
 /// <summary>
 /// What Windows says of a path: where a handle finally lies once every link is followed, how many names a file has, what
 /// link a folder entry stores, and whether a drive letter is a network drive.
@@ -50,6 +57,12 @@ internal static partial class FinalPath
     private const int NotSameDevice = 17;
 
     private const uint ReparsePointAttribute = 0x400;
+
+    /// <summary><c>FILE_ATTRIBUTE_DIRECTORY</c>.</summary>
+    private const uint DirectoryAttribute = 0x10;
+
+    /// <summary>The bit of a reparse tag that marks a name surrogate: an entry that names another one.</summary>
+    private const uint NameSurrogateBit = 0x20000000;
 
     /// <summary><c>IO_REPARSE_TAG_MOUNT_POINT</c>: a junction, or a volume mount point when its target is a volume.</summary>
     private const uint MountPointTag = 0xA0000003;
@@ -129,7 +142,14 @@ internal static partial class FinalPath
     /// there, when the entry is no reparse point, and for any other reparse point (cloud files, container layers).
     /// </summary>
     /// <exception cref="IOException">The entry or its reparse data cannot be read.</exception>
-    internal static StoredLink? ReadLink(string path)
+    internal static StoredLink? ReadLink(string path) => ReadEntry(path).Link;
+
+    /// <summary>
+    /// The entry at <paramref name="path"/> as it stands, opened without following it: whether it exists and is a folder, and,
+    /// for a reparse point, its tag and the link it stores, as <see cref="ReadLink"/> reads it.
+    /// </summary>
+    /// <exception cref="IOException">The entry or its reparse data cannot be read.</exception>
+    internal static LinkEntry ReadEntry(string path)
     {
         using SafeFileHandle handle = CreateFileW(
             ForWin32(path),
@@ -143,7 +163,7 @@ internal static partial class FinalPath
         if (handle.IsInvalid)
         {
             int error = Marshal.GetLastPInvokeError();
-            return error is FileNotFound or PathNotFound ? null : throw Failure(error);
+            return error is FileNotFound or PathNotFound ? new LinkEntry(false, false, 0, null) : throw Failure(error);
         }
 
         // FAT32 and exFAT have no reparse points and fail the FSCTL, so only an entry marked as one is asked for its data.
@@ -152,16 +172,25 @@ internal static partial class FinalPath
             throw Failure();
         }
 
+        bool folder = (information.Attributes & DirectoryAttribute) != 0;
         if ((information.Attributes & ReparsePointAttribute) == 0)
         {
-            return null;
+            return new LinkEntry(true, folder, 0, null);
         }
 
         byte[] data = new byte[MaximumReparseDataSize];
-        return DeviceIoControl(handle, GetReparsePoint, 0, 0, data, (uint)data.Length, out uint returned, 0)
-            ? ParseLink(data, (int)Math.Min(returned, (uint)data.Length))
-            : throw Failure();
+        if (!DeviceIoControl(handle, GetReparsePoint, 0, 0, data, (uint)data.Length, out uint returned, 0))
+        {
+            throw Failure();
+        }
+
+        int read = (int)Math.Min(returned, (uint)data.Length);
+        uint tag = read >= 4 ? BitConverter.ToUInt32(data, 0) : 0;
+        return new LinkEntry(true, folder, tag, ParseLink(data, read));
     }
+
+    /// <summary>Whether a reparse tag names another entry (a name surrogate), as a symbolic link or a junction does.</summary>
+    internal static bool IsNameSurrogate(uint tag) => (tag & NameSurrogateBit) != 0;
 
     /// <summary>
     /// A <c>REPARSE_DATA_BUFFER</c>'s link: the tag, then for a symbolic link the substitute name's offset and length, the
@@ -216,6 +245,36 @@ internal static partial class FinalPath
     /// <summary>Whether <paramref name="path"/> starts with a drive letter that names a network drive.</summary>
     internal static bool IsRemoteDrive(string path) =>
         path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':' && GetDriveTypeW($"{path[0]}:\\") == DriveRemote;
+
+    /// <summary>What <c>GetDriveTypeW</c> says of the drive root <paramref name="root"/>, such as <c>X:\</c>.</summary>
+    internal static uint DriveType(string root) => GetDriveTypeW(root);
+
+    /// <summary>
+    /// <paramref name="path"/> with each short (8.3) name in it replaced by its long name, as <c>GetLongPathNameW</c> gives it,
+    /// without the <c>\\?\</c> prefix; links on the way are passed as they stand.
+    /// </summary>
+    /// <exception cref="IOException">A part of the path cannot be found or read.</exception>
+    internal static string LongName(string path)
+    {
+        string win32 = ForWin32(path);
+        char[] buffer = new char[512];
+        while (true)
+        {
+            uint length = GetLongPathNameW(win32, buffer, (uint)buffer.Length);
+            if (length == 0)
+            {
+                throw Failure();
+            }
+
+            // A buffer too small gets back the size it needs, the terminating NUL counted.
+            if (length < buffer.Length)
+            {
+                return WithoutLongPathPrefix(new string(buffer, 0, (int)length));
+            }
+
+            buffer = new char[length];
+        }
+    }
 
     /// <summary>
     /// Renames <paramref name="source"/> to <paramref name="destination"/>, replacing its folder entry only with
@@ -308,6 +367,9 @@ internal static partial class FinalPath
 
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
     private static partial uint GetDriveTypeW(string root);
+
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial uint GetLongPathNameW(string shortPath, [Out] char[] longPath, uint length);
 
     [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]

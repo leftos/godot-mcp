@@ -297,7 +297,7 @@ internal static partial class OutputDestination
     /// Refuses a Windows device name in any of the path's own components, before the full path is taken: older Windows turns
     /// a full path ending in a device name into the device's own path.
     /// </summary>
-    private static void CheckDevices(string path, string relative)
+    internal static void CheckDevices(string path, string relative)
     {
         // Windows reserves a device name whatever extension follows it: nul.png opens the null device.
         string? device = relative.Split('/', '\\').Select(part => part.Split('.')[0].TrimEnd(' ')).FirstOrDefault(IsDevice);
@@ -362,7 +362,7 @@ internal static partial class OutputDestination
     /// The first name of <paramref name="scanned"/> after its root that ends in a space or a dot, with the index just past
     /// it; null for none. A . or .. part is a step, not a name.
     /// </summary>
-    private static (string Part, int End)? FirstDottedName(string scanned)
+    internal static (string Part, int End)? FirstDottedName(string scanned)
     {
         int start = Path.GetPathRoot(scanned.AsSpan()).Length;
         while (start <= scanned.Length)
@@ -381,6 +381,16 @@ internal static partial class OutputDestination
         return null;
     }
 
+    /// <summary>A link's target as stored, without the <c>\??\</c> prefix an absolute target carries.</summary>
+    internal static string StoredTarget(StoredLink link) =>
+        link.Target.StartsWith(@"\??\", StringComparison.Ordinal) ? link.Target[4..] : link.Target;
+
+    /// <summary>A fully qualified path on a drive letter, on Windows; a fully qualified path elsewhere.</summary>
+    internal static bool IsDrivePath(string target) =>
+        OperatingSystem.IsWindows()
+            ? target.Length >= 3 && char.IsAsciiLetter(target[0]) && target[1] == ':' && target[2] == '\\'
+            : Path.IsPathFullyQualified(target);
+
     private static bool IsDevice(string stem) => DeviceNames.Contains(stem, StringComparer.OrdinalIgnoreCase);
 
     private static void CheckLocalDrive(string path, string full)
@@ -392,7 +402,7 @@ internal static partial class OutputDestination
     }
 
     /// <summary>Whether a path or link target names a network or device path, or a mapped network drive; never opened.</summary>
-    private static bool IsNetwork(string target) =>
+    internal static bool IsNetwork(string target) =>
         target.StartsWith(@"\\", StringComparison.Ordinal)
         || target.StartsWith("//", StringComparison.Ordinal)
         || target.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase)
@@ -665,16 +675,6 @@ internal static partial class OutputDestination
                     $"path {path} leads through a link at {entry} to {link.Target}, which is not a path on a drive; such links are not followed"
                 );
         }
-
-        /// <summary>A link's target as stored, without the <c>\??\</c> prefix an absolute target carries.</summary>
-        private static string StoredTarget(StoredLink link) =>
-            link.Target.StartsWith(@"\??\", StringComparison.Ordinal) ? link.Target[4..] : link.Target;
-
-        /// <summary>A fully qualified path on a drive letter, on Windows; a fully qualified path elsewhere.</summary>
-        private static bool IsDrivePath(string target) =>
-            OperatingSystem.IsWindows()
-                ? target.Length >= 3 && char.IsAsciiLetter(target[0]) && target[1] == ':' && target[2] == '\\'
-                : Path.IsPathFullyQualified(target);
 
         /// <summary>
         /// Opens the deepest position the walk found and holds the final path Windows gives for it, with the missing

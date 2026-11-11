@@ -17,9 +17,10 @@ internal sealed record CropRect(
 );
 
 /// <summary>
-/// crop_screenshot: cuts a rectangle out of a PNG already saved in a project's .godot/godot-mcp/ folder or in the .tmp
-/// folder of its git checkout or main checkout, scaled up nearest-neighbour, with no session and no Godot; the crop is
-/// written beside its source.
+/// crop_screenshot: cuts a rectangle out of any PNG on a local drive, scaled up nearest-neighbour, with no session and no
+/// Godot, on Windows only. The crop is written beside an untracked source under the project's .godot/godot-mcp/ or in the
+/// .tmp folder of its checkout or main checkout, else into the checkout's .tmp folder (the project's
+/// .godot/godot-mcp/screenshots/ with no checkout); the source is never changed.
 /// </summary>
 [McpServerToolType]
 internal sealed class ScreenshotCropTool
@@ -35,35 +36,45 @@ internal sealed class ScreenshotCropTool
 
     [McpServerTool(Name = ToolName, ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
-        "Crops a PNG already captured under the project's .godot/godot-mcp/ (a take_screenshot capture, a frame "
-            + "capture_frames or wait_for saved there, or a run_scratches step shot) or in the .tmp folder of the project's git "
-            + "checkout or main checkout, with no session and no re-capture, and scales the crop up nearest-neighbour "
-            + "to read small detail. rect is in the PNG's own pixels from its top-left, not viewport coordinates. A rect partly "
-            + "outside the image is clipped to it; one wholly outside is refused, and so is a crop over 4096 px on an edge after "
-            + "scaling. Writes <stem>-crop-<n>.png beside the source, n the first free number from 1, and returns the cropped image "
-            + "and {path, width, height, rect}: rect is the source rectangle used after clipping."
+        "Crops a PNG on a local drive (a take_screenshot capture, a frame capture_frames or wait_for saved, a run_scratches "
+            + "step shot, a committed screenshot or any other PNG, tracked by git or not, inside the checkout or outside it; "
+            + "never a network path), with no session and no re-capture, and scales the crop up nearest-neighbour to read small "
+            + "detail. rect is in the PNG's own pixels from its top-left, not viewport coordinates. A rect partly outside the "
+            + "image is clipped to it; one wholly outside is refused, and so is a crop over 4096 px on an edge after scaling. "
+            + "Writes <stem>-crop-<n>.png, n the first free number from 1: beside the source when it is an untracked file under "
+            + "the project's .godot/godot-mcp/ or in the .tmp folder of the project's git checkout or main checkout, else into "
+            + "the checkout's .tmp folder (the project's .godot/godot-mcp/screenshots/ when the project is in no checkout); the "
+            + "source is never changed. Returns the cropped image and {path, width, height, rect}: rect is the source rectangle "
+            + "used after clipping. Windows only."
     )]
     public static IEnumerable<ContentBlock> CropScreenshot(
-        [Description("The folder that holds the project's project.godot.")] string projectPath,
+        [Description("The folder that holds the project's project.godot, on a local drive.")] string projectPath,
         [Description(
-            "The PNG to crop: absolute or relative to the project folder, anywhere under the project's .godot/godot-mcp/ "
-                + "or in the .tmp folder of its git checkout or main checkout; an 8-bit RGB or RGBA PNG as Godot saves it."
+            "The PNG to crop: absolute or relative to the project folder, on a local drive, never a network path; an 8-bit "
+                + "RGB or RGBA PNG as Godot saves it."
         )]
             string image,
         [Description("{x, y, width, height}: the rectangle to keep, in the PNG's own pixels.")] CropRect rect,
         [Description("How many times to repeat each pixel across and down, 1 to 8.")] int scale = 1
     )
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new McpException($"{ToolName} runs only on Windows, where its link and network checks are made");
+        }
+
         CheckArguments(rect, scale);
-        OutputPlaces places = Places(projectPath);
+        OutputPlaces places = Places(projectPath, FinalPath.DriveType);
         string source = Source(places, image);
-        (byte[] bytes, string final) = ReadChecked(places, source);
+        (byte[] bytes, string final) = ReadChecked(image, source);
         var original = PngImage.Decode(bytes, source);
         CropRect used = Clip(rect, original, source);
         CheckEdge(used, scale);
         PngImage cropped = original.Crop(used.X, used.Y, used.Width, used.Height, scale);
         byte[] png = cropped.Encode();
-        string path = Write(Path.GetDirectoryName(final)!, Path.GetFileNameWithoutExtension(final), png, File.Exists);
+        CropOrigin origin = CropSource.Place(places, final, Log.Ambient);
+        // The crop is named after the name the caller passed, never the one a link led to.
+        string path = Write(origin.Output, Path.GetFileNameWithoutExtension(source), png, Path.Exists);
         string text = JsonSerializer.Serialize(
             new
             {
@@ -95,10 +106,25 @@ internal sealed class ScreenshotCropTool
         }
     }
 
-    /// <summary>The project's folder and the places its outputs may lie in.</summary>
-    /// <exception cref="McpException">The folder holds no project.godot, or a folder has no final path Windows can give.</exception>
-    private static OutputPlaces Places(string projectPath)
+    /// <summary>
+    /// The project's folder and the places its outputs may lie in; the folder must be on a local drive, checked before git or
+    /// any file call touches it.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// The folder is not on a local drive, holds no project.godot, or a folder has no final path Windows can give.
+    /// </exception>
+    [SupportedOSPlatform("windows")]
+    internal static OutputPlaces Places(string projectPath, Func<string, uint> driveType)
     {
+        if (!string.IsNullOrWhiteSpace(projectPath))
+        {
+            string full = CropSource.LocalPath(CropSource.ProjectLabel, projectPath, null, driveType);
+            if (!CropSource.Walk(CropSource.ProjectLabel, projectPath, full, driveType).IsFolder)
+            {
+                throw new McpException($"projectPath {projectPath} is a file; pass the folder that holds the project's project.godot");
+            }
+        }
+
         string projectDir;
         try
         {
@@ -109,58 +135,41 @@ internal sealed class ScreenshotCropTool
             throw new McpException(e.Message, e);
         }
 
-        return OutputPlaces.Find(projectDir, Log.Ambient);
+        var places = OutputPlaces.Find(projectDir, Log.Ambient);
+        CropSource.CheckPlaces(projectPath, places, driveType);
+        return places;
     }
 
-    /// <summary>The image's full path, which must lie in one of the folders crop_screenshot reads and exist.</summary>
-    private static string Source(OutputPlaces places, string image)
-    {
-        if (string.IsNullOrWhiteSpace(image))
-        {
-            throw new McpException(
-                "image is empty; pass a PNG under the project's .godot/godot-mcp/ or in the .tmp folder of its checkout or main checkout"
-            );
-        }
-
-        string full = Path.GetFullPath(Path.Combine(places.Project, image));
-        if (!ScreenshotTarget.IsUnderCropFolders(places, full))
-        {
-            throw new McpException(
-                $"{full} is not under a folder {ToolName} reads ({Folders(places)}); it reads only the captures in the project's "
-                    + ".godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout"
-            );
-        }
-
-        if (Directory.Exists(full))
-        {
-            throw new McpException($"{full} is a folder, not a PNG");
-        }
-
-        return File.Exists(full) ? full : throw new McpException($"{full} does not exist");
-    }
-
-    /// <summary>The folders crop_screenshot reads, as a refusal names them.</summary>
-    private static string Folders(OutputPlaces places) => string.Join("; ", ScreenshotTarget.CropSourceFolders(places));
+    /// <summary>The image's full path, which must be a path on a local drive.</summary>
+    [SupportedOSPlatform("windows")]
+    private static string Source(OutputPlaces places, string image) =>
+        string.IsNullOrWhiteSpace(image)
+            ? throw new McpException("image is empty; pass the path of a PNG on a local drive, absolute or relative to the project folder")
+            : CropSource.LocalPath("image", image, places.Project, FinalPath.DriveType);
 
     /// <summary>
-    /// The source's bytes and the path its file finally lies at, read through the one handle that, on Windows, must reach
-    /// a one-name file in one of the folders crop_screenshot reads; elsewhere the path is the source as given.
+    /// The source's bytes and the path its file finally lies at: the path is walked from its drive's root with every link
+    /// checked before it is followed, the walked path is opened read-only, and the one handle must reach the walked path.
     /// </summary>
-    private static (byte[] Bytes, string Final) ReadChecked(OutputPlaces places, string source)
+    [SupportedOSPlatform("windows")]
+    private static (byte[] Bytes, string Final) ReadChecked(string image, string source)
     {
+        Walked walked = CropSource.Walk("image", image, source, FinalPath.DriveType);
+        if (walked.IsFolder)
+        {
+            throw new McpException($"{source} is a folder, not a PNG");
+        }
+
         try
         {
-            using FileStream stream = new(source, FileMode.Open, FileAccess.Read, FileShare.Read);
-            string final = OperatingSystem.IsWindows() ? CheckIsCropSource(stream, places, source) : source;
-            CheckNotTracked(places, final, source);
-            CheckLength(stream.Length, source);
-            using MemoryStream bytes = new();
-            stream.CopyTo(bytes);
-            return (bytes.ToArray(), final);
+            using FileStream stream = new(walked.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            string final = CropSource.CheckHandle(stream.SafeFileHandle, source, walked.Path);
+            return (CropSource.ReadPng(stream, source), final);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            throw new McpException($"reading {source} failed: {e.Message}", e);
+            // The runtime's message names the path it opened, which a link may have led to: only the error's own text is given.
+            throw new McpException($"reading {source} failed: {CropSource.Reason(e)}", e);
         }
     }
 
@@ -171,47 +180,6 @@ internal sealed class ScreenshotCropTool
         if (length > MaxSourceBytes)
         {
             throw new McpException($"{source} is {length} bytes, larger than any PNG Godot saves; {ToolName} reads at most {MaxSourceBytes} bytes");
-        }
-    }
-
-    /// <summary>
-    /// The source's final path, refusing a source that is no crop source by <see cref="ScreenshotTarget.IdentifyCropSource"/>:
-    /// a link leading out of the folders crop_screenshot reads, or a file with more than one name.
-    /// </summary>
-    [SupportedOSPlatform("windows")]
-    private static string CheckIsCropSource(FileStream stream, OutputPlaces places, string source)
-    {
-        CaptureIdentity identity = ScreenshotTarget.IdentifyCropSource(stream.SafeFileHandle, places);
-        if (!identity.UnderFolder)
-        {
-            throw new McpException(
-                $"{source} resolves to {identity.Final}, not under a folder {ToolName} reads ({Folders(places)}); it reads only "
-                    + "the captures in the project's .godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout"
-            );
-        }
-
-        return identity.Names == 1
-            ? identity.Final
-            : throw new McpException($"{source} has {identity.Names} names (hard links); {ToolName} reads only files with one name in those folders");
-    }
-
-    /// <summary>
-    /// Refuses a source git tracks, and a source git could not be asked about unless it lies under the .godot/godot-mcp
-    /// folder of a project that is in no checkout.
-    /// </summary>
-    private static void CheckNotTracked(OutputPlaces places, string final, string source)
-    {
-        bool? tracked = ScreenshotTarget.IsTracked(places, final, Log.Ambient);
-        if (tracked is null)
-        {
-            if (places.Checkout is not null || !ScreenshotTarget.IsUnderProjectCaptureFolders(places, final))
-            {
-                throw new McpException($"{source} could not be checked against git; {ToolName} reads only untracked captures");
-            }
-        }
-        else if (tracked.Value)
-        {
-            throw new McpException($"{source} is tracked by git; {ToolName} reads only untracked captures");
         }
     }
 
@@ -245,13 +213,139 @@ internal sealed class ScreenshotCropTool
     }
 
     /// <summary>
-    /// Writes the crop into <paramref name="folder"/> as the first &lt;stem&gt;-crop-&lt;n&gt;.png that
-    /// <paramref name="exists"/> says is free, never replacing a file: a name another writer takes before the move moves on
-    /// to the next free one, at most <see cref="MaxWriteTries"/> times.
+    /// Writes the crop into <paramref name="target"/>'s folder as the first &lt;stem&gt;-crop-&lt;n&gt;.png that
+    /// <paramref name="exists"/> says is free, never replacing an entry: the folder is walked from its root with no link
+    /// followed, the bytes go to a new temporary file that must lie in the walked folder, and that file is renamed to the
+    /// name, never over an existing entry; a name another writer takes before the rename moves on to the next free one, at
+    /// most <see cref="MaxWriteTries"/> times. A failed write deletes its temporary file.
     /// </summary>
     /// <returns>The file written.</returns>
-    /// <exception cref="McpException">The write failed, or every try found its name taken.</exception>
-    internal static string Write(string folder, string stem, byte[] png, Func<string, bool> exists)
+    /// <exception cref="McpException">
+    /// The folder passes a link, is gone and may not be made, changed during the write, the write failed, or every try found
+    /// its name taken.
+    /// </exception>
+    [SupportedOSPlatform("windows")]
+    internal static string Write(CropFolder target, string stem, byte[] png, Func<string, bool> exists)
+    {
+        PrepareFolder(target);
+        string temporary = WriteTemporary(target.Folder, png);
+        try
+        {
+            return MoveIntoPlace(temporary, target.Folder, stem, exists);
+        }
+        catch (McpException e)
+        {
+            throw WithoutTemporary(temporary, e);
+        }
+    }
+
+    /// <summary>
+    /// Walks from <paramref name="target"/>'s root down to its folder reading each entry as it stands: an entry that is a
+    /// link, or no folder, is refused; a missing one is made only when the folder may be made, below the entries that passed.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static void PrepareFolder(CropFolder target)
+    {
+        string current = target.Root;
+        foreach (string part in Path.GetRelativePath(target.Root, target.Folder).Split('\\').Where(part => part is not ("" or ".")))
+        {
+            current = Path.Combine(current, part);
+            LinkEntry entry = ReadWriteEntry(target, current);
+            if (entry.Link is not null || FinalPath.IsNameSurrogate(entry.Tag))
+            {
+                throw new McpException(
+                    $"the crop's folder {target.Folder} passes the link at {current}; {ToolName} writes only into folders it reaches without a link"
+                );
+            }
+
+            if (!entry.Exists)
+            {
+                MakeFolder(target, current);
+            }
+            else if (!entry.IsFolder)
+            {
+                throw new McpException($"the crop's folder {target.Folder} passes {current}, which is no folder");
+            }
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static LinkEntry ReadWriteEntry(CropFolder target, string entry)
+    {
+        try
+        {
+            return FinalPath.ReadEntry(entry);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new McpException($"writing the crop into {target.Folder} failed: {e.Message}", e);
+        }
+    }
+
+    /// <summary>Makes the missing folder <paramref name="folder"/>, refused when the crop's folder must already exist.</summary>
+    private static void MakeFolder(CropFolder target, string folder)
+    {
+        if (!target.MayCreate)
+        {
+            throw new McpException($"the crop's folder {target.Folder} no longer exists; {ToolName} does not make it again");
+        }
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new McpException($"writing the crop into {target.Folder} failed: {e.Message}", e);
+        }
+    }
+
+    /// <summary>
+    /// A new temporary file in <paramref name="folder"/> holding <paramref name="png"/>, whose final path must lie in the
+    /// folder's long form, so a folder swapped for a link after the walk holds nothing.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static string WriteTemporary(string folder, byte[] png)
+    {
+        string temporary = Path.Combine(folder, $".godot-mcp-{Path.GetRandomFileName()}.tmp");
+        FileStream stream;
+        try
+        {
+            stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new McpException($"writing the crop into {folder} failed: {e.Message}", e);
+        }
+
+        try
+        {
+            using (stream)
+            {
+                string reached = Path.GetDirectoryName(FinalPath.Of(stream.SafeFileHandle))!;
+                if (!string.Equals(reached, FinalPath.LongName(folder), StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new McpException($"the crop's folder {folder} changed while the crop was written; nothing was written");
+                }
+
+                stream.Write(png);
+            }
+
+            return temporary;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw WithoutTemporary(temporary, new McpException($"writing the crop into {folder} failed: {e.Message}", e));
+        }
+        catch (McpException e)
+        {
+            throw WithoutTemporary(temporary, e);
+        }
+    }
+
+    /// <summary>Renames the temporary file to the first free crop name, never over an existing entry.</summary>
+    [SupportedOSPlatform("windows")]
+    private static string MoveIntoPlace(string temporary, string folder, string stem, Func<string, bool> exists)
     {
         int n = 1;
         for (int attempt = 1; ; attempt++)
@@ -264,11 +358,11 @@ internal sealed class ScreenshotCropTool
             string destination = CropName(folder, stem, n);
             try
             {
-                using MemoryStream bytes = new(png);
-                OutputDestination.CopyReplacing(bytes, destination, overwrite: false);
-                return destination;
+                return FinalPath.Rename(temporary, destination, overwrite: false)
+                    ? destination
+                    : throw new IOException("the temporary file and the crop lie on different volumes");
             }
-            catch (IOException) when (attempt < MaxWriteTries && File.Exists(destination))
+            catch (IOException) when (attempt < MaxWriteTries && Path.Exists(destination))
             {
                 n++;
             }
@@ -276,6 +370,23 @@ internal sealed class ScreenshotCropTool
             {
                 throw new McpException($"writing the crop to {destination} failed: {e.Message}", e);
             }
+        }
+    }
+
+    /// <summary>
+    /// Deletes the temporary file a failed write leaves and gives back <paramref name="failure"/>, or, when the file cannot be
+    /// deleted, a refusal that names it too.
+    /// </summary>
+    private static McpException WithoutTemporary(string temporary, McpException failure)
+    {
+        try
+        {
+            File.Delete(temporary);
+            return failure;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new McpException($"{failure.Message}; its temporary file {temporary} could not be deleted: {e.Message}", failure);
         }
     }
 

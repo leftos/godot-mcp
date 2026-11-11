@@ -16,11 +16,13 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` and `--run-scratches` play up to 100 batches of a scene in one call.
 - A scratch `userData` game's throwaway `user://` lives under the system temp folder, outside the project, and the server deletes ones a killed server left behind.
 - A project keeps only its 20 newest `run_scratches` shot folders, as it already does its run logs.
+- `crop_screenshot` reads any PNG on a local drive, tracked or outside the checkout, and crops a tracked or outside one into the checkout's `.tmp`.
 
 ### Fixed
 
 - A real-time clip whose encoder stalled over its stop reports its full length: nvenc now encodes without B-frames, which cut a gap at the clip's end.
 - A `run_scratches` step fails on an error another thread or a timer logs while its `GetStepUntil` is read before the walk, instead of staying green.
+- `crop_screenshot` never follows a link to a network path or reads a network drive, which could hand the user's network credentials to that host.
 
 ## 0.39.0 - 2026-11-10
 

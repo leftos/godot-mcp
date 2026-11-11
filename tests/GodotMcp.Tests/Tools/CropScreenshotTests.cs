@@ -1,21 +1,29 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 
 namespace GodotMcp.Tests.Tools;
 
 /// <summary>
-/// crop_screenshot: a crop of a PNG under the project's .godot/godot-mcp/ or in the .tmp folder of its checkout or main
-/// checkout, with no game and no Godot.
+/// crop_screenshot: a crop of any PNG on a local drive, written beside an untracked source under the project's
+/// .godot/godot-mcp/ or in the .tmp folder of its checkout or main checkout, else into the checkout's .tmp, with no game and
+/// no Godot; the tool runs only on Windows.
 /// </summary>
+[SupportedOSPlatform("windows")]
 public sealed class CropScreenshotTests : IDisposable
 {
     private const int Width = 6;
     private const int Height = 4;
     private const string Relative = ".godot/godot-mcp/screenshots/shot.png";
+
+    /// <summary><c>ERROR_SHARING_VIOLATION</c>.</summary>
+    private const int SharingViolation = 32;
     private readonly TempDirectory _temp = new();
     private readonly string _project;
     private readonly string _folder;
@@ -103,17 +111,17 @@ public sealed class CropScreenshotTests : IDisposable
     }
 
     [Fact]
-    public void AnImageInAnotherProjectFolderIsRefused()
+    public void AnImageElsewhereInTheProjectIsCroppedIntoTheScreenshotsFolder()
     {
         string outside = Path.Combine(_project, "shot.png");
         File.Copy(_shot, outside);
 
-        McpException refused = Refused("shot.png", new CropRect(0, 0, 1, 1));
-        McpException refusedAbsolute = Refused(outside, new CropRect(0, 0, 1, 1));
+        (JsonElement relative, _) = Crop("shot.png", new CropRect(0, 0, 1, 1));
+        (JsonElement absolute, _) = Crop(outside, new CropRect(0, 0, 1, 1));
 
-        string expected = NotUnder(_project, outside);
-        Assert.Equal(expected, refused.Message);
-        Assert.Equal(expected, refusedAbsolute.Message);
+        Assert.Equal(Path.Combine(_folder, "shot-crop-1.png"), relative.GetProperty("path").GetString());
+        Assert.Equal(Path.Combine(_folder, "shot-crop-2.png"), absolute.GetProperty("path").GetString());
+        Assert.Equal(["project.godot", "shot.png"], Directory.GetFiles(_project).Select(Path.GetFileName).Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -127,39 +135,57 @@ public sealed class CropScreenshotTests : IDisposable
     }
 
     [Fact]
-    public void AnImageThatIsASymbolicLinkLeadingOutIsRefused()
+    public void AnImageThatIsASymbolicLinkLeadingOutIsCroppedIntoTheScreenshotsFolder()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "the link check reads Windows' final path of the open file");
-        string secret = Path.Combine(Directory.CreateDirectory(_temp.Combine("outside")).FullName, "secret.png");
+        string outside = Directory.CreateDirectory(_temp.Combine("outside")).FullName;
+        string secret = Path.Combine(outside, "secret.png");
         File.Copy(_shot, secret);
         string link = Path.Combine(_folder, "link.png");
-        try
-        {
-            File.CreateSymbolicLink(link, secret);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            Assert.Skip($"creating a file symbolic link needs a privilege this run lacks: {e.Message}");
-        }
+        SymbolicLinkOrSkip(link, secret, folder: false);
 
-        McpException refused = Refused(link, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = Crop(link, new CropRect(0, 0, 1, 1));
 
-        Assert.StartsWith($"{link} resolves to ", refused.Message, StringComparison.Ordinal);
-        Assert.False(File.Exists(Path.Combine(_folder, "link-crop-1.png")));
+        Assert.Equal(Path.Combine(_folder, "link-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["secret.png"], Directory.GetFiles(outside).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void AnImageWithASecondNameIsRefused()
+    public void AFileHeldOpenBehindALinkIsRefusedWithoutNamingWhereTheLinkLed()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "mklink /H is a Windows command");
-        string secret = Path.Combine(Directory.CreateDirectory(_temp.Combine("outside")).FullName, "secret.png");
+        string outside = Directory.CreateDirectory(_temp.Combine("outside")).FullName;
+        string secret = Path.Combine(outside, "secret.png");
         File.Copy(_shot, secret);
-        string link = Path.Combine(_folder, "hard.png");
+        string junction = Path.Combine(_folder, "linked");
+        ScreenshotPathValidationTests.MakeJunction(junction, outside);
+        string image = Path.Combine(junction, "secret.png");
+
+        McpException refused;
+        using (new FileStream(secret, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            refused = Refused(image, new CropRect(0, 0, 1, 1));
+        }
+
+        Assert.Equal($"reading {image} failed: {new Win32Exception(SharingViolation).Message}", refused.Message);
+        Assert.DoesNotContain(outside, refused.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AnImageWithASecondNameIsCroppedAndItsOtherFolderGainsNothing()
+    {
+        using TempDirectory temp = new();
+        using TempDirectory other = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string secret = Path.Combine(other.Path, "secret.png");
+        File.Copy(_shot, secret);
+        string link = Path.Combine(Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName, "hard.png");
         ScreenshotPathValidationTests.MakeHardLink(link, secret);
 
-        McpException refused = Refused(link, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, link, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal($"{link} has 2 names (hard links); crop_screenshot reads only files with one name in those folders", refused.Message);
+        Assert.Equal(Path.Combine(checkout, ".tmp"), Path.GetDirectoryName(result.GetProperty("path").GetString()));
+        Assert.Equal(["secret.png"], Directory.GetFiles(other.Path).Select(Path.GetFileName));
+        Assert.All(UntrackedOrChanged(checkout), line => Assert.StartsWith("?? .tmp/", line, StringComparison.Ordinal));
     }
 
     [Theory]
@@ -228,40 +254,41 @@ public sealed class CropScreenshotTests : IDisposable
     }
 
     [Fact]
-    public void ARelativeImageThatClimbsOutOfTheFolderIsRefused()
+    public void ARelativeImageThatClimbsOutOfTheFolderIsCroppedIntoTheScreenshotsFolder()
     {
         string above = Path.Combine(_project, ".godot", "shot.png");
         File.Copy(_shot, above);
 
-        McpException refused = Refused(".godot/godot-mcp/../shot.png", new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = Crop(".godot/godot-mcp/../shot.png", new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(_project, above), refused.Message);
+        Assert.Equal(Path.Combine(_folder, "shot-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["shot.png"], Directory.GetFiles(Path.Combine(_project, ".godot")).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void AClimbFromTheCaptureFolderToTheProjectIsRefused()
+    public void AClimbFromTheCaptureFolderToANonPngIsRefusedAsNoPng()
     {
         string projectGodot = Path.Combine(_project, "project.godot");
 
         McpException refused = Refused(".godot/godot-mcp/../../project.godot", new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(_project, projectGodot), refused.Message);
+        Assert.Equal(NotPng(projectGodot), refused.Message);
     }
 
     [Fact]
-    public void ADotDotSegmentThatLeavesTheFoldersIsRefused()
+    public void ADotDotSegmentIsCroppedByTheFileItReaches()
     {
         string source = Directory.CreateDirectory(Path.Combine(_project, "src")).FullName;
         string image = Path.Combine(source, "x.png");
         File.Copy(_shot, image);
         string climbing = Path.Combine(_project, ".tmp", "..", "src", "x.png");
 
-        McpException relative = Refused(".tmp/../src/x.png", new CropRect(0, 0, 1, 1));
-        McpException absolute = Refused(climbing, new CropRect(0, 0, 1, 1));
+        (JsonElement relative, _) = Crop(".tmp/../src/x.png", new CropRect(0, 0, 1, 1));
+        (JsonElement absolute, _) = Crop(climbing, new CropRect(0, 0, 1, 1));
 
-        string expected = NotUnder(_project, image);
-        Assert.Equal(expected, relative.Message);
-        Assert.Equal(expected, absolute.Message);
+        Assert.Equal(Path.Combine(_folder, "x-crop-1.png"), relative.GetProperty("path").GetString());
+        Assert.Equal(Path.Combine(_folder, "x-crop-2.png"), absolute.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(source).Select(Path.GetFileName));
     }
 
     [Fact]
@@ -293,10 +320,90 @@ public sealed class CropScreenshotTests : IDisposable
         string taken = Path.Combine(_folder, "shot-crop-1.png");
         File.WriteAllBytes(taken, [1, 2]);
 
-        string written = ScreenshotCropTool.Write(_folder, "shot", Source().Encode(), path => path != taken && File.Exists(path));
+        string written = ScreenshotCropTool.Write(
+            new CropFolder(_project, _folder, MayCreate: false),
+            "shot",
+            Source().Encode(),
+            path => path != taken && File.Exists(path)
+        );
 
         Assert.Equal(Path.Combine(_folder, "shot-crop-2.png"), written);
         Assert.Equal([1, 2], File.ReadAllBytes(taken));
+    }
+
+    [Fact]
+    public void ABesideFolderThatIsAJunctionAtWriteTimeIsRefused()
+    {
+        string outside = Directory.CreateDirectory(_temp.Combine("outside")).FullName;
+        string junction = Path.Combine(_folder, "linked");
+        ScreenshotPathValidationTests.MakeJunction(junction, outside);
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            ScreenshotCropTool.Write(new CropFolder(_project, junction, MayCreate: false), "shot", Source().Encode(), Path.Exists)
+        );
+
+        Assert.Equal(
+            $"the crop's folder {junction} passes the link at {junction}; crop_screenshot writes only into folders it reaches without a link",
+            refused.Message
+        );
+        Assert.Empty(Directory.GetFileSystemEntries(outside));
+        Assert.Equal(["shot.png"], Directory.GetFiles(_folder).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void AFolderNamedLikeTheNextCropIsSkipped()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "shot-crop-1.png"));
+
+        (JsonElement result, _) = Crop(Relative, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(Path.Combine(_folder, "shot-crop-2.png"), result.GetProperty("path").GetString());
+        Assert.True(File.Exists(Path.Combine(_folder, "shot-crop-2.png")));
+    }
+
+    [Fact]
+    public void ASaveScreenshotPathInAForgedWorktreeIsRefused()
+    {
+        using TempDirectory temp = new();
+        using TempDirectory elsewhere = new();
+        string project = ForgedWorktree(temp, elsewhere);
+        string shot = Path.Combine(elsewhere.Path, ".tmp", "x.png");
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, shot, false, NullLogger.Instance));
+
+        Assert.Equal($"path {shot} resolves outside the project {project}; save inside the project", refused.Message);
+    }
+
+    [Fact]
+    public void ACaptureFramesPathInAForgedWorktreeIsRefused()
+    {
+        using TempDirectory temp = new();
+        using TempDirectory elsewhere = new();
+        string project = ForgedWorktree(temp, elsewhere);
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            FrameTargets.Resolve(OutputPlaces.Find(project, NullLogger.Instance), ".tmp/anim.png", 3, overwrite: false)
+        );
+
+        Assert.Equal(
+            $".tmp/anim.png is refused: capture_frames writes only into a git checkout's .tmp folder, and {project} is in no git checkout",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void ARecordingDestinationInAForgedWorktreeIsRefused()
+    {
+        using TempDirectory temp = new();
+        using TempDirectory elsewhere = new();
+        string project = ForgedWorktree(temp, elsewhere);
+        string clip = Path.Combine(elsewhere.Path, ".tmp", "a.mp4");
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            OutputDestination.Resolve(OutputPlaces.Find(project, NullLogger.Instance), clip, ".mp4", false)
+        );
+
+        Assert.Equal($"path {clip} resolves outside the project {project}; save inside the project", refused.Message);
     }
 
     [Fact]
@@ -328,7 +435,7 @@ public sealed class CropScreenshotTests : IDisposable
 
         Crop(Path.Combine(junction, "link.png"), new CropRect(0, 0, 1, 1));
 
-        Assert.True(File.Exists(Path.Combine(_folder, "shot-crop-1.png")));
+        Assert.True(File.Exists(Path.Combine(_folder, "link-crop-1.png")));
         Assert.Equal(["link.png"], Directory.GetFiles(outside).Select(Path.GetFileName));
     }
 
@@ -377,20 +484,39 @@ public sealed class CropScreenshotTests : IDisposable
     }
 
     [Fact]
-    public void AnImageInTheProjectsTrackedTreeIsRefused()
+    public void ATrackedScreenshotIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
-        string checkout = Repository(temp, "game/project.godot", "game/art.png");
-        string project = Path.Combine(checkout, "game");
+        string project = Game(temp.Path, "game");
         string image = Path.Combine(project, "art.png");
+        File.WriteAllBytes(image, Source().Encode());
+        Git.InitAndCommitAll(temp.Path);
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(project, image, checkout), refused.Message);
+        Assert.Equal(Path.Combine(temp.Path, ".tmp", "art-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["?? .tmp/art-crop-1.png"], UntrackedOrChanged(temp.Path));
     }
 
     [Fact]
-    public void AnImageInDotGitIsRefused()
+    public void APngOutsideTheCheckoutIsCroppedIntoTheCheckoutsTmp()
+    {
+        using TempDirectory temp = new();
+        using TempDirectory scratchpad = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string image = Path.Combine(scratchpad.Path, "x.png");
+        File.WriteAllBytes(image, Source().Encode());
+
+        (JsonElement result, PngImage cropped) = CropIn(project, image, new CropRect(1, 2, 3, 2));
+
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(Expected(1, 2, 3, 2, 1), cropped.Pixels);
+        Assert.Equal(["x.png"], Directory.GetFiles(scratchpad.Path).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void AnImageInDotGitIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
@@ -399,13 +525,14 @@ public sealed class CropScreenshotTests : IDisposable
         string image = Path.Combine(git, "x.png");
         File.WriteAllBytes(image, Source().Encode());
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(project, image, checkout), refused.Message);
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(git).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void AWorktreeInsideTheMainCheckoutsTmpKeepsItsTrackedFilesOutOfReach()
+    public void AnImageInAWorktreeInsideTheMainCheckoutsTmpIsCroppedIntoItsOwnTmp()
     {
         using TempDirectory main = new();
         Git.InitAndCommitAll(main.Path);
@@ -415,43 +542,46 @@ public sealed class CropScreenshotTests : IDisposable
         string image = Path.Combine(project, "art.png");
         File.WriteAllBytes(image, Source().Encode());
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(project, image, worktree, main.Path), refused.Message);
+        Assert.Equal(Path.Combine(worktree, ".tmp", "art-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["art.png", "project.godot"], Directory.GetFiles(project).Select(Path.GetFileName).Order(StringComparer.Ordinal));
     }
 
     [Fact]
-    public void AForceTrackedImageInTmpIsRefused()
+    public void AForceTrackedImageInTmpIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
         string project = Path.Combine(checkout, "game");
-        string image = Path.Combine(Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName, "x.png");
+        string image = Path.Combine(Directory.CreateDirectory(Path.Combine(checkout, ".tmp", "sub")).FullName, "x.png");
         File.WriteAllBytes(image, Source().Encode());
-        Git.Run(checkout, "add", "--force", ".tmp/x.png");
+        Git.Run(checkout, "add", "--force", ".tmp/sub/x.png");
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(Tracked(image), refused.Message);
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
     }
 
     [Fact]
-    public void ATrackedImageInTheGodotMcpFolderIsRefused()
+    public void ATrackedImageInTheGodotMcpFolderIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
         string project = Path.Combine(checkout, "game");
-        string image = Path.Combine(Directory.CreateDirectory(Path.Combine(project, ".godot", "godot-mcp")).FullName, "x.png");
+        string folder = Directory.CreateDirectory(Path.Combine(project, ".godot", "godot-mcp")).FullName;
+        string image = Path.Combine(folder, "x.png");
         File.WriteAllBytes(image, Source().Encode());
         Git.Run(checkout, "add", "--force", "game/.godot/godot-mcp/x.png");
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(Tracked(image), refused.Message);
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(folder).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void ATrackedImageOfACheckoutNestedInTmpIsRefused()
+    public void ATrackedImageOfACheckoutNestedInTmpIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory main = new();
         string project = Game(main.Path, "game");
@@ -461,29 +591,35 @@ public sealed class CropScreenshotTests : IDisposable
         Git.Run(main.Path, "worktree", "add", "--quiet", Path.Combine(main.Path, ".tmp", "wt"));
         string image = Path.Combine(main.Path, ".tmp", "wt", "game", "art.png");
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(Tracked(image), refused.Message);
+        Assert.Equal(Path.Combine(main.Path, ".tmp", "art-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(
+            ["art.png", "project.godot"],
+            Directory.GetFiles(Path.GetDirectoryName(image)!).Select(Path.GetFileName).Order(StringComparer.Ordinal)
+        );
     }
 
     [Fact]
-    public void ACheckoutTheProjectIsNotUnderIsNoRoot()
+    public void AnImageUnderACheckoutTheProjectIsNotUnderIsCroppedIntoTheScreenshotsFolder()
     {
         using TempDirectory temp = new();
         using TempDirectory elsewhere = new();
         string checkout = Repository(temp, "game/project.godot");
         string project = Path.Combine(checkout, "game");
         Git.Run(checkout, "config", "core.worktree", elsewhere.Path);
-        string image = Path.Combine(Directory.CreateDirectory(Path.Combine(elsewhere.Path, ".tmp")).FullName, "x.png");
+        string tmp = Directory.CreateDirectory(Path.Combine(elsewhere.Path, ".tmp")).FullName;
+        string image = Path.Combine(tmp, "x.png");
         File.WriteAllBytes(image, Source().Encode());
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(project, image), refused.Message);
+        Assert.Equal(Path.Combine(ScreenshotTarget.CaptureFolder(project), "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(tmp).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void ACaseOnlyRenamedTrackedImageIsRefused()
+    public void ACaseOnlyRenamedTrackedImageIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
@@ -496,13 +632,14 @@ public sealed class CropScreenshotTests : IDisposable
         string renamed = Path.Combine(shots, "art.png");
         File.Move(Path.Combine(shots, "moved.png"), renamed);
 
-        McpException refused = RefusedIn(project, renamed, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, renamed, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(Tracked(renamed), refused.Message);
+        Assert.Equal(Path.Combine(checkout, ".tmp", "art-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["art.png"], Directory.GetFiles(shots).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void AnImageTrackedByTheOuterCheckoutUnderANestedRepoIsRefused()
+    public void AnImageTrackedByTheOuterCheckoutUnderANestedRepoIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
@@ -513,13 +650,37 @@ public sealed class CropScreenshotTests : IDisposable
         Git.Run(checkout, "add", "--force", ".tmp/sub/x.png");
         Git.Run(sub, "init", "--quiet", "--initial-branch=main");
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(Tracked(image), refused.Message);
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(sub).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void AnImageGitCannotCheckInsideACheckoutIsRefused()
+    public void AnImageBelowAGitFileInsideACheckoutIsCroppedIntoTheCheckoutsTmpWithoutAskingThatGit()
+    {
+        using TempDirectory temp = new();
+        using TempDirectory other = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string elsewhere = Repository(other, "a.txt");
+        string sub = Directory.CreateDirectory(Path.Combine(checkout, ".tmp", "sub")).FullName;
+        string image = Path.Combine(sub, "x.png");
+        File.WriteAllBytes(image, Source().Encode());
+
+        // A git file names the repository git would use in sub; that repository, a local one, would answer that x.png is
+        // untracked and let the crop go beside it, so a crop into the checkout's .tmp shows it was never asked. A git file
+        // naming a network path would make that git reach the network.
+        File.WriteAllText(Path.Combine(sub, ".git"), $"gitdir: {Path.Combine(elsewhere, ".git").Replace('\\', '/')}\n");
+
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal([".git", "x.png"], Directory.GetFiles(sub).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AnUntrackedImageInANestedRepoInsideTheCheckoutsTmpIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
@@ -527,47 +688,42 @@ public sealed class CropScreenshotTests : IDisposable
         string sub = Directory.CreateDirectory(Path.Combine(checkout, ".tmp", "sub")).FullName;
         string image = Path.Combine(sub, "x.png");
         File.WriteAllBytes(image, Source().Encode());
-        File.WriteAllText(Path.Combine(sub, ".git"), "this is not a gitfile\n");
+        Git.Run(sub, "init", "--quiet", "--initial-branch=main");
 
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(Unchecked(image), refused.Message);
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(sub).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void ATrackedImageWithGlobCharactersInItsNameIsRefused()
+    public void ATrackedImageWithGlobCharactersInItsNameIsCroppedIntoTheCheckoutsTmp()
     {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
         string project = Path.Combine(checkout, "game");
-        string files = Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName;
+        string files = Directory.CreateDirectory(Path.Combine(checkout, ".tmp", "sub")).FullName;
         string tracked = Path.Combine(files, "x[1].png");
         File.WriteAllBytes(tracked, Source().Encode());
-        Git.Run(checkout, "--literal-pathspecs", "add", "--force", ".tmp/x[1].png");
+        Git.Run(checkout, "--literal-pathspecs", "add", "--force", ".tmp/sub/x[1].png");
         string plain = Path.Combine(files, "x1.png");
         File.WriteAllBytes(plain, Source().Encode());
 
-        McpException refused = RefusedIn(project, tracked, new CropRect(0, 0, 1, 1));
-        (JsonElement read, _) = CropIn(project, plain, new CropRect(0, 0, 1, 1));
+        (JsonElement redirected, _) = CropIn(project, tracked, new CropRect(0, 0, 1, 1));
+        (JsonElement beside, _) = CropIn(project, plain, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(Tracked(tracked), refused.Message);
-        Assert.Equal(Path.Combine(files, "x1-crop-1.png"), read.GetProperty("path").GetString());
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x[1]-crop-1.png"), redirected.GetProperty("path").GetString());
+        Assert.Equal(Path.Combine(files, "x1-crop-1.png"), beside.GetProperty("path").GetString());
     }
 
     [Fact]
     public void ACaseDifferingSpellingFollowsTheVolume()
     {
         string upper = Path.Combine(_project.ToUpperInvariant(), ".GODOT", "GODOT-MCP", "SCREENSHOTS", "shot.png");
-        if (OperatingSystem.IsWindows())
-        {
-            (JsonElement result, _) = Crop(upper, new CropRect(0, 0, 1, 1));
-            Assert.Equal(Path.Combine(_folder, "shot-crop-1.png"), result.GetProperty("path").GetString());
-            return;
-        }
 
-        McpException refused = Refused(upper, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = Crop(upper, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(_project, upper), refused.Message);
+        Assert.Equal(Path.Combine(_folder, "shot-crop-1.png"), result.GetProperty("path").GetString());
     }
 
     [Fact]
@@ -583,9 +739,8 @@ public sealed class CropScreenshotTests : IDisposable
     }
 
     [Fact]
-    public void AShortNameSpellingPointingOutOfTheFoldersIsRefused()
+    public void AShortNameSpellingPointingOutOfTheFoldersIsReadAndCroppedIntoTheCheckoutsTmp()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "8.3 names are Windows'");
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
         string project = Path.Combine(checkout, "game");
@@ -598,67 +753,394 @@ public sealed class CropScreenshotTests : IDisposable
         Assert.SkipUnless(!HasNoShortName(shortLink, junction), $"the volume holding {junction} makes no short (8.3) names");
 
         string image = Path.Combine(shortLink, "x.png");
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(ResolvedOutside(project, Path.GetFullPath(image), Path.Combine(outside, "x.png"), checkout), refused.Message);
+        Assert.Equal(Path.Combine(files, "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(outside).Select(Path.GetFileName));
     }
 
     [Fact]
     public void AnExtendedLengthSpellingIsRefused()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), @"\\?\ paths are Windows'");
         string extended = @"\\?\" + _shot;
-        string full = Path.GetFullPath(Path.Combine(_project, extended));
 
         McpException refused = Refused(extended, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(_project, full), refused.Message);
+        Assert.Equal(NotLocal("image", extended), refused.Message);
     }
 
     [Fact]
     public void AnExtendedLengthUncSpellingIsRefused()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), @"\\?\UNC paths are Windows'");
         string extended = @"\\?\UNC\server\share\x.png";
-        string full = Path.GetFullPath(Path.Combine(_project, extended));
 
         McpException refused = Refused(extended, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(NotUnder(_project, full), refused.Message);
+        Assert.Equal(NotLocal("image", extended), refused.Message);
+    }
+
+    [Theory]
+    [InlineData(@"\\192.0.2.1\s\x.png")]
+    [InlineData("//192.0.2.1/s/x.png")]
+    [InlineData(@"\\?\UNC\192.0.2.1\s\x.png")]
+    [InlineData(@"\\.\UNC\192.0.2.1\s\x.png")]
+    [InlineData(@"\??\UNC\192.0.2.1\s\x.png")]
+    [InlineData(@"\\?\{drive}\x.png")]
+    [InlineData(@"\??\{drive}\x.png")]
+    [InlineData(@"\\.\{drive}\x.png")]
+    [InlineData(@"\\?\GLOBALROOT\Device\Mup\192.0.2.1\s\x.png")]
+    [InlineData(@"\\localhost\c$\x.png")]
+    [InlineData(@"\\192.0.2.1@SSL\DavWWWRoot\x.png")]
+    [InlineData(@"\\.\pipe\x.png")]
+    public void ANonDrivePathIsRefusedBeforeAnyIo(string spelling)
+    {
+        string image = spelling.Replace("{drive}", Drive(), StringComparison.Ordinal);
+
+        McpException refused = Refused(image, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(NotLocal("image", image), refused.Message);
+    }
+
+    [Theory]
+    [InlineData("{drive}a.png")]
+    [InlineData(@"\a.png")]
+    public void ADriveRelativeOrRootRelativePathIsRefused(string spelling)
+    {
+        string image = spelling.Replace("{drive}", Drive(), StringComparison.Ordinal);
+
+        McpException refused = Refused(image, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(
+            $"image {image} is relative to a drive's current folder or the current drive's root; give a full path or one relative "
+                + "to the project folder",
+            refused.Message
+        );
     }
 
     [Fact]
-    public void ATmpJunctionLeadingOutsideIsRefused()
+    public void AnAlternateStreamIsRefused()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "mklink /J and the final-path check are Windows'");
+        McpException refused = Refused("shot.png:x.png", new CropRect(0, 0, 1, 1));
+
+        Assert.Equal("image shot.png:x.png must not contain ':' after the drive (an NTFS alternate stream)", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("CON.png", "CON")]
+    [InlineData("NUL.png", "NUL")]
+    [InlineData("COM1.png", "COM1")]
+    public void ADeviceNameIsRefused(string image, string device)
+    {
+        McpException refused = Refused(image, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal($"path {image} names the Windows device {device}; pick another file name", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(CropSource.DriveRemote, @"image Z:\x.png is on the network drive Z:; crop_screenshot reads only from a local drive")]
+    [InlineData(CropSource.DriveNoRootDir, @"image Z:\x.png is on the drive Z:, which does not exist")]
+    public void AMappedNetworkDriveOrAMissingDriveIsRefusedBeforeAnyIo(uint type, string message)
+    {
+        List<string> asked = [];
+
+        McpException refused = Assert.Throws<McpException>(() => CropSource.LocalPath("image", @"Z:\x.png", null, Faked("Z:", type, asked)));
+
+        Assert.Equal(message, refused.Message);
+        Assert.Equal([@"Z:\"], asked);
+    }
+
+    [Theory]
+    [InlineData(CropSource.DriveRemote)]
+    [InlineData(CropSource.DriveNoRootDir)]
+    public void ALinkToANetworkDriveOrAMissingDriveIsNotFollowed(uint type)
+    {
+        // The link leads to a real file on the test's own drive, which the faked answer calls a network drive or none: only the
+        // check on the link's target in the walk can refuse it, since the walk asks no drive type for its own start.
+        string link = Path.Combine(_folder, "q.png");
+        SymbolicLinkOrSkip(link, _shot, folder: false);
+        List<string> asked = [];
+        try
+        {
+            McpException refused = Assert.Throws<McpException>(() => CropSource.Walk("image", link, link, Faked(Drive(), type, asked)));
+
+            Assert.Equal(type == CropSource.DriveRemote ? LeadsToNetwork(link, link) : $"{link} does not exist", refused.Message);
+            Assert.Contains(Drive() + @"\", asked);
+        }
+        finally
+        {
+            // The link is removed so nothing after the test can open through it.
+            File.Delete(link);
+        }
+    }
+
+    [Fact]
+    public void AHandleThatReachedAnotherFileThanTheWalkIsRefused()
+    {
+        string other = Path.Combine(_folder, "other.png");
+        File.Copy(_shot, other);
+        using FileStream stream = new(_shot, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        McpException refused = Assert.Throws<McpException>(() => CropSource.CheckHandle(stream.SafeFileHandle, other, other));
+
+        Assert.Equal($"{other} changed while it was read; crop_screenshot read nothing from it", refused.Message);
+    }
+
+    [Fact]
+    public void AWriteThatFindsEveryNameTakenIsRefusedAndLeavesNoTemporaryFile()
+    {
+        for (int n = 1; n <= 100; n++)
+        {
+            File.WriteAllBytes(Path.Combine(_folder, $"shot-crop-{n}.png"), [1]);
+        }
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            ScreenshotCropTool.Write(new CropFolder(_project, _folder, MayCreate: false), "shot", Source().Encode(), _ => false)
+        );
+
+        Assert.StartsWith($"writing the crop to {Path.Combine(_folder, "shot-crop-100.png")} failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Empty(Directory.GetFiles(_folder, ".godot-mcp-*.tmp"));
+    }
+
+    [Fact]
+    public void AProjectPathThatIsALinkToANetworkDriveIsRefusedBeforeAnyProbe()
+    {
+        string drive = FreeDrive();
+        string link = _temp.Combine("gamelink");
+        SymbolicLinkOrSkip(link, drive + @"\game", folder: true);
+        List<string> asked = [];
+        try
+        {
+            McpException refused = Assert.Throws<McpException>(() => ScreenshotCropTool.Places(link, Faked(drive, CropSource.DriveRemote, asked)));
+
+            Assert.Equal(
+                $"projectPath {link} leads through the link at {link} to a network path; crop_screenshot does not follow links to network paths",
+                refused.Message
+            );
+            Assert.Contains(drive + @"\", asked);
+        }
+        finally
+        {
+            Directory.Delete(link);
+        }
+    }
+
+    [Fact]
+    public void AProjectPathThatIsAJunctionToALocalFolderIsCropped()
+    {
+        string link = _temp.Combine("gamelink");
+        ScreenshotPathValidationTests.MakeJunction(link, _project);
+
+        (JsonElement result, _) = CropIn(link, Relative, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(Path.Combine(_folder, "shot-crop-1.png"), result.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public void APngSavedAsAFileNamedTmpIsNeverCroppedBesideIt()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string tmp = Path.Combine(checkout, ".tmp");
+        File.WriteAllBytes(tmp, Source().Encode());
+
+        McpException refused = RefusedIn(project, tmp, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal($"the crop's folder {tmp} passes {tmp}, which is no folder", refused.Message);
+        Assert.False(File.Exists(Path.Combine(checkout, "-crop-1.png")));
+    }
+
+    [Fact]
+    public void ASymbolicLinkToANetworkPathIsRefusedBeforeItIsOpened()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string link = Path.Combine(Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName, "x.png");
+        SymbolicLinkOrSkip(link, @"\\192.0.2.1\s\x.png", folder: false);
+        try
+        {
+            McpException refused = RefusedIn(project, link, new CropRect(0, 0, 1, 1));
+
+            Assert.Equal(LeadsToNetwork(link, link), refused.Message);
+            Assert.DoesNotContain("192.0.2.1", refused.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            // The link is removed so nothing after the test can open through it.
+            File.Delete(link);
+        }
+    }
+
+    [Fact]
+    public void AFolderLinkToANetworkPathIsRefusedBeforeAnyProbe()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string link = Path.Combine(Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName, "dirlink");
+        SymbolicLinkOrSkip(link, @"\\192.0.2.1\s", folder: true);
+        string image = Path.Combine(link, "x.png");
+        try
+        {
+            McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+
+            Assert.Equal(LeadsToNetwork(image, link), refused.Message);
+            Assert.DoesNotContain("192.0.2.1", refused.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            // The temp folder's cleanup lists every file below it to clear its attributes, and that listing would enter the
+            // link to the network path (the recursive delete after it would not), so the link goes first.
+            Directory.Delete(link);
+        }
+    }
+
+    [Fact]
+    public void ALinkChainLongerThan63IsRefused()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string files = Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName;
+        string first = Path.Combine(files, "a.png");
+        string second = Path.Combine(files, "b.png");
+        SymbolicLinkOrSkip(first, second, folder: false);
+        SymbolicLinkOrSkip(second, first, folder: false);
+
+        McpException refused = RefusedIn(project, first, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal($"image {first} leads through more than 63 links; crop_screenshot follows at most 63", refused.Message);
+    }
+
+    [Fact]
+    public void ANonPngIsRefusedBeforeItIsReadWhole()
+    {
+        string big = Path.Combine(_folder, "big.png");
+        using (FileStream stream = new(big, FileMode.CreateNew, FileAccess.Write))
+        {
+            stream.SetLength(ScreenshotCropTool.MaxSourceBytes + 1);
+        }
+
+        McpException refused = Refused(big, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(
+            "crop_screenshot reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; "
+                + $"{big} is not a PNG (its first bytes are not the PNG signature)",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AProjectPathOnANetworkPathIsRefusedBeforeAnyIo()
+    {
+        const string Project = @"\\192.0.2.1\s\proj";
+
+        McpException refused = RefusedIn(Project, "x.png", new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(NotLocal("projectPath", Project), refused.Message);
+    }
+
+    [Fact]
+    public void ATmpJunctionLeadingOutsideIsReadAndItsCropGoesToTheScreenshotsFolder()
+    {
         using TempDirectory temp = new();
         string checkout = Repository(temp, "game/project.godot");
         string project = Path.Combine(checkout, "game");
         string outside = Directory.CreateDirectory(temp.Combine("outside")).FullName;
         File.WriteAllBytes(Path.Combine(outside, "x.png"), Source().Encode());
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(checkout, ".tmp"), outside);
+        string tmp = Path.Combine(checkout, ".tmp");
+        ScreenshotPathValidationTests.MakeJunction(tmp, outside);
 
-        string image = Path.Combine(checkout, ".tmp", "x.png");
-        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
+        (JsonElement result, _) = CropIn(project, Path.Combine(tmp, "x.png"), new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(ResolvedOutside(project, image, Path.Combine(outside, "x.png"), checkout), refused.Message);
+        Assert.Equal(Path.Combine(ScreenshotTarget.CaptureFolder(project), "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(outside).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void AGodotMcpJunctionLeadingOutsideIsRefused()
+    public void AGodotMcpJunctionLeadingOutsideIsReadAndItsCropGoesToTheCheckoutsTmp()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "mklink /J and the final-path check are Windows'");
         using TempDirectory temp = new();
-        string project = Game(temp.Path, "game");
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
         string outside = Directory.CreateDirectory(temp.Combine("outside")).FullName;
         File.WriteAllBytes(Path.Combine(outside, "x.png"), Source().Encode());
         Directory.CreateDirectory(Path.Combine(project, ".godot"));
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(project, ".godot", "godot-mcp"), outside);
+        string godotMcp = Path.Combine(project, ".godot", "godot-mcp");
+        ScreenshotPathValidationTests.MakeJunction(godotMcp, outside);
 
-        string image = Path.Combine(project, ".godot", "godot-mcp", "x.png");
+        (JsonElement result, _) = CropIn(project, Path.Combine(godotMcp, "x.png"), new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(Path.Combine(checkout, ".tmp", "x-crop-1.png"), result.GetProperty("path").GetString());
+        Assert.Equal(["x.png"], Directory.GetFiles(outside).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void AScreenshotsFolderThatPassesALinkIsRefusedWhenTheTmpIsALinkToo()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string outsideTmp = Directory.CreateDirectory(temp.Combine("outside-tmp")).FullName;
+        string outsideMcp = Directory.CreateDirectory(temp.Combine("outside-mcp")).FullName;
+        ScreenshotPathValidationTests.MakeJunction(Path.Combine(checkout, ".tmp"), outsideTmp);
+        Directory.CreateDirectory(Path.Combine(project, ".godot"));
+        string godotMcp = Path.Combine(project, ".godot", "godot-mcp");
+        ScreenshotPathValidationTests.MakeJunction(godotMcp, outsideMcp);
+        string image = Path.Combine(project, "art.png");
+        File.WriteAllBytes(image, Source().Encode());
+
         McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1));
 
-        Assert.Equal(ResolvedOutside(project, image, Path.Combine(outside, "x.png")), refused.Message);
+        Assert.Equal(PassesLink(ScreenshotTarget.CaptureFolder(project), godotMcp), refused.Message);
+        Assert.Empty(Directory.GetFileSystemEntries(outsideTmp));
+        Assert.Empty(Directory.GetFileSystemEntries(outsideMcp));
+    }
+
+    [Fact]
+    public void AnImageInAFolderEndingInADotNeverWritesIntoItsUndottedSibling()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string files = Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName;
+        string sibling = Directory.CreateDirectory(Path.Combine(files, "a")).FullName;
+        string dotted = @"\\?\" + Path.Combine(files, "a.");
+        Directory.CreateDirectory(dotted);
+        try
+        {
+            File.WriteAllBytes(Path.Combine(dotted, "x.png"), Source().Encode());
+            var places = OutputPlaces.Find(project, NullLogger.Instance);
+            string final = Path.Combine(places.FinalCheckout!, ".tmp", "a.", "x.png");
+
+            // No spelling the read accepts reaches a folder whose name ends in a dot, so the choice is asked of the final
+            // path such a folder would give, and the crop it chooses is written.
+            CropOrigin origin = CropSource.Place(places, final, NullLogger.Instance);
+            string written = ScreenshotCropTool.Write(origin.Output, "x", Source().Encode(), Path.Exists);
+
+            Assert.Equal(new CropFolder(places.FinalCheckout!, Path.Combine(places.FinalCheckout!, ".tmp"), MayCreate: true), origin.Output);
+            Assert.Equal(Path.Combine(files, "x-crop-1.png"), written);
+            Assert.Empty(Directory.GetFileSystemEntries(sibling));
+            Assert.Equal(["x.png"], Directory.GetFiles(dotted).Select(Path.GetFileName));
+        }
+        finally
+        {
+            // A name ending in a dot is reached only in the \\?\ form, which the temp folder's cleanup does not use.
+            File.Delete(Path.Combine(dotted, "x.png"));
+            Directory.Delete(dotted);
+        }
+    }
+
+    [Fact]
+    public void AStemWithTildeDigitIsCropped()
+    {
+        string tilde = Path.Combine(_folder, "shot~1.png");
+        File.Copy(_shot, tilde);
+
+        (JsonElement result, _) = Crop(tilde, new CropRect(0, 0, 1, 1));
+
+        Assert.Equal(Path.Combine(_folder, "shot~1-crop-1.png"), result.GetProperty("path").GetString());
     }
 
     /// <summary>The source: pixel (x, y) is RGB (x * 40, y * 60, x + y).</summary>
@@ -717,23 +1199,80 @@ public sealed class CropScreenshotTests : IDisposable
         return temp.Path;
     }
 
-    /// <summary>The folders a refusal names: the project's .godot/godot-mcp, then the checkout's and main checkout's .tmp.</summary>
-    private static string Folders(string project, string? checkout = null, string? main = null) =>
-        string.Join("; ", new[] { Path.Combine(project, ".godot", "godot-mcp"), Tmp(checkout), Tmp(main) }.OfType<string>());
+    /// <summary>
+    /// A checkout in <paramref name="temp"/> tracking game/project.godot whose git names <paramref name="elsewhere"/> as its
+    /// working tree (core.worktree), so git reports a checkout the project does not lie under; returns the project.
+    /// </summary>
+    private static string ForgedWorktree(TempDirectory temp, TempDirectory elsewhere)
+    {
+        string checkout = Repository(temp, "game/project.godot");
+        Git.Run(checkout, "config", "core.worktree", elsewhere.Path);
+        Directory.CreateDirectory(Path.Combine(elsewhere.Path, ".tmp"));
+        return Path.Combine(checkout, "game");
+    }
 
-    private static string? Tmp(string? checkout) => checkout is null ? null : Path.Combine(checkout, ".tmp");
+    /// <summary>What <c>git status --porcelain</c> lists in <paramref name="checkout"/>, every untracked file named.</summary>
+    private static string[] UntrackedOrChanged(string checkout) =>
+        Git.Run(checkout, "status", "--porcelain", "--untracked-files=all")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    private static string Tracked(string source) => $"{source} is tracked by git; crop_screenshot reads only untracked captures";
+    private static string NotPng(string source) =>
+        "crop_screenshot reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; "
+        + $"{source} is not a PNG (its first bytes are not the PNG signature)";
 
-    private static string Unchecked(string source) => $"{source} could not be checked against git; crop_screenshot reads only untracked captures";
+    private static string PassesLink(string folder, string link) =>
+        $"the crop's folder {folder} passes the link at {link}; crop_screenshot writes only into folders it reaches without a link";
 
-    private static string NotUnder(string project, string full, string? checkout = null, string? main = null) =>
-        $"{full} is not under a folder crop_screenshot reads ({Folders(project, checkout, main)}); it reads only the captures in "
-        + "the project's .godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout";
+    private static string NotLocal(string label, string given) =>
+        $@"{label} {given} is not a path on a local drive; crop_screenshot takes only drive-letter paths such as C:\game, never a network, "
+        + @"device or \\?\ path";
 
-    private static string ResolvedOutside(string project, string source, string final, string? checkout = null, string? main = null) =>
-        $"{source} resolves to {final}, not under a folder crop_screenshot reads ({Folders(project, checkout, main)}); it reads only "
-        + "the captures in the project's .godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout";
+    private static string LeadsToNetwork(string image, string link) =>
+        $"image {image} leads through the link at {link} to a network path; crop_screenshot does not follow links to network paths";
+
+    /// <summary>The drive the test's temp folder lies on, as <c>X:</c>.</summary>
+    private string Drive() => _project[..2];
+
+    /// <summary>
+    /// A drive letter, as <c>Q:</c>, that names no drive on this machine, so a check removed by mistake finds nothing there
+    /// rather than reaching a real network drive.
+    /// </summary>
+    private static string FreeDrive()
+    {
+        string? free = "QRSTUVWXYJKLMNOP"
+            .Select(letter => $"{letter}:")
+            .FirstOrDefault(drive => FinalPath.DriveType(drive + @"\") == CropSource.DriveNoRootDir);
+        Assert.SkipWhen(free is null, "every drive letter this test could fake is in use");
+        return free!;
+    }
+
+    /// <summary>A drive-type answer that gives <paramref name="type"/> for <paramref name="drive"/> and the real one for any other.</summary>
+    private static Func<string, uint> Faked(string drive, uint type, List<string> asked) =>
+        root =>
+        {
+            asked.Add(root);
+            return string.Equals(root, drive + @"\", StringComparison.OrdinalIgnoreCase) ? type : FinalPath.DriveType(root);
+        };
+
+    /// <summary>Makes a symbolic link, or skips the test where this run lacks the privilege to.</summary>
+    private static void SymbolicLinkOrSkip(string link, string target, bool folder)
+    {
+        try
+        {
+            if (folder)
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            else
+            {
+                File.CreateSymbolicLink(link, target);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Assert.Skip($"creating a symbolic link needs a privilege this run lacks: {e.Message}");
+        }
+    }
 
     /// <summary>Whether <paramref name="shortPath"/> is still the long form: the volume made no 8.3 name along it.</summary>
     private static bool HasNoShortName(string shortPath, string path) => shortPath.Equals(path, StringComparison.OrdinalIgnoreCase);

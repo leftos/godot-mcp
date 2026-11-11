@@ -35,62 +35,22 @@ internal static class ScreenshotTarget
     internal static string CaptureFolder(string projectDir) => Path.Combine(projectDir, ".godot", "godot-mcp", "screenshots");
 
     /// <summary>
-    /// The folders crop_screenshot reads a PNG from, as written and as Windows finally finds them: the project's
-    /// .godot/godot-mcp folder, and the .tmp folders of the project's checkout and of the main checkout when there is one.
-    /// A project outside git has only the first.
-    /// </summary>
-    internal static IReadOnlyList<string> CropSourceFolders(OutputPlaces places)
-    {
-        List<string> folders = [];
-        foreach (string folder in ProjectFolders(places).Concat(CheckoutTmpFolders(places)).Concat(MainTmpFolders(places)))
-        {
-            if (!folders.Exists(existing => SamePath(existing, folder)))
-            {
-                folders.Add(folder);
-            }
-        }
-
-        return folders;
-    }
-
-    /// <summary>
-    /// Whether <paramref name="full"/> lies in one of the folders <see cref="CropSourceFolders"/> names; a path under the
-    /// project's own checkout counts only in that checkout's .tmp folder, so a checkout inside the main checkout's .tmp
-    /// folder keeps its tracked files out of reach.
-    /// </summary>
-    internal static bool IsUnderCropFolders(OutputPlaces places, string full)
-    {
-        string?[] own = [places.Checkout, places.FinalCheckout];
-        return IsUnderAny(ProjectFolders(places), full)
-            || IsUnderAny(CheckoutTmpFolders(places), full)
-            || (!IsUnderAny(own.OfType<string>(), full) && IsUnderAny(MainTmpFolders(places), full));
-    }
-
-    /// <summary>Whether <paramref name="full"/> lies under the project's .godot/godot-mcp folder.</summary>
-    internal static bool IsUnderProjectCaptureFolders(OutputPlaces places, string full) => IsUnderAny(ProjectFolders(places), full);
-
-    /// <summary>
-    /// Whether git tracks the file at <paramref name="file"/>, asked of every repository that could hold it: the innermost
-    /// one its folder is in, and the project's checkout and main checkout when the file lies under them. Each is asked from
-    /// its top with a case-insensitive, literal pathspec, so a file renamed only by case is still seen. True when one lists
-    /// it; null when none does and one could not be asked.
+    /// Whether git tracks the file at <paramref name="file"/>, asked only of the project's checkout and main checkout that the
+    /// file lies under, never of a repository found from the file's own folder: the caller has made sure no folder between
+    /// such a checkout and the file holds a .git entry of its own. Each is asked from its top with a case-insensitive,
+    /// literal pathspec, so a file renamed only by case is still seen. True when one lists it; false when every one asked
+    /// does not; null when none could be asked, or none does and one could not be asked.
     /// </summary>
     internal static bool? IsTracked(OutputPlaces places, string file, ILogger logger)
     {
-        bool? tracked = InnermostTracked(file, logger);
-        foreach (string top in CheckoutTops(places, file))
+        List<string> tops = CheckoutTops(places, file);
+        bool? tracked = tops.Count == 0 ? null : false;
+        foreach (string top in tops)
         {
             tracked = Either(tracked, AskedTracked(top, file, logger));
         }
 
         return tracked;
-    }
-
-    /// <summary>Whether the innermost repository the file's folder is in lists it; null when git cannot name that repository.</summary>
-    private static bool? InnermostTracked(string file, ILogger logger)
-    {
-        string? top = GitRunner.Run(Path.GetDirectoryName(file)!, logger, "rev-parse", "--show-toplevel");
-        return string.IsNullOrWhiteSpace(top) ? null : AskedTracked(top.Trim(), file, logger);
     }
 
     /// <summary>Whether the repository at <paramref name="top"/> lists <paramref name="file"/>; null when git cannot be asked.</summary>
@@ -122,25 +82,6 @@ internal static class ScreenshotTarget
         first == true || second == true ? true
         : first is null || second is null ? null
         : false;
-
-    private static IEnumerable<string> ProjectFolders(OutputPlaces places) => FoldersOf(places.Project, places.FinalProject, ".godot", "godot-mcp");
-
-    private static IEnumerable<string> CheckoutTmpFolders(OutputPlaces places) =>
-        CheckoutHoldsProject(places) ? FoldersOf(places.Checkout, places.FinalCheckout, ".tmp") : [];
-
-    private static IEnumerable<string> MainTmpFolders(OutputPlaces places) =>
-        CheckoutHoldsProject(places) ? FoldersOf(places.MainCheckout, places.FinalMainCheckout, ".tmp") : [];
-
-    /// <summary>
-    /// Whether the checkout git reports really holds the project: a git with core.worktree set elsewhere names a folder the
-    /// project does not lie under, and neither that folder nor its main checkout is a root then.
-    /// </summary>
-    private static bool CheckoutHoldsProject(OutputPlaces places) =>
-        places.FinalCheckout is { } checkout && !HeadlessTools.IsOutside(Path.GetRelativePath(checkout, places.FinalProject));
-
-    /// <summary>The folder <paramref name="parts"/> names below each root, as written and as Windows finally finds it.</summary>
-    private static IEnumerable<string> FoldersOf(string? written, string? final, params string[] parts) =>
-        new[] { written, final }.OfType<string>().Select(root => Path.Combine([root, .. parts]));
 
     private static bool SamePath(string first, string second) =>
         (OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).Equals(first, second);
@@ -379,24 +320,9 @@ internal static class ScreenshotTarget
         bool underFolder = !HeadlessTools.IsOutside(Path.GetRelativePath(CaptureFolder(finalProject), final));
         return new CaptureIdentity(final, underFolder, FinalPath.LinkCount(handle));
     }
-
-    /// <summary>
-    /// Where crop_screenshot's open source finally lies, whether that is in one of the folders
-    /// <see cref="CropSourceFolders"/> names, and how many names the file has; a link leading out of those folders, a
-    /// .tmp folder that is itself a link elsewhere, and a hard link to a file elsewhere all fail.
-    /// </summary>
-    /// <param name="handle">The open source.</param>
-    /// <param name="places">The project's places, whose final forms the folder set includes.</param>
-    /// <exception cref="IOException">Windows cannot give the file's final path or its link count.</exception>
-    [SupportedOSPlatform("windows")]
-    internal static CaptureIdentity IdentifyCropSource(SafeFileHandle handle, OutputPlaces places)
-    {
-        string final = FinalPath.Of(handle);
-        return new CaptureIdentity(final, IsUnderCropFolders(places, final), FinalPath.LinkCount(handle));
-    }
 }
 
-/// <summary>What <see cref="ScreenshotTarget.IdentifyCapture"/> or <see cref="ScreenshotTarget.IdentifyCropSource"/> found of an open file.</summary>
+/// <summary>What <see cref="ScreenshotTarget.IdentifyCapture"/> found of an open file.</summary>
 /// <param name="Final">The file's final path, every link followed.</param>
 /// <param name="UnderFolder">Whether the final path lies under the folder or folders the caller allows.</param>
 /// <param name="Names">How many names (hard links) the file has.</param>

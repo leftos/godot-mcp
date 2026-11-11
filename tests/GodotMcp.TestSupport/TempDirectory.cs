@@ -164,7 +164,11 @@ public sealed class TempDirectory : IDisposable
     /// </summary>
     private void DeleteAttempt() => DeleteFolder(Path);
 
-    /// <summary>Deletes a folder, clearing the read-only attribute git writes on the object files inside it.</summary>
+    /// <summary>
+    /// Deletes a folder, clearing the read-only attribute git writes on the object files inside it, hidden ones included.
+    /// A link (a junction, a symbolic link to a folder or a file) is never entered or touched: the attribute pass skips
+    /// every reparse point, and the recursive delete only detaches it, so a link to a network path reaches no share.
+    /// </summary>
     private static void DeleteFolder(string folder)
     {
         if (!Directory.Exists(folder))
@@ -172,7 +176,8 @@ public sealed class TempDirectory : IDisposable
             return;
         }
 
-        foreach (string file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+        EnumerationOptions options = new() { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        foreach (string file in Directory.EnumerateFiles(folder, "*", options))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }

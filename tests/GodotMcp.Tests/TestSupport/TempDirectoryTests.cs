@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using GodotMcp.Server.Session;
+using GodotMcp.Tests.Tools;
 using GodotMcp.TestSupport;
 
 namespace GodotMcp.Tests.TestSupport;
@@ -316,6 +317,32 @@ public sealed class TempDirectoryTests
         }
 
         File.Delete(folder + Owner);
+    }
+
+    [Fact]
+    public void DisposeNeverEntersAJunctionToClearAttributes()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "mklink /J is Windows'");
+        TempDirectory temp = new();
+        TempDirectory target = new();
+        try
+        {
+            string file = target.Combine("kept.txt");
+            File.WriteAllText(file, "kept");
+            File.SetAttributes(file, FileAttributes.ReadOnly);
+            ScreenshotPathValidationTests.MakeJunction(temp.Combine("linked"), target.Path);
+
+            temp.Dispose();
+
+            Assert.False(Directory.Exists(temp.Path));
+            Assert.True(File.Exists(file));
+            Assert.True(File.GetAttributes(file).HasFlag(FileAttributes.ReadOnly));
+        }
+        finally
+        {
+            temp.Dispose();
+            target.Dispose();
+        }
     }
 
     /// <summary>The identity of a process that ran and exited: its id and start time, as a marker records them.</summary>
