@@ -57,6 +57,7 @@
       "ScratchUntilNever": 1,
       "ScratchUntilRaises": 2,
       "ScratchUntilReadRaises": 0.1,
+      "ScratchUntilReadThreadError": 0.1,
       "ScratchUntilReleased": {
         "seconds": 0.5,
         "reason": "its last step only leaves a note",
@@ -71,7 +72,8 @@
       "ScratchUntilSlow": {
         "seconds": 0.1,
         "reason": "its until holds a second of game time after the step starts; the pace is only its default wait and exit hold"
-      }
+      },
+      "ScratchUntilUnmetThreadError": 0.1
     },
     "expectFor": {
       "ScratchExitHold": [{ "pattern": "^inside the exit hold$", "reason": "its timer prints it inside the exit hold" }]

@@ -525,5 +525,59 @@ public sealed class ScratchUntilTests
         Assert.Same(warning, entry);
     }
 
+    // The entries a step's read before the walk passed over are matched to the step's own read by what each says, not by its
+    // sequence number: a raise the step's own read logs again is the same entry and is not charged twice, and one only the read
+    // before the walk logged is not reproduced.
+    [Fact]
+    public void AnEntryTheStepsWindowHoldsAgainWithANewSequenceNumberIsNotLeftOver()
+    {
+        Assert.Empty(ScratchRun.Unreproduced([Raised(1)], [Raised(2)]));
+        Assert.Empty(ScratchRun.Unreproduced([Raised(1), Raised(4)], [Raised(2), Raised(5)]));
+    }
+
+    [Fact]
+    public void AnEntryTheStepsWindowDoesNotHoldIsLeftOver()
+    {
+        ErrorEntry early = Raised(1);
+
+        Assert.Same(early, Assert.Single(ScratchRun.Unreproduced([early], [Entry(ErrorFeed.ErrorType, "another")])));
+    }
+
+    [Fact]
+    public void TwoIdenticalEarlyEntriesAndOneWindowEntryLeaveOneOverAsOneWindowEntryMatchesOneOfThem()
+    {
+        ErrorEntry first = Raised(1);
+        ErrorEntry second = Raised(2);
+
+        Assert.Same(second, Assert.Single(ScratchRun.Unreproduced([first, second], [Raised(3)])));
+    }
+
+    [Fact]
+    public void AnEntryMatchingTheWindowsMessageButNotItsLineIsLeftOver()
+    {
+        ErrorEntry early = Raised(1);
+
+        Assert.Same(early, Assert.Single(ScratchRun.Unreproduced([early], [Raised(2, line: 4)])));
+    }
+
+    [Fact]
+    public void AnEmptyWindowLeavesEveryEntryOverInTheOrderSkipped() =>
+        Assert.Collection(
+            ScratchRun.Unreproduced([Raised(3, line: 3), Raised(1, line: 4)], []),
+            entry => Assert.Equal(("res://scene.gd", 3), (entry.File, entry.Line)),
+            entry => Assert.Equal(("res://scene.gd", 4), (entry.File, entry.Line))
+        );
+
+    [Fact]
+    public void ASkippedWarningIsNotReproducedByAWindowErrorOfTheSameText()
+    {
+        ErrorEntry warning = Raised(1, ErrorFeed.WarningType);
+
+        Assert.Same(warning, Assert.Single(ScratchRun.Unreproduced([warning], [Raised(2)])));
+    }
+
     private static ErrorEntry Entry(string type, string message) => new(1, type, message, "res://scene.gd", 3, "f", [], "");
+
+    private static ErrorEntry Raised(long seq, string type = ErrorFeed.ErrorType, int line = 3) =>
+        new(seq, type, "scratch until read raised", "res://scene.gd", line, "GetStepUntil", [], string.Empty);
 }

@@ -541,6 +541,13 @@ internal sealed class ScratchRun
     private string? _afterError;
     private bool _afterClosed;
     private long _feedMark;
+
+    /// <summary>
+    /// The judged entries each step's GetStepUntil read before the walk passed over, by step index: the step's own read at its
+    /// play takes the ones it does not log again (<see cref="Unreproduced"/>), and a claim is dropped there so no window takes
+    /// them twice.
+    /// </summary>
+    private readonly Dictionary<int, List<ErrorEntry>> _earlySkipped = [];
     private bool _hasUntil;
     private bool _hasShotUntil;
     private bool _hasHidden;
@@ -1287,6 +1294,40 @@ internal sealed class ScratchRun
         return errors;
     }
 
+    /// <summary>
+    /// The entries of <paramref name="skipped"/>, in their order, that <paramref name="window"/> does not hold again: each matched
+    /// on its type, message, file, line and function, not its sequence number, which the same raise gets anew the second time, one
+    /// window entry matching at most one skipped entry; so two identical entries the read before the walk logged and the step's
+    /// own read logged once leave the second over.
+    /// </summary>
+    internal static IReadOnlyList<ErrorEntry> Unreproduced(IReadOnlyList<ErrorEntry> skipped, IReadOnlyList<ErrorEntry> window)
+    {
+        List<ErrorEntry> remaining = [.. window];
+        List<ErrorEntry> notReproduced = [];
+        foreach (ErrorEntry entry in skipped)
+        {
+            int match = remaining.FindIndex(other => SameRaise(entry, other));
+            if (match < 0)
+            {
+                notReproduced.Add(entry);
+            }
+            else
+            {
+                remaining.RemoveAt(match);
+            }
+        }
+
+        return notReproduced;
+    }
+
+    /// <summary>Whether two feed entries say the same raise: their type, message, file, line and function, not their sequence number.</summary>
+    private static bool SameRaise(ErrorEntry first, ErrorEntry second) =>
+        first.Type == second.Type
+        && first.Message == second.Message
+        && first.File == second.File
+        && first.Line == second.Line
+        && first.Function == second.Function;
+
     /// <summary>Why a window's markers did not both arrive in time; a stdout marker missing beside stderr's points at buffering.</summary>
     internal static string MarkerTimeout(string label, TimeSpan allowance, bool stdoutArrived, bool stderrArrived)
     {
@@ -1891,11 +1932,11 @@ internal sealed class ScratchRun
         StepShot shot = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
-        IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed);
+        IReadOnlyList<ErrorEntry> window = TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed);
         (string? error, ErrorEntry? raised) =
-            played.BridgeError is not { } bridgeError ? UnmetFailure(played.Until, played.Error, errors)
-            : played.ShotWaited ? ShotWaitFailure(index, _names[index], bridgeError, errors)
-            : UntilFailure(index, _names[index], bridgeError, errors);
+            played.BridgeError is not { } bridgeError ? UnmetFailure(played.Until, played.Error, window)
+            : played.ShotWaited ? ShotWaitFailure(index, _names[index], bridgeError, window)
+            : UntilFailure(index, _names[index], bridgeError, window);
         string statusLine = StatusLine(status);
         RecordStatus(session, index, statusLine);
         return new ScratchStep(index, _names[index], gameMs)
@@ -1905,7 +1946,7 @@ internal sealed class ScratchRun
             CallError = error ?? statusError ?? markerError,
             CallErrorEntry = raised,
             Status = statusLine,
-            Errors = errors,
+            Errors = WithUnreproducedEarly(index, window),
             Lines = lines,
             Dropped = dropped,
             Screenshot = shot.Path,
@@ -1913,6 +1954,23 @@ internal sealed class ScratchRun
             Viewport = shot.Viewport,
             Warning = shot.Warning,
         };
+    }
+
+    /// <summary>
+    /// The entries a step's window took from the feed, followed by the entries the step's read before the walk passed over that the
+    /// window does not hold again (<see cref="Unreproduced"/>), so an entry another thread or a timer logged during that read still
+    /// fails the step; the step's claim on them is dropped, so no window takes them twice. The list is the step's errors only: the
+    /// failure functions judge its own window's entries, so an early entry never stands in for why the step failed.
+    /// </summary>
+    private IReadOnlyList<ErrorEntry> WithUnreproducedEarly(int index, IReadOnlyList<ErrorEntry> errors)
+    {
+        if (!_earlySkipped.Remove(index, out List<ErrorEntry>? skipped))
+        {
+            return errors;
+        }
+
+        IReadOnlyList<ErrorEntry> notReproduced = Unreproduced(skipped, errors);
+        return notReproduced.Count == 0 ? errors : [.. errors, .. notReproduced];
     }
 
     /// <summary>
@@ -2152,7 +2210,8 @@ internal sealed class ScratchRun
     /// Reads step <paramref name="index"/>'s GetStepUntil before the walk and keeps its answer, unless the read failed on the
     /// bridge or the feed logged a judged entry across it (a script error inside the call, or a warning when scratch.warnings is
     /// "red"): such a read keeps nothing, so the step reads it again at its play, where that entry lands in its own window; the
-    /// entries it logged are passed over here, so the first step's window never takes them, and each is logged to stderr. Whether
+    /// entries it logged are passed over here, so the first step's window never takes them, and each is logged to stderr. They are
+    /// kept for the step, which takes at its play every one its own read did not log again (<see cref="Unreproduced"/>). Whether
     /// the ceiling counts the step at the guard (a condition, or a failed read), and whether the read logged a judged entry.
     /// </summary>
     private async Task<(bool Until, bool Logged)> ReadUntilEarlyAsync(GodotSession session, int index, CancellationToken cancellationToken)
@@ -2163,6 +2222,7 @@ internal sealed class ScratchRun
         if (logged.Count > 0)
         {
             _feedMark = Math.Max(_feedMark, logged.Max(entry => entry.Seq));
+            _earlySkipped[index] = [.. logged];
             foreach (ErrorEntry entry in logged)
             {
                 EarlyUntilReadLogged(_registry.Logger, index, entry.IsError ? "an error" : "a warning", entry.Message, null);

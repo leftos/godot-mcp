@@ -200,6 +200,70 @@ public sealed class ScratchUntilRunTests : IAsyncDisposable
         JsonArray details = scene["details"]!.AsArray();
         Assert.True(details[0]!["ok"]!.GetValue<bool>(), details[0]!.ToJsonString());
         Assert.Equal("first done", ScratchRunnerTests.Status(details[0]!));
+        JsonNode counted = Assert.Single(details[1]!["errors"]!.AsArray())!;
+        Assert.Equal("scratch until read raised", counted["message"]!.GetValue<string>());
+        Assert.Null(counted["count"]);
+    }
+
+    // ScratchUntilReadThreadError's GetStepUntil starts a thread that logs an error on the first read of its second step's
+    // until, during the read before the walk, and the step's own read at its play raises nothing: the error that read passed
+    // over must still fail that step, though its re-read never logs it again.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnErrorAnotherThreadLogsDuringTheEarlyUntilReadFailsThatStep()
+    {
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchUntilReadThreadError"],
+                new ScratchOptions(Details: ScratchRunnerTests.FullDetails),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.True(scene["verdict"]!.GetValue<string>() == "red", scene.ToJsonString());
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.True((1, "second") == (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()), scene.ToJsonString());
+        Assert.Contains("scratch until read thread error", failedAt["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.True(details[0]!["ok"]!.GetValue<bool>(), details[0]!.ToJsonString());
+        Assert.Equal("first done", ScratchRunnerTests.Status(details[0]!));
+        Assert.Single(details[1]!["errors"]!.AsArray());
+    }
+
+    // ScratchUntilUnmetThreadError's second step starts a thread that logs an error on the first read of its until, and its until
+    // is a signal the scene never emits: the step's own read at its play logs nothing of it, and its until hangs at its guard, so
+    // the step fails for the hung until, not for the entry the read before the walk passed over, which stays one of its errors.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEarlyReadEntryDoesNotStandInForAnUnmetUntilsFailureText()
+    {
+        await using SessionHarness harness = new(launchesUnfocused: false, productionGraces: false, TimeSpan.FromSeconds(3));
+        ScratchTools scratch = new(harness.Sessions, TestCSharp.Unused());
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(
+                scratch,
+                ["ScratchUntilUnmetThreadError"],
+                new ScratchOptions(Details: ScratchRunnerTests.FullDetails),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.Equal((1, "second"), (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()));
+        Assert.Equal(
+            "step 1 'second': its until hung at its guard of 3 s of load-adjusted time (its condition never held); check the "
+                + "condition GetStepUntil gives",
+            failedAt["error"]!.GetValue<string>()
+        );
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.True(details[0]!["ok"]!.GetValue<bool>(), details[0]!.ToJsonString());
+        JsonNode step = details[1]!;
+        Assert.False(step["until"]!["met"]!.GetValue<bool>(), step.ToJsonString());
+        Assert.Contains(
+            "scratch until read thread error",
+            Assert.Single(step["errors"]!.AsArray())!["message"]!.GetValue<string>(),
+            StringComparison.Ordinal
+        );
     }
 
     // ScratchUntilReadWarns is ScratchUntilReadRaises with a push_warning: with scratch.warnings "red" the warning lands where
