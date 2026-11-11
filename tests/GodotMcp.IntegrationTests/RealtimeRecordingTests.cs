@@ -369,9 +369,9 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     /// <summary>
     /// A maxSeconds cap ends the capture by itself, and the clip waits for the next stop. The cap counts from the first frame,
     /// so the helper's own clock, which its frame line reports and which starts before that frame leaves, runs at least the
-    /// cap; the clip's length is not read, since it is the span of the frames' arrival times, which a busy machine can bunch
-    /// together. How far past the cap the capture ran is read from the helper's frame count, which a
-    /// busy machine can only lower: the helper writes at most one frame per tick of its rate, from after start was asked
+    /// cap; the clip's length is not read, since the test bounds on the helper's frame count instead. How far past the cap the
+    /// capture ran is read from that count, which a busy machine can only lower: the helper writes at most one frame per tick
+    /// of its rate, from after start was asked
     /// for until its deadline, the first frame's time plus the cap, which start moves there once the encoder has opened and
     /// the helper reads within 0.2 s. A cap the capture ignored, or counted from start's own allowance, runs to many more.
     /// </summary>

@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A real-time clip whose encoder stalled over its stop reports its full length: nvenc now encodes without B-frames, which cut a gap at the clip's end.
 - A `run_scratches` step fails on an error another thread or a timer logs while its `GetStepUntil` is read before the walk, instead of staying green.
 
 ## 0.39.0 - 2026-11-10

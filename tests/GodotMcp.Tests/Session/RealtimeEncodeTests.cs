@@ -69,11 +69,11 @@ public sealed class RealtimeEncodeTests
     [Theory]
     [InlineData(RealtimeEncode.H264Nvenc)]
     [InlineData(RealtimeEncode.HevcNvenc)]
-    public void NvencTakesBgraWithoutAPixelFormat(string encoder)
+    public void NvencTakesBgraWithoutAPixelFormatOrBFrames(string encoder)
     {
         List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv, audioPipe: null);
 
-        Assert.Equal([.. Input, "-c:v", encoder, .. Tail], arguments);
+        Assert.Equal([.. Input, "-c:v", encoder, "-bf", "0", .. Tail], arguments);
     }
 
     [Fact]
@@ -346,6 +346,12 @@ public sealed class RealtimeEncodeTests
         Assert.Equal([.. ProbeHead, "libx264", "-pix_fmt", "yuv420p", .. ProbeTail], probe.Arguments);
         Assert.Equal((Ffmpeg, Log, TimeSpan.FromSeconds(10)), (probe.FileName, probe.LogPath, probe.Ceiling));
     }
+
+    [Theory]
+    [InlineData(RealtimeEncode.H264Nvenc)]
+    [InlineData(RealtimeEncode.HevcNvenc)]
+    public void TheNvencProbeTurnsBFramesOff(string encoder) =>
+        Assert.Equal([.. ProbeHead, encoder, "-bf", "0", .. ProbeTail], RealtimeEncode.ProbeArguments(encoder));
 
     [Fact]
     public async Task AKilledProbeRunIsNotUsable()

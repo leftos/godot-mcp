@@ -40,7 +40,9 @@ internal static class RealtimeEncode
     /// ffmpeg's arguments for the encode: raw BGRA frames of the crop's even size at <paramref name="fps"/> on stdin, each
     /// stamped with the wall clock as it arrives, encoded with <paramref name="encoder"/> to <paramref name="outputPath"/> at
     /// a variable frame rate. An nvenc encoder takes BGRA as it is: a <c>-pix_fmt yuv420p</c> before it would move the
-    /// conversion onto the CPU. The software encoders get yuv420p. No <c>-nostdin</c>, since the video comes on stdin.
+    /// conversion onto the CPU. The software encoders get yuv420p. An nvenc encoder runs without B-frames, since a frame
+    /// reorder cuts a gap among the clip's last frames from the .mp4's reported length. No <c>-nostdin</c>, since the video
+    /// comes on stdin.
     /// With <paramref name="audioPipe"/>, the helper's 48 kHz stereo s16le audio on that pipe is a second input, after the
     /// video so ffmpeg opens it only once the video has delivered data, by which time the helper has made the pipe; it is
     /// encoded to AAC, and the wall-clock stamps stay on the video input only.
@@ -89,7 +91,8 @@ internal static class RealtimeEncode
     /// ffmpeg's arguments for one candidate's test encode: one 256x256 BGRA frame of a generated colour, encoded with
     /// <paramref name="encoder"/> and thrown away. An encoder must encode to count, since ffmpeg lists nvenc on builds that
     /// fail it at run time on a machine without the GPU; the one frame goes through the same BGRA format as the real encode,
-    /// so a candidate is probed on what it is asked to encode. <c>-nostdin</c>, since nothing is piped in.
+    /// so a candidate is probed on what it is asked to encode, its B-frames off as the encode runs them. <c>-nostdin</c>, since
+    /// nothing is piped in.
     /// </summary>
     public static List<string> ProbeArguments(string encoder) =>
         [
@@ -107,7 +110,7 @@ internal static class RealtimeEncode
             "1",
             "-c:v",
             encoder,
-            .. PixelFormatFor(encoder),
+            .. ProbeEncoderOptions(encoder),
             "-f",
             "null",
             "-",
@@ -137,13 +140,19 @@ internal static class RealtimeEncode
     private static string[] EncoderOptions(string encoder) =>
         encoder switch
         {
-            H264Nvenc or HevcNvenc => [],
+            H264Nvenc or HevcNvenc => ["-bf", "0"],
             Libx264 => ["-preset", "ultrafast", "-pix_fmt", "yuv420p"],
             H264Mf => ["-pix_fmt", "yuv420p"],
             _ => throw new ArgumentOutOfRangeException(nameof(encoder), encoder, "not one of the real-time recording's encoders"),
         };
 
-    private static string[] PixelFormatFor(string encoder) => encoder is Libx264 or H264Mf ? ["-pix_fmt", "yuv420p"] : [];
+    private static string[] ProbeEncoderOptions(string encoder) =>
+        encoder switch
+        {
+            H264Nvenc or HevcNvenc => ["-bf", "0"],
+            Libx264 or H264Mf => ["-pix_fmt", "yuv420p"],
+            _ => [],
+        };
 }
 
 /// <summary>
