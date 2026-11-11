@@ -21,6 +21,7 @@ public sealed partial class ExitHold : IDisposable
     private const uint Breakpoint = 0x80000003;
     private readonly int _processId;
     private readonly TimeSpan _hangGuard;
+    private readonly Action? _onFirstEvent;
     private readonly TaskCompletionSource _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _killed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ManualResetEventSlim _release = new();
@@ -28,10 +29,11 @@ public sealed partial class ExitHold : IDisposable
     private int _breakInThread = -1;
     private volatile bool _disposed;
 
-    private ExitHold(int processId, TimeSpan hangGuard)
+    private ExitHold(int processId, TimeSpan hangGuard, Action? onFirstEvent)
     {
         _processId = processId;
         _hangGuard = hangGuard;
+        _onFirstEvent = onFirstEvent;
         // The debug API answers only the thread that attached, so the loop owns one thread for the hold's life.
         _loop = new Thread(Run) { IsBackground = true, Name = $"exit hold of {processId}" };
         _loop.Start();
@@ -46,11 +48,13 @@ public sealed partial class ExitHold : IDisposable
     /// <summary>
     /// Attaches the test's debugger to <paramref name="child"/>, returning once its break-in has been answered; a hold whose attach
     /// fails or outlasts <paramref name="hangGuard"/> is disposed, letting the child go. The same guard bounds
-    /// <see cref="Dispose"/>'s wait for the child's exit once its exit was held.
+    /// <see cref="Dispose"/>'s wait for the child's exit once its exit was held. <paramref name="onFirstEvent"/> runs once on the
+    /// debug loop's thread while the debugger holds the child's first event, before that event is continued, so a child killed
+    /// there can never raise the break-in: the seam a test uses to end the child before the attach completes.
     /// </summary>
-    public static async Task<ExitHold> AttachAsync(Process child, TimeSpan hangGuard)
+    public static async Task<ExitHold> AttachAsync(Process child, TimeSpan hangGuard, Action? onFirstEvent = null)
     {
-        ExitHold hold = new(child.Id, hangGuard);
+        ExitHold hold = new(child.Id, hangGuard, onFirstEvent);
         try
         {
             await hold._attached.Task.WaitAsync(hangGuard);
@@ -107,6 +111,8 @@ public sealed partial class ExitHold : IDisposable
         }
         finally
         {
+            // Any other way the loop stops short of the break-in would leave the attach waiting out its whole guard.
+            _attached.TrySetException(new InvalidOperationException("the debug loop ended before the debugger's break-in"));
             Marshal.FreeHGlobal(debugEvent);
         }
     }
@@ -129,9 +135,53 @@ public sealed partial class ExitHold : IDisposable
         {
             _release.Wait();
         }
+        else
+        {
+            FailAttachOnExit(code, debugEvent);
+        }
+
+        if (code == CreateProcessEvent)
+        {
+            FirstEvent();
+        }
 
         ContinueDebugEvent(_processId, threadId, status);
         return code == ExitProcessEvent;
+    }
+
+    /// <summary>
+    /// Fails the attach on a process exit it did not hold: a child that ended before its break-in has nothing left to raise it, so
+    /// the attach fails with how it ended rather than waiting out its whole guard. A no-op once the attach has completed.
+    /// </summary>
+    private void FailAttachOnExit(int code, nint debugEvent)
+    {
+        if (code != ExitProcessEvent)
+        {
+            return;
+        }
+
+        _attached.TrySetException(
+            new InvalidOperationException(
+                $"pid {_processId} exited (code 0x{(uint)Marshal.ReadInt32(debugEvent, 16):X8}) before the debugger's break-in"
+            )
+        );
+    }
+
+    /// <summary>
+    /// Runs the attach's <c>onFirstEvent</c> once, on the loop's own thread, while the child's first event is held and before it is
+    /// continued: the break-in cannot be raised until that event is answered.
+    /// </summary>
+    private void FirstEvent()
+    {
+        try
+        {
+            _onFirstEvent?.Invoke();
+        }
+        catch (Exception e)
+        {
+            // The loop thread has no catch of its own, so a throwing seam would end the test host; the awaiting test gets it instead.
+            _attached.TrySetException(e);
+        }
     }
 
     /// <summary>

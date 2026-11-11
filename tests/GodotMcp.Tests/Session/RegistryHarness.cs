@@ -109,17 +109,32 @@ internal sealed class RegistryHarness : IAsyncDisposable
 
     /// <summary>
     /// A child process that runs for about a minute unless killed, standing in for a game's own process, so a pid a fake game's
-    /// hello carries is one the test owns and a stop may kill.
+    /// hello carries is one the test owns and a stop may kill. It returns only once the child is running its command: a command
+    /// child attached while it was still starting up died with an access violation now and then, before its break-in could be
+    /// raised, which left the attach waiting out its whole guard.
     /// </summary>
-    public static Process StartStandInGame() =>
-        Process.Start(
-            new ProcessStartInfo("cmd.exe", "/c ping -n 60 127.0.0.1 >nul")
+    public static Process StartStandInGame()
+    {
+        Process game = Process.Start(
+            new ProcessStartInfo("cmd.exe", "/d /c echo ready& ping -n 60 127.0.0.1 >nul")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardInput = true,
+                RedirectStandardOutput = true,
             }
         )!;
+        for (string? line = game.StandardOutput.ReadLine(); line != "ready"; line = game.StandardOutput.ReadLine())
+        {
+            if (line is null)
+            {
+                EndStandInGame(game);
+                throw new InvalidOperationException("the stand-in game exited before it was ready");
+            }
+        }
+
+        return game;
+    }
 
     /// <summary>Kills a stand-in game that still runs, with what it started, and disposes it.</summary>
     public static void EndStandInGame(Process game)
