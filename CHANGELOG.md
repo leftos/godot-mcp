@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.40.2 - 2026-11-11
 
 ### Fixed
 
@@ -11,6 +11,14 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A launch or restart whose game connects the moment it starts is accepted, instead of failing at the handshake timeout.
 - A `restart_project` of a process session cancelled before it stops the old program leaves that program running.
 - `attach_project`'s `waitSeconds` bounds a join of a dormant game even while a build or import holds the folder.
+
+### For agents
+
+- `record_mark`'s real-time recording: a short clip with a pause in it now reports its true length through `ffprobe`, instead of 7 frame times (0.231 s) when it held exactly seven frames.
+- `run_project` / `restart_project`: a game whose bridge connects the moment Godot starts is accepted, instead of the launch failing at the handshake timeout.
+- `attach_project` joining a dormant game: `waitSeconds` now bounds the whole call even while a build or import holds the folder. A join that times out that way says the join file was never written and the game is still dormant; call again once the prep is done.
+- `restart_project` of a `run_process` session: a cancel that lands before the old program is stopped leaves it running; one during the new program's ready wait ends the new program before the call returns.
+- Dormant games: a game's leave or re-dormant no longer fails silently while a server lists dormant games or reads an attach or join file.
 
 ## 0.40.1 - 2026-11-11
 
