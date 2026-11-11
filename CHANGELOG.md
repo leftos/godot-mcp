@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A warm headless host that connects the moment it starts is accepted, instead of failing the scene tool with "ended before its warm headless host connected".
+- A launch or restart that fails once Godot is running, such as when its output cannot be read, ends that Godot instead of leaving it running.
 
 ## 0.40.2 - 2026-11-11
 

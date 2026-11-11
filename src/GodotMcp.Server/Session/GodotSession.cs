@@ -870,7 +870,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             MakeScratchUserData(request, previous);
             Func<int, string>? marker = previous is not null && ProcessId is int replaced ? started => RestartMarker(replaced, started) : null;
-            (GodotRun run, HandshakeWait handshake) = StartGodot(request, godotPath, previous, marker, cancellationToken);
+            (GodotRun run, HandshakeWait handshake) = await StartGodotAsync(request, godotPath, previous, marker, cancellationToken);
             return new PreparedRun
             {
                 Run = run,
@@ -898,7 +898,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </param>
     /// <param name="cancellationToken">The caller's token; cancelling it withdraws the handshake wait.</param>
     /// <returns>The started run and the wait for its bridge's hello, which the caller disposes.</returns>
-    private (GodotRun Run, HandshakeWait Handshake) StartGodot(
+    /// <remarks>
+    /// A start that fails before the run is the session's withdraws the wait, then kills whatever the run started, with its
+    /// tree, and disposes the run (<see cref="EndUnhandedRunAsync"/>), so no Godot outlives a launch that failed to hand it over.
+    /// </remarks>
+    private async Task<(GodotRun Run, HandshakeWait Handshake)> StartGodotAsync(
         LaunchRequest request,
         string godotPath,
         GodotRun? carried,
@@ -927,6 +931,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         catch
         {
             handshake.Dispose();
+            await EndUnhandedRunAsync(run);
             throw;
         }
 
@@ -936,6 +941,18 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
         ProcessId = run.Process.Id;
         return (run, handshake);
+    }
+
+    /// <summary>
+    /// Ends a run whose start failed before the session took it: kills its process, with everything it started, when it runs,
+    /// waits for it as a stop's kill does (<see cref="KillAsync"/>), and disposes the run. A process that never started is left
+    /// alone. Its exit's handler finds a run that is not the session's (<see cref="OnRunExitedAsync"/>), so the session's
+    /// current run, its folder and its exit's handling are untouched.
+    /// </summary>
+    private async Task EndUnhandedRunAsync(GodotRun run)
+    {
+        _ = await KillAsync(run);
+        await run.DisposeAsync();
     }
 
     /// <summary>
@@ -1026,7 +1043,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// Starts Godot once more for a run that crashed at boot: the crashed run's output capture stopped as a restart stops its
     /// old run's, then a fresh process for the same request under the folder's prep lock, with no second prep, whose output
     /// carries on the crashed run's buffers and file after a marker line. The crashed run is let go of once the new one is the
-    /// session's, and also when the wait for the lock is cancelled.
+    /// session's, and also when the wait for the lock is cancelled or the new start fails.
     /// </summary>
     /// <exception cref="SessionException">The server's exit has begun, or Godot could not start.</exception>
     /// <exception cref="OperationCanceledException">The wait for the folder's prep lock was cancelled.</exception>
@@ -1050,7 +1067,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             registry.RefuseStartAtShutdown();
             LogBootCrashRetried(_logger, "the launch");
-            (GodotRun run, HandshakeWait handshake) = StartGodot(
+            (GodotRun run, HandshakeWait handshake) = await StartGodotAsync(
                 request,
                 crashed.Godot,
                 crashed.Run,
@@ -1058,6 +1075,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 cancellationToken
             );
             relaunched = crashed with { Run = run, Handshake = handshake };
+        }
+        catch
+        {
+            await crashed.Run.DisposeAsync();
+            throw;
         }
         finally
         {
@@ -1202,6 +1224,24 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         // the exit, under that caller's locks. The handler is queued, so it never runs under either and takes them in no order.
         run.Process.Exited += (_, _) => _ = Task.Run(() => OnRunExitedAsync(run));
         run.Launcher.Start();
+        try
+        {
+            BeginOutput(run, marker);
+        }
+        catch
+        {
+            // The output file closes here, as the output's end would have closed it; the caller ends the started process.
+            run.OutputEnded();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The output half of <see cref="StartProcess"/>, once the process runs: opens the output file, writes the marker line, and
+    /// begins passing the process's output on.
+    /// </summary>
+    private void BeginOutput(GodotRun run, Func<int, string>? marker)
+    {
         run.OutputLog ??= OpenOutputLog(run);
         if (marker is not null)
         {
@@ -1219,15 +1259,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             stderr = new EditorOutputNoise(stderr).Add;
         }
 
-        try
-        {
-            run.Launcher.BeginRead(stdout, stderr, run.OutputEnded);
-        }
-        catch
-        {
-            run.OutputEnded();
-            throw;
-        }
+        run.Launcher.BeginRead(stdout, stderr, run.OutputEnded);
     }
 
     /// <summary>

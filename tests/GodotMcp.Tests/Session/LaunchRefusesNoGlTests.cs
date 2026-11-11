@@ -492,6 +492,50 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ALaunchWhoseOutputCannotBeReadEndsItsProcess()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        _starts.Enqueue(run => run.ReadFailure = new IOException("cannot read"));
+
+        IOException failed = await Assert.ThrowsAsync<IOException>(() =>
+            _sessions.LaunchAsync(Request(project), "server", cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation)
+        );
+
+        Assert.Equal("cannot read", failed.Message);
+        await _launched.Single().AssertKilledAsync(cancellation);
+        Assert.DoesNotContain(_sessions.List(includeStopped: true), session => session.Name == "server" && session.Live);
+    }
+
+    [Fact]
+    public async Task ARestartWhoseOutputCannotBeReadEndsItsProcess()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+        FakeRunProcess first = await StartedAsync(launch);
+        using FakeBridge oldGame = await FakeBridge.DialAsync(_listener.Port, first.Token, project, cancellation);
+        await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        _starts.Enqueue(run => run.ReadFailure = new IOException("cannot read"));
+
+        Task<object> restart = _sessions.RestartAsync("server", prepare: false, cancellation);
+        int shutdowns = 0;
+        while (shutdowns == 0)
+        {
+            string? command = await oldGame.AnswerOneAsync("quit", cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation);
+            shutdowns += command == "shutdown" ? 1 : 0;
+        }
+
+        await first.EndAsync(cancellation);
+        IOException failed = await Assert.ThrowsAsync<IOException>(() => restart.WaitAsync(RegistryHarness.HangGuard, cancellation));
+
+        Assert.Equal("cannot read", failed.Message);
+        Assert.Equal(2, _launched.Count);
+        await _launched.Last().AssertKilledAsync(cancellation);
+        Assert.DoesNotContain(_sessions.List(includeStopped: true), session => session.Name == "server" && session.Live);
+    }
+
+    [Fact]
     public async Task ALaunchsHandshakeBudgetCountsFromGodotsStart()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -687,6 +731,15 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
         /// <summary>The listener's verdict on the hello of a process that dials as it starts: true when it was handed to a waiter.</summary>
         public TaskCompletionSource<bool> Judged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        /// <summary>What <see cref="BeginRead"/> throws, as a process whose output cannot be read would; null to read.</summary>
+        public Exception? ReadFailure { get; set; }
+
+        /// <summary>
+        /// A second handle on the child, opened as <see cref="BeginRead"/> fails, so its exit can be awaited after the run has
+        /// disposed its own; null until then.
+        /// </summary>
+        public Process? Watched { get; private set; }
+
         /// <summary>Lets a held crashing child exit with its code.</summary>
         public void ReleaseCrash() => Process.StandardInput.WriteLine("crash");
 
@@ -705,6 +758,14 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
 
         public void BeginRead(Action<string> stdout, Action<string> stderr, Action ended)
         {
+            if (ReadFailure is { } failure)
+            {
+                Watched = Process.GetProcessById(Process.Id);
+                // Reading Handle opens the process handle and keeps it on the object, which keeps the exit code readable.
+                _ = Watched.Handle;
+                throw failure;
+            }
+
             _stdout = stdout;
             _stderr = stderr;
             _ended = ended;
@@ -771,7 +832,31 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
             }
         }
 
-        public void Dispose() => Process.Dispose();
+        /// <summary>
+        /// Waits for the child to be gone through <see cref="Watched"/>, on the hang guard alone, as <see cref="ExitedAsync"/>
+        /// does, and asserts it was killed: a stand-in game ends on its own with code 0 within the guard, a killed one with -1.
+        /// </summary>
+        public async Task AssertKilledAsync(CancellationToken cancellationToken)
+        {
+            Process watched = Watched ?? throw new InvalidOperationException("the run's output was never refused");
+            try
+            {
+                await watched.WaitForExitAsync(cancellationToken).WaitAsync(RegistryHarness.HangGuard, cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                watched.Kill(entireProcessTree: true);
+                Assert.Fail("a fake run's process did not exit within its hang guard, so the test hung");
+            }
+
+            Assert.True(watched.ExitCode != 0, "a start whose output could not be read left its process running until it ended on its own");
+        }
+
+        public void Dispose()
+        {
+            Watched?.Dispose();
+            Process.Dispose();
+        }
 
         /// <summary>
         /// A child, not yet started, that exits with <paramref name="exitCode"/>: at once, or when held, once a line reaches its
