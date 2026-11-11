@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - An install replaces its `current` pointer even while a reader holds the file open, instead of retrying 20 times and failing.
+- A `run_scratches` shot step whose clock passes its pace while its frame is captured still ends its window at the pace.
 
 ## 0.40.0 - 2026-11-11
 

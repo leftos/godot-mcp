@@ -226,6 +226,81 @@ func test_a_shot_met_before_its_end_marker_game_ms_prints_it_once_the_clock_reac
 	_free_then_rig(rig)
 
 
+## A wait met on its limitGameMs clock reports the game time its met check saw, not the frame a
+## capture awaited after it ticks in: the capture is stood in for by hand, since it renders.
+# gdlint: ignore=max-line-length
+func test_a_met_capture_reports_the_game_ms_of_the_met_frame_not_the_capture_frame() -> void:
+	var rig: Dictionary = _then_rig()
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	for tick in 2:
+		_time_script.advance_game_clock(clock, false, 0.06)
+	var marker: String = "[test] met capture"
+	var params: Dictionary = {"limitGameMs": 100, "endMarker": marker, "_gameClock": clock}
+	_time_script.advance_game_clock(clock, false, 0.06)
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, params
+	)
+	_time_script.advance_game_clock(clock, false, 0.06)
+	_time_script._add_game_ms(outcome, params)
+	assert_eq(outcome["result"]["gameMs"], 120, "the met frame's game ms, not the capture's")
+	_free_then_rig(rig)
+
+
+## A shot the poll ended before its pace, whose clock the capture's awaited frame carried past
+## that pace, still ends its window: the marker prints once per stream and the result says so.
+# gdlint: ignore=max-line-length
+func test_a_shot_whose_clock_passes_its_pace_during_the_capture_still_ends_its_window() -> void:
+	var rig: Dictionary = _then_rig()
+	var tree: RefCounted = _compile("extends RefCounted\n\nsignal process_frame\n")
+	rig["time"].wait_tree = tree
+	var marker: String = "[test] end marker passed during capture"
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	for tick in 2:
+		_time_script.advance_game_clock(clock, false, 0.06)
+	var params: Dictionary = {"endMarker": marker, "endMarkerAtGameMs": 100, "_gameClock": clock}
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	# The capture's awaited frame is the one that carries seen past the pace, 100 ms.
+	_time_script.advance_game_clock(clock, false, 0.06)
+	var ended: Dictionary = await rig["time"]._hold_to_window_end(
+		{"result": {"met": true}}, params, 60000.0, Time.get_ticks_msec()
+	)
+	OS.remove_logger(recorder)
+	assert_eq(recorder.of(marker), [[marker, false], [marker, true]], "stdout, then stderr")
+	assert_eq(ended["result"].get("endMarked"), true, "the result says the window ended")
+	_free_then_rig(rig)
+
+
+## A shot met before its pace reports the game ms of its window end, which the hold reaches before
+## the reply, not its met check's: the server's stood-still check reads that figure.
+func test_a_held_shot_reports_the_game_ms_of_its_window_end() -> void:
+	var rig: Dictionary = _then_rig()
+	var tree: RefCounted = _compile("extends RefCounted\n\nsignal process_frame\n")
+	rig["time"].wait_tree = tree
+	var marker: String = "[test] held shot window end"
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	for tick in 2:
+		_time_script.advance_game_clock(clock, false, 0.06)
+	var params: Dictionary = {
+		"limitGameMs": 100, "endMarker": marker, "endMarkerAtGameMs": 100, "_gameClock": clock
+	}
+	var outcomes: Array = []
+	var holding := func() -> void:
+		var ended: Dictionary = await rig["time"]._hold_to_window_end(
+			{"result": {"met": true}}, params, 60000.0, Time.get_ticks_msec()
+		)
+		_time_script._add_game_ms(ended, params)
+		outcomes.append(ended)
+	holding.call()
+	tree.process_frame.emit()
+	_time_script.advance_game_clock(clock, false, 0.06)
+	tree.process_frame.emit()
+	assert_eq(outcomes.size(), 1, "the hold answers once the clock reaches the pace")
+	if outcomes.size() == 1:
+		assert_eq(outcomes[0]["result"]["gameMs"], 120, "the window end's game ms")
+	_free_then_rig(rig)
+
+
 ## A held shot whose clock stands still (frames go by, the game paused) stays held until the server
 ## cancels the wait; the cancel still ends the window.
 func test_a_held_shot_stays_held_while_its_clock_stands_still_and_a_cancel_ends_it() -> void:

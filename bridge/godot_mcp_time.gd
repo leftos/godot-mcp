@@ -609,8 +609,7 @@ func _check_game_time(kind: String, target: int, clock: Dictionary) -> Array:
 
 ## Polls probe as _poll_and_capture does; with params.limitGameMs (a scratch step's until, which
 ## the server alone sends), also ends the wait not met once the game time counted from now, the
-## call's frame, reaches that limit (_start_game_limit), and adds that game time to the result as
-## gameMs.
+## call's frame, reaches that limit (_start_game_limit), and adds its met check's as gameMs.
 func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
 	var tick: Callable = _start_game_limit(params)
 	var outcome: Dictionary = await _poll_and_capture(probe, timeout_ms, params)
@@ -636,20 +635,18 @@ func _start_game_limit(params: Dictionary) -> Callable:
 	return tick
 
 
-## Adds gameMs, the whole game milliseconds params._gameClock's last check could see, to outcome's
-## result.
+## Adds gameMs, the whole game milliseconds the wait's met check saw (params._metGameMs), else
+## params._gameClock's last check for a shot held to its window end, to outcome's result.
 static func _add_game_ms(outcome: Dictionary, params: Dictionary) -> void:
 	if outcome.has("result"):
-		outcome["result"]["gameMs"] = floori(float(params["_gameClock"]["seen"]) * 1000.0)
+		outcome["result"]["gameMs"] = params.get("_metGameMs", _seen_game_ms(params))
 
 
-## Polls probe as _poll does, for params.backstopMs when the server sends one, else timeout_ms,
-## until a cancel of the request; with params.screenshot a met wait also captures the frame it was
-## met on: a waiting one checks probe at each frame's draw instead (_check_at_draws), a
-## check-once one captures the draw of the frame it runs in. The poll's end first ends a scratch
-## step's window (_end_window). A met wait also runs params.then in the met frame (_finish_then).
-## Returns _poll's outcome, its result with then and screenshot or warning when met and captured,
-## or {error} when then.call failed.
+## Polls probe as _poll does (params.backstopMs when sent, else timeout_ms, until a cancel), with
+## params.screenshot checking probe at each draw of a waiting wait (_check_at_draws) and capturing
+## the met frame. The poll's end first ends a scratch step's window (_end_window), and a met wait
+## not held to that end keeps its met check's game ms (params._metGameMs). A met wait runs
+## params.then there (_finish_then): the result holds then and screenshot or warning, or {error}.
 func _poll_and_capture(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
 	var bound_ms: float = _bound_ms(params, timeout_ms)
 	var began: int = Time.get_ticks_msec()
@@ -670,15 +667,15 @@ func _poll_and_capture(probe: Callable, timeout_ms: int, params: Dictionary) -> 
 
 ## With params.endMarker, ends a scratch step's window as its poll ends, met or not: prints the
 ## marker to stdout and stderr, marks the logger (godot_mcp_logger.gd mark) and adds endMarked:
-## true, which so always means the feed holds the mark; no logger (dormant), no end. A met poll
-## short of params.endMarkerAtGameMs (seen game time) ends it later (_hold_to_window_end); a failed
-## one never. Scratch sends no then, and its screenshot waits carry limitGameMs, so this runs
-## before any capture. Returns outcome.
+## true, which so always means the feed holds the mark; no logger (dormant) or a window already
+## marked, no end. A met poll short of params.endMarkerAtGameMs ends it later; a failed one never.
 func _end_window(outcome: Dictionary, params: Dictionary) -> Dictionary:
 	if not params.has("endMarker") or not outcome.has("result"):
 		return outcome
-	if _window_end_later(outcome, params):
+	if _window_end_later(outcome, params) or outcome["result"].get("endMarked", false):
 		return outcome
+	if params.has("_gameClock"):
+		params["_metGameMs"] = _seen_game_ms(params)
 	var logger: Variant = bridge.get("_logger") if bridge != null else null
 	if logger == null:
 		return outcome
@@ -693,19 +690,19 @@ func _end_window(outcome: Dictionary, params: Dictionary) -> Dictionary:
 ## Whether a met poll's window ends later: params.endMarkerAtGameMs not yet seen (no clock: seen).
 static func _window_end_later(outcome: Dictionary, params: Dictionary) -> bool:
 	var at_ms: int = int(params.get("endMarkerAtGameMs", -1))
-	if at_ms < 0 or not params.has("_gameClock"):
+	if at_ms < 0 or not params.has("_gameClock") or not outcome.has("result"):
 		return false
 	return bool(outcome["result"]["met"]) and _seen_game_ms(params) < at_ms
 
 
 ## A shot met before its params.endMarkerAtGameMs, once captured: waits frame by frame until the
-## game time a check sees (seen, a frame behind a gameMs wait's seconds: a shot step's window ends
-## a frame after a paced step's would) reaches it, within bound_ms of real time from began (the
-## poll's start) or a cancel, then ends the window (_end_window). Any other outcome as it is.
+## game time a check sees (seen, a frame behind a gameMs wait's seconds) reaches it, within
+## bound_ms from began or a cancel, then ends the window (_end_window), a capture's frame having
+## carried the clock past that end first included. Any other outcome as it is.
 func _hold_to_window_end(
 	outcome: Dictionary, params: Dictionary, bound_ms: float, began: int
 ) -> Dictionary:
-	if not outcome.has("result") or not _window_end_later(outcome, params):
+	if not outcome.has("result"):
 		return outcome
 	while _window_end_later(outcome, params) and Time.get_ticks_msec() - began < bound_ms:
 		if params.get("_cancelled", false):
