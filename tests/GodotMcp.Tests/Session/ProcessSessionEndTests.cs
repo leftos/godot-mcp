@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
@@ -294,6 +295,38 @@ public sealed partial class ProcessSessionEndTests
     }
 
     [Fact]
+    public async Task TheProgramsStdoutCarriesOnlyItsOwnLines()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using LoadClock clock = new(new FakeTimeProvider(), new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        using EventWaitHandle exit = NewExitEvent(out string name);
+        (GodotSession session, Task start) = await BeginAsync(harness, name, null, cancellation);
+        await start;
+        (Process main, Process child) = await OpenHeldAsync(session);
+        using (main)
+        using (child)
+        {
+            try
+            {
+                // The child has written its first output, wherever its stdout goes.
+                await RegistryHarness.WaitUntilAsync(() => WriteOperations(child) > 0);
+                exit.Set();
+                await RegistryHarness.WaitUntilAsync(() => !IsListedLive(harness));
+
+                string[] foreign = [.. session.GetRawOutput().Stdout.Lines.Where(line => !ChildLine().IsMatch(line) && line != "last")];
+                string first = foreign.FirstOrDefault() ?? "";
+                Assert.True(foreign.Length == 0, $"the program's stdout carries {foreign.Length} line(s) it did not print, first «{first}»");
+            }
+            finally
+            {
+                EndHeld(exit, child);
+            }
+        }
+    }
+
+    [Fact]
     public void AProcessOutsideTheJobIsNotKept()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Job objects are Windows'; the stand-ins are ping -n.");
@@ -375,9 +408,10 @@ public sealed partial class ProcessSessionEndTests
     }
 
     /// <summary>
-    /// Starts the process session's program: pwsh starting ping as its job's child, printing the child's pid, then waiting on the
-    /// event <paramref name="eventName"/>, printing "last" and exiting with code 7. Returns the session and its start, which
-    /// waits for <paramref name="ready"/> when one is given.
+    /// Starts the process session's program: pwsh starting ping as its job's child with ping's stdout discarded (so the session's
+    /// stdout carries only the program's own lines), printing the child's pid, then waiting on the event
+    /// <paramref name="eventName"/>, printing "last" and exiting with code 7. Returns the session and its start, which waits for
+    /// <paramref name="ready"/> when one is given.
     /// </summary>
     private static async Task<(GodotSession Session, Task Start)> BeginAsync(
         RegistryHarness harness,
@@ -387,7 +421,7 @@ public sealed partial class ProcessSessionEndTests
     )
     {
         string script =
-            "$p = Start-Process ping -ArgumentList '-n','600','127.0.0.1' -NoNewWindow -PassThru; "
+            "$p = Start-Process ping -ArgumentList '-n','600','127.0.0.1' -NoNewWindow -RedirectStandardOutput NUL -PassThru; "
             + "\"child=$($p.Id)\"; "
             + $"$e = [System.Threading.EventWaitHandle]::OpenExisting('{eventName}'); "
             + "$null = $e.WaitOne(); Write-Output 'last'; exit 7";
@@ -426,6 +460,24 @@ public sealed partial class ProcessSessionEndTests
 
     private static bool IsListedLive(RegistryHarness harness) =>
         harness.Sessions.List(includeStopped: true).Any(session => session.Name == Session && session.Live);
+
+    private static ulong WriteOperations(Process process) =>
+        GetProcessIoCounters(process.Handle, out IoCounters counters) ? counters.WriteOperationCount : 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount,
+            WriteOperationCount,
+            OtherOperationCount,
+            ReadTransferCount,
+            WriteTransferCount,
+            OtherTransferCount;
+    }
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetProcessIoCounters(nint process, out IoCounters counters);
 
     /// <summary>Lets the program exit and kills the child if a failed test left it running, so its hold can end.</summary>
     private static void EndHeld(EventWaitHandle exit, Process child)
