@@ -104,13 +104,19 @@ def _without_runtime(tmp_path: Path, layout: Layout) -> Layout:
 
 
 def _environment(dotnet_root: Path, home: Path | None = None) -> dict[str, str]:
-    """The installer's environment; with a home, USERPROFILE points there, where it looks for Claude Code's transcripts."""
-    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("DOTNET_ROOT")}
+    """The installer's environment; with a home, USERPROFILE points there, where it looks for Claude Code's transcripts.
+    PSModulePath is left out, so a Windows PowerShell child builds its own rather than loading pwsh 7's modules; a home
+    gets an AppData\\Local, LOCALAPPDATA points there, so the child's module analysis cache lands in the home rather
+    than under its working folder."""
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("DOTNET_ROOT") and key.upper() != "PSMODULEPATH"}
     env.pop("GODOT_MCP_INSTALL_DIR", None)
     env.pop("GODOT_MCP_SKILLS_DIR", None)
     env["DOTNET_ROOT"] = str(dotnet_root)
     if home is not None:
+        local_app_data = home / "AppData" / "Local"
+        local_app_data.mkdir(parents=True, exist_ok=True)
         env["USERPROFILE"] = str(home)
+        env["LOCALAPPDATA"] = str(local_app_data)
     return env
 
 
@@ -161,9 +167,9 @@ def _quote(value: str | Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _invoke(shell: str, target: str, arguments: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Runs `& <target> <arguments>` in the shell. A stop is printed as its bare message with status 1: both shells
-    wrap an uncaught error's message at the console width, which can cut a long path in two."""
+def _invoke(shell: str, target: str, arguments: list[str], env: dict[str, str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Runs `& <target> <arguments>` in the shell, in cwd when given. A stop is printed as its bare message with status
+    1: both shells wrap an uncaught error's message at the console width, which can cut a long path in two."""
     source = f"try {{ & {target} {' '.join(arguments)} }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}"
     return subprocess.run(
         [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", source],
@@ -173,7 +179,48 @@ def _invoke(shell: str, target: str, arguments: list[str], env: dict[str, str]) 
         timeout=HANG_GUARD_SECONDS,
         check=False,
         env=env,
+        cwd=cwd,
     )
+
+
+@pytest.mark.skipif(shutil.which("powershell") is None, reason="Windows PowerShell 5.1 is not installed")
+def test_a_windows_powershell_child_never_inherits_pwsh_7_module_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pwsh_modules = Path(shutil.which("pwsh") or "pwsh").resolve().parent / "Modules"
+    monkeypatch.setenv("PSModulePath", f"{pwsh_modules};{os.environ.get('PSMODULEPATH', '')}")
+    target = tmp_path / "hashed.txt"
+    target.write_text("hash me", encoding="utf-8")
+
+    result = _invoke("powershell", "{ param($p) (Get-FileHash -LiteralPath $p).Algorithm }", [_quote(target)], _environment(DOTNET_ROOT))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "SHA256"
+
+
+@pytest.mark.skipif(shutil.which("powershell") is None, reason="Windows PowerShell 5.1 is not installed")
+def test_a_windows_powershell_child_with_a_test_home_writes_nothing_under_its_working_folder(tmp_path: Path) -> None:
+    home = tmp_path / "userprofile"
+    home.mkdir()
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    target = tmp_path / "hashed.txt"
+    target.write_text("hash me", encoding="utf-8")
+    cache = Path("Microsoft") / "Windows" / "PowerShell" / "ModuleAnalysisCache"
+    under_home = home / "AppData" / "Local" / cache
+    under_cwd = cwd / cache
+    # Windows PowerShell writes its module analysis cache some seconds after its first module lookup: the child waits
+    # for it to appear in either place, bounded only by the hang guard.
+    script = (
+        "{ param($p, $home_cache, $cwd_cache) $null = Get-FileHash -LiteralPath $p; "
+        "while (-not (Test-Path -LiteralPath $home_cache) -and -not (Test-Path -LiteralPath $cwd_cache)) "
+        "{ Start-Sleep -Milliseconds 100 } }"
+    )
+    arguments = [_quote(target), _quote(under_home), _quote(under_cwd)]
+
+    result = _invoke("powershell", script, arguments, _environment(DOTNET_ROOT, home), cwd=cwd)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert under_home.is_file()
+    assert list(cwd.iterdir()) == []
 
 
 def _run(

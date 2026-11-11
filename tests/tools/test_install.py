@@ -479,8 +479,8 @@ OPEN_EXISTING = 3
 INVALID_HANDLE = ctypes.c_void_p(-1).value
 
 
-def _read_pointer_until(path: Path, done: threading.Event, counts: Counter[str]) -> None:
-    """Opens the pointer as the launcher does (sharing read, write and delete) and reads it, until done is set."""
+def _kernel32() -> ctypes.WinDLL:
+    """kernel32 with CreateFileW, ReadFile and CloseHandle typed for handles."""
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.restype = ctypes.c_void_p
     kernel32.CreateFileW.argtypes = [
@@ -494,17 +494,63 @@ def _read_pointer_until(path: Path, done: threading.Event, counts: Counter[str])
     ]
     kernel32.ReadFile.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
     kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    return kernel32
+
+
+def _read_handle(kernel32: ctypes.WinDLL, handle: int) -> bytes:
+    """Up to 64 bytes read from the handle's current position."""
+    buffer = ctypes.create_string_buffer(64)
+    read = ctypes.c_uint32()
+    kernel32.ReadFile(handle, buffer, 64, ctypes.byref(read), None)
+    return buffer.raw[: read.value]
+
+
+def _without_pwsh_module_path() -> dict[str, str]:
+    """This process's environment without PSModulePath (any case), so a Windows PowerShell child loads its own modules,
+    not pwsh 7's."""
+    return {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+
+
+def _read_pointer_until(path: Path, done: threading.Event, counts: Counter[str]) -> None:
+    """Opens the pointer as the launcher does (sharing read, write and delete) and reads it, until done is set."""
+    kernel32 = _kernel32()
     while not done.is_set():
         handle = kernel32.CreateFileW(str(path), GENERIC_READ, SHARE_ALL, None, OPEN_EXISTING, 0, None)
         if handle == INVALID_HANDLE:
             counts[f"open failed with error {ctypes.get_last_error()}"] += 1
             continue
-        buffer = ctypes.create_string_buffer(64)
-        read = ctypes.c_uint32()
-        kernel32.ReadFile(handle, buffer, 64, ctypes.byref(read), None)
+        text = _read_handle(kernel32, handle)
         kernel32.CloseHandle(handle)
-        text = buffer.raw[: read.value]
         counts["whole" if text in (b"A\n", b"B\n") else f"partial {text!r}"] += 1
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_pointer_held_open_by_a_reader_is_replaced_and_the_reader_keeps_what_it_opened(tmp_path: Path, shell: str) -> None:
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    current = install_dir / "current"
+    current.write_bytes(b"A\n")
+    kernel32 = _kernel32()
+    handle = kernel32.CreateFileW(str(current), GENERIC_READ, SHARE_ALL, None, OPEN_EXISTING, 0, None)
+    assert handle != INVALID_HANDLE, f"open failed with error {ctypes.get_last_error()}"
+    source = f"Import-Module -Name '{LAYOUT_MODULE}'; Set-CurrentVersion -InstallDir '{install_dir}' -Name 'B'"
+    try:
+        writer = subprocess.run(
+            [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", source],
+            capture_output=True,
+            text=True,
+            timeout=HANG_GUARD_SECONDS,
+            check=False,
+            env=_without_pwsh_module_path(),
+        )
+        held = _read_handle(kernel32, handle)
+    finally:
+        kernel32.CloseHandle(handle)
+
+    assert writer.returncode == 0, writer.stdout + writer.stderr
+    assert current.read_bytes() == b"B\n"
+    assert held == b"A\n"
+    assert sorted(path.name for path in install_dir.iterdir()) == ["current"]
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -528,6 +574,7 @@ def test_a_pointer_replaced_under_a_reader_is_never_missing_or_partial(tmp_path:
             text=True,
             timeout=HANG_GUARD_SECONDS,
             check=False,
+            env=_without_pwsh_module_path(),
         )
     finally:
         done.set()

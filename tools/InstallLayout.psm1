@@ -101,9 +101,11 @@ function Get-CurrentVersion {
 Points current at a version folder in one step, so a launcher reading it sees the old name or the new one, whole.
 
 .DESCRIPTION
-Writes current.tmp-<guid>, then renames it over current with MoveFileEx's replace (a plain rename when there is no
-current yet). A replace that fails, as one can while an indexer or antivirus holds current, is tried again up to 20
-times, 100 ms apart; then the install fails with the old current standing.
+Writes current.tmp-<guid>, then renames it over current with POSIX rename semantics (a plain rename when there is no
+current yet), which replaces current even while readers hold it open: each keeps reading what it opened. On a file
+system without POSIX renames (FAT, some network shares) it falls back to a replace that any open handle on current
+refuses. A replace that fails, as one can while an indexer or antivirus holds current without sharing delete, is tried
+again up to 20 times, 100 ms apart; then the install fails with the old current standing.
 
 .PARAMETER InstallDir
 The install folder, as a full path.
@@ -135,26 +137,67 @@ function Set-CurrentVersion {
     }
 }
 
-# Renames the staged pointer over current in one step: File.Move with overwrite under PowerShell 7; under Windows
-# PowerShell 5.1, whose File.Move cannot overwrite, MoveFileEx with MOVEFILE_REPLACE_EXISTING
-# (https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-movefileexw). File.Replace is no substitute: a reader
-# racing it was measured to find current missing (error 2) or held (error 32), where both of these never were.
+# The kernel32 calls Move-StagedPointer makes, compiled once per session; plain C# 5, which Windows PowerShell 5.1
+# compiles. Its own type name, so a session that compiled an older module's NativeMethods (MoveFileEx alone) still
+# compiles this one. RenameReplacing opens the staged file for DELETE with all sharing and renames it over the target through
+# SetFileInformationByHandle's FileRenameInfoEx with REPLACE_IF_EXISTS and POSIX_SEMANTICS
+# (https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information); FILE_RENAME_INFO
+# is Flags, then RootDirectory at pointer alignment, then FileNameLength and FileName. Returns 0 or the Win32 error.
+function Initialize-InstallNativeMethod {
+    if ('GodotMcpInstall.PointerMethods' -as [type]) {
+        return
+    }
+    $definition = @(
+        '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]'
+        'public static extern bool MoveFileEx(string existingFileName, string newFileName, int flags);'
+        '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]'
+        'private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string fileName, uint access, uint share,'
+        '    IntPtr security, uint disposition, uint flags, IntPtr template);'
+        '[DllImport("kernel32.dll", SetLastError = true)]'
+        'private static extern bool SetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle file, int infoClass,'
+        '    byte[] info, uint size);'
+        'public static int RenameReplacing(string staged, string target) {'
+        '    using (Microsoft.Win32.SafeHandles.SafeFileHandle file = CreateFile(staged, 0x00010000, 7, IntPtr.Zero, 3, 0x80, IntPtr.Zero)) {'
+        '        if (file.IsInvalid) { return Marshal.GetLastWin32Error(); }'
+        '        byte[] name = System.Text.Encoding.Unicode.GetBytes(target);'
+        '        int nameOffset = 2 * IntPtr.Size + 4;'
+        '        byte[] info = new byte[nameOffset + name.Length + 2];'
+        '        BitConverter.GetBytes(3).CopyTo(info, 0);'
+        '        BitConverter.GetBytes(name.Length).CopyTo(info, 2 * IntPtr.Size);'
+        '        name.CopyTo(info, nameOffset);'
+        '        return SetFileInformationByHandle(file, 22, info, (uint)info.Length) ? 0 : Marshal.GetLastWin32Error();'
+        '    }'
+        '}'
+    ) -join "`n"
+    Add-Type -Namespace GodotMcpInstall -Name PointerMethods -MemberDefinition $definition
+}
+
+# Renames the staged pointer over current in one step, with POSIX rename semantics, so a reader holding current open
+# neither blocks the replace nor loses what it opened. Where the file system has no POSIX rename (error 1, 50 or 87:
+# FAT, some network shares), falls back to File.Move with overwrite under PowerShell 7, and under Windows PowerShell 5.1,
+# whose File.Move cannot overwrite, to MoveFileEx with MOVEFILE_REPLACE_EXISTING
+# (https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-movefileexw); both are refused while any handle is
+# open on current. Any other error throws, for Set-CurrentVersion to retry. File.Replace is no substitute: a reader
+# racing it was measured to find current missing (error 2) or held (error 32), where none of these ever did.
 function Move-StagedPointer {
     param(
         [Parameter(Mandatory)] [string]$Staged,
         [Parameter(Mandatory)] [string]$Current
     )
+    Initialize-InstallNativeMethod
+    $renameError = [GodotMcpInstall.PointerMethods]::RenameReplacing($Staged, $Current)
+    if ($renameError -eq 0) {
+        return
+    }
+    if ($renameError -notin @(1, 50, 87)) {
+        throw (New-Object System.ComponentModel.Win32Exception $renameError)
+    }
     if ($PSVersionTable.PSVersion.Major -ge 7) {
         [System.IO.File]::Move($Staged, $Current, $true)
         return
     }
-    if (-not ('GodotMcpInstall.NativeMethods' -as [type])) {
-        $signature = '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] ' +
-            'public static extern bool MoveFileEx(string existingFileName, string newFileName, int flags);'
-        Add-Type -Namespace GodotMcpInstall -Name NativeMethods -MemberDefinition $signature
-    }
     $replaceExisting = 1
-    if (-not [GodotMcpInstall.NativeMethods]::MoveFileEx($Staged, $Current, $replaceExisting)) {
+    if (-not [GodotMcpInstall.PointerMethods]::MoveFileEx($Staged, $Current, $replaceExisting)) {
         throw (New-Object System.ComponentModel.Win32Exception ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error()))
     }
 }
@@ -222,7 +265,8 @@ function Assert-VersionStart {
     }
     catch {
         $null = Remove-VersionFolder -Folder $Folder
-        throw "install: the new version's start check could not run `"$exe`" --list-tools: $($_.Exception.Message) The installed version is unchanged."
+        throw ("install: the new version's start check could not run `"$exe`" --list-tools: $($_.Exception.Message) " +
+            'The installed version is unchanged.')
     }
     if ($status -ne 0) {
         $null = Remove-VersionFolder -Folder $Folder
