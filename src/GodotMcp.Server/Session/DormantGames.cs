@@ -134,7 +134,7 @@ internal sealed class DormantGames(Func<int, ProcessStart> probe, TextWriter err
     {
         try
         {
-            return ParseEntry(file, File.ReadAllText(file));
+            return ParseEntry(file, AttachFile.ReadShared(file));
         }
         catch (FileNotFoundException)
         {

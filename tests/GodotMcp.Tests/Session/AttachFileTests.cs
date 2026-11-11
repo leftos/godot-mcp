@@ -216,6 +216,34 @@ public sealed class AttachFileTests : IDisposable
         Assert.Equal(19, retries);
     }
 
+    [Fact]
+    public void ABridgeDeletesTheFileWhileAServerReadsIt()
+    {
+        AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ABCDEF"), Plain);
+        string path = AttachFile.PathIn(_project.Path);
+        using FileStream read = AttachFile.OpenShared(path);
+
+        File.Delete(path);
+
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void ABridgeRenamesOverTheFileWhileAServerReadsIt()
+    {
+        AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ABCDEF"), Plain);
+        string path = AttachFile.PathIn(_project.Path);
+        File.WriteAllText(path, "old");
+        File.WriteAllText(path + ".tmp", "new");
+        using (FileStream read = AttachFile.OpenShared(path))
+        {
+            File.Delete(path);
+            File.Move(path + ".tmp", path);
+        }
+
+        Assert.Equal("new", File.ReadAllText(path));
+    }
+
     /// <summary>Opens the file as Godot's reader does on Windows: sharing read and write, not delete.</summary>
     internal static FileStream OpenAsGodotReads(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 

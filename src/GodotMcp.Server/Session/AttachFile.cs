@@ -78,7 +78,8 @@ internal static class AttachFile
     /// again every 50 ms while it fails as a file held open fails it, at most <see cref="HeldOpenAttempts"/> attempts in all:
     /// Godot opens a file for reading sharing read and write but not delete, so a delete landing during a bridge's read fails
     /// with a sharing violation and a replace with access denied (as a delete of a delete-pending file does) until the read
-    /// ends. The last attempt's exception, and any other, propagates.
+    /// ends. This server's own reads share delete (<see cref="ReadShared"/>), so only a bridge's read holds a delete off. The
+    /// last attempt's exception, and any other, propagates.
     /// </summary>
     internal static void RetryWhileHeldOpen(string path, Action operation)
     {
@@ -119,9 +120,7 @@ internal static class AttachFile
         try
         {
             return
-                JsonNode.Parse(File.ReadAllText(path)) is JsonObject content
-                && content["token"] is JsonValue value
-                && value.TryGetValue(out string? token)
+                JsonNode.Parse(ReadShared(path)) is JsonObject content && content["token"] is JsonValue value && value.TryGetValue(out string? token)
                 ? token
                 : null;
         }
@@ -131,4 +130,20 @@ internal static class AttachFile
             return null;
         }
     }
+
+    /// <summary>
+    /// The text of the bridge-shared file at <paramref name="path"/>, read sharing read, write and delete, so the bridge can
+    /// delete or rename over it while a server reads it.
+    /// </summary>
+    internal static string ReadShared(string path)
+    {
+        using StreamReader reader = new(OpenShared(path));
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// Opens a bridge-shared file for reading sharing read, write and delete, so the bridge can delete or rename over it
+    /// while a server reads it.
+    /// </summary>
+    internal static FileStream OpenShared(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 }
