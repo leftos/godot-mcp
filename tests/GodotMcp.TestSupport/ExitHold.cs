@@ -19,9 +19,11 @@ public sealed partial class ExitHold : IDisposable
     private const uint Continue = 0x00010002;
     private const uint NotHandled = 0x80010001;
     private const uint Breakpoint = 0x80000003;
+    private const int ErrorSemTimeout = 121;
     private readonly int _processId;
     private readonly TimeSpan _hangGuard;
     private readonly Action? _onFirstEvent;
+    private readonly Func<nint, int, int> _waitForEvent;
     private readonly TaskCompletionSource _attached = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _killed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ManualResetEventSlim _release = new();
@@ -29,11 +31,12 @@ public sealed partial class ExitHold : IDisposable
     private int _breakInThread = -1;
     private volatile bool _disposed;
 
-    private ExitHold(int processId, TimeSpan hangGuard, Action? onFirstEvent)
+    private ExitHold(int processId, TimeSpan hangGuard, Action? onFirstEvent, Func<nint, int, int> waitForEvent)
     {
         _processId = processId;
         _hangGuard = hangGuard;
         _onFirstEvent = onFirstEvent;
+        _waitForEvent = waitForEvent;
         // The debug API answers only the thread that attached, so the loop owns one thread for the hold's life.
         _loop = new Thread(Run) { IsBackground = true, Name = $"exit hold of {processId}" };
         _loop.Start();
@@ -51,10 +54,18 @@ public sealed partial class ExitHold : IDisposable
     /// <see cref="Dispose"/>'s wait for the child's exit once its exit was held. <paramref name="onFirstEvent"/> runs once on the
     /// debug loop's thread while the debugger holds the child's first event, before that event is continued, so a child killed
     /// there can never raise the break-in: the seam a test uses to end the child before the attach completes.
+    /// <paramref name="waitForEvent"/> is the seam a test uses in place of the real debug wait: the event buffer and the
+    /// milliseconds in, 0 once an event was read, else the Win32 error; <see langword="null"/> is the real one.
     /// </summary>
-    public static async Task<ExitHold> AttachAsync(Process child, TimeSpan hangGuard, Action? onFirstEvent = null)
+    public static async Task<ExitHold> AttachAsync(
+        Process child,
+        TimeSpan hangGuard,
+        Action? onFirstEvent = null,
+        Func<nint, int, int>? waitForEvent = null
+    )
     {
-        ExitHold hold = new(child.Id, hangGuard, onFirstEvent);
+        RequireX64Host(Environment.Is64BitProcess);
+        ExitHold hold = new(child.Id, hangGuard, onFirstEvent, waitForEvent ?? WaitForEvent);
         try
         {
             await hold._attached.Task.WaitAsync(hangGuard);
@@ -101,7 +112,19 @@ public sealed partial class ExitHold : IDisposable
         {
             while (!_disposed || _killed.Task.IsCompleted)
             {
-                if (WaitForDebugEvent(debugEvent, 100) && Handle(debugEvent))
+                int error = _waitForEvent(debugEvent, 100);
+                if (error == ErrorSemTimeout)
+                {
+                    continue;
+                }
+
+                if (error != 0)
+                {
+                    FailLoop(error);
+                    break;
+                }
+
+                if (Handle(debugEvent))
                 {
                     return;
                 }
@@ -117,7 +140,10 @@ public sealed partial class ExitHold : IDisposable
         }
     }
 
-    /// <summary>Answers one debug event (DEBUG_EVENT on x64: code at 0, thread at 8, its union at 16); true once the child has exited.</summary>
+    /// <summary>
+    /// Answers one debug event (DEBUG_EVENT in the x64 layout <see cref="RequireX64Host"/> demands at attach: code at 0, thread at
+    /// 8, its union at 16); true once the child has exited.
+    /// </summary>
     private bool Handle(nint debugEvent)
     {
         int code = Marshal.ReadInt32(debugEvent, 0);
@@ -147,6 +173,39 @@ public sealed partial class ExitHold : IDisposable
 
         ContinueDebugEvent(_processId, threadId, status);
         return code == ExitProcessEvent;
+    }
+
+    /// <summary>
+    /// Refuses a 32-bit host, whose DEBUG_EVENT layout <see cref="Handle"/> would read at the wrong offsets. Called before a hold is
+    /// built, so no debug thread starts on one.
+    /// </summary>
+    /// <exception cref="PlatformNotSupportedException"><paramref name="is64BitProcess"/> is false.</exception>
+    public static void RequireX64Host(bool is64BitProcess)
+    {
+        if (!is64BitProcess)
+        {
+            throw new PlatformNotSupportedException(
+                "ExitHold reads the x64 DEBUG_EVENT layout (its union at offset 16), so it needs a 64-bit host process"
+            );
+        }
+    }
+
+    /// <summary>
+    /// The real debug wait, and the seam's default: the Win32 error read on the loop's own thread right after the call, 0 once an
+    /// event was read.
+    /// </summary>
+    public static int WaitForEvent(nint debugEvent, int milliseconds) =>
+        WaitForDebugEvent(debugEvent, milliseconds) ? 0 : Marshal.GetLastPInvokeError();
+
+    /// <summary>
+    /// Faults both of the hold's tasks on a debug wait that failed, so neither the attach nor a waiter for the kill waits out its
+    /// guard. The loop ends once this returns.
+    /// </summary>
+    private void FailLoop(int error)
+    {
+        Win32Exception failure = new(error, $"WaitForDebugEvent for pid {_processId} failed (Windows error {error})");
+        _attached.TrySetException(failure);
+        _killed.TrySetException(failure);
     }
 
     /// <summary>
