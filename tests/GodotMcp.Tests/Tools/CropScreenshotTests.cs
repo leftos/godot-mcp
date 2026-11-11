@@ -1224,7 +1224,7 @@ public sealed class CropScreenshotTests : IDisposable
         $"the crop's folder {folder} passes the link at {link}; crop_screenshot writes only into folders it reaches without a link";
 
     private static string NotLocal(string label, string given) =>
-        $@"{label} {given} is not a path on a local drive; crop_screenshot takes only drive-letter paths such as C:\game, never a network, "
+        $@"{label} {given} is not a path on a local drive; crop_screenshot takes only a full path that begins with a drive letter, never a network, "
         + @"device or \\?\ path";
 
     private static string LeadsToNetwork(string image, string link) =>

@@ -76,8 +76,8 @@ internal static class CropSource
         if (!OutputDestination.IsDrivePath(full))
         {
             throw new McpException(
-                $@"{label} {given} is not a path on a local drive; {ScreenshotCropTool.ToolName} takes only drive-letter paths such as C:\game, "
-                    + @"never a network, device or \\?\ path"
+                $"{label} {given} is not a path on a local drive; {ScreenshotCropTool.ToolName} takes only a full path that begins "
+                    + @"with a drive letter, never a network, device or \\?\ path"
             );
         }
 
