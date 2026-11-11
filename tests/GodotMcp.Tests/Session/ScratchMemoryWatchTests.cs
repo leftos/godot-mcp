@@ -1,10 +1,12 @@
 using GodotMcp.Server.Session;
+using Microsoft.Extensions.Time.Testing;
 
 namespace GodotMcp.Tests.Session;
 
 /// <summary>
 /// A scene's memory watch decided on one reading: the ceiling passed only above it, a null reading ending the watch, the first
-/// breach kept, and the kill reason it gives. Nothing here reads a process or waits on a clock.
+/// breach kept, the peak it tracks, and the kill reason it gives. Nothing here waits on a clock; only the final-reading case
+/// reads a process, this test's own, on a clock that is never advanced, so no tick reads it too.
 /// </summary>
 public sealed class ScratchMemoryWatchTests
 {
@@ -41,6 +43,48 @@ public sealed class ScratchMemoryWatchTests
         Assert.Equal(MemoryReading.Exited, watch.Read(null));
         Assert.False(play.IsCancellationRequested);
         Assert.Null(watch.KillReason);
+    }
+
+    [Fact]
+    public void AWatchWithNoCeilingTracksTheLargestReadingAndNeverBreaches()
+    {
+        using CancellationTokenSource play = new();
+        ScratchMemoryWatch watch = new(null, TimeProvider.System, play);
+        long largest = (768 * Megabyte) + (Megabyte / 2);
+
+        Assert.Equal(MemoryReading.Watching, watch.Read(512 * Megabyte));
+        Assert.Equal(MemoryReading.Watching, watch.Read(largest));
+        Assert.Equal(MemoryReading.Watching, watch.Read(256 * Megabyte));
+
+        Assert.Equal(largest, watch.PeakBytes);
+        Assert.Equal(768, watch.PeakMegabytes);
+        Assert.False(play.IsCancellationRequested);
+        Assert.Null(watch.KillReason);
+    }
+
+    [Fact]
+    public async Task TheReadingTakenWhenTheWalkEndsCountsTowardsThePeak()
+    {
+        using CancellationTokenSource play = new();
+        await using ScratchMemoryWatch watch = new(null, new FakeTimeProvider(), play);
+        watch.Start(Environment.ProcessId);
+
+        watch.FinalRead();
+
+        Assert.True(watch.PeakBytes > 0, "this test's own process has private memory");
+        Assert.Equal((int)(watch.PeakBytes / Megabyte), watch.PeakMegabytes);
+    }
+
+    [Fact]
+    public void TheBreachReadingIsPartOfThePeak()
+    {
+        using CancellationTokenSource play = new();
+        ScratchMemoryWatch watch = Watch(play);
+
+        watch.Read((1536 * Megabyte) + 1);
+
+        Assert.Equal((1536 * Megabyte) + 1, watch.PeakBytes);
+        Assert.Equal(1536, watch.PeakMegabytes);
     }
 
     [Fact]

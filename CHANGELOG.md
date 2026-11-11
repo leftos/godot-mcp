@@ -9,11 +9,13 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `list_sessions` with `projectPath` reports who holds that folder's `override.cfg` and `armed.json`, and whether `stop_project` would remove them.
 - `stop_project` results carry `folder`: whether the folder is clean afterwards, and the running owners of any file left.
 - `run_scratches` takes a ceiling per batch (an `options.ceilings` array, or `--ceiling <scene>#<batch>=<seconds>`), and the profile's `scratch.ceilings` one per headless or windowed run.
+- Every `run_scratches` scene entry reports `peakPrivateMb`, its game's peak private memory, and a failed entry's warnings name the machine's free memory at launch.
 
 ### Changed
 
 - `run_scratches` and `--run-scratches` play up to 100 batches of a scene in one call.
 - A scratch `userData` game's throwaway `user://` lives under the system temp folder, outside the project, and the server deletes ones a killed server left behind.
+- A project keeps only its 20 newest `run_scratches` shot folders, as it already does its run logs.
 
 ### Fixed
 

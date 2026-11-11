@@ -104,6 +104,12 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// <summary>The profile's exit hold for the scene, the seconds waited after its last played step; null when it sets none.</summary>
     public double? ExitHold { get; init; }
 
+    /// <summary>The peak private memory of the scene's game in whole megabytes rounded down; null when no reading was taken.</summary>
+    public int? PeakPrivateMb { get; init; }
+
+    /// <summary>The machine's free memory in megabytes when the scene's game launched; null when it could not be read.</summary>
+    public int? FreeMemoryMb { get; init; }
+
     public string? Refusal { get; init; }
 
     public ScratchFailure? Kill { get; init; }
@@ -395,6 +401,14 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? ExitHold { get; init; }
 
+    /// <summary>
+    /// The peak private memory of the scene's game, in whole megabytes rounded down: the largest of the readings taken while
+    /// its steps played, and the reading taken when the walk ended; null when no reading was taken, as a scene refused before
+    /// its steps or one whose game reported no process id.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PeakPrivateMb { get; init; }
+
     /// <summary>The profile's reason for the scene's pace, when the scene came out red or killed; null otherwise.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? PaceReason { get; init; }
@@ -574,6 +588,7 @@ internal static partial class ScratchVerdict
             StepList = StepList(seen),
             TimeScale = seen.TimeScale,
             ExitHold = seen.ExitHold,
+            PeakPrivateMb = seen.PeakPrivateMb,
             Log = seen.Log,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
@@ -584,15 +599,24 @@ internal static partial class ScratchVerdict
                     : null,
             Exit = ExitOf(seen, rules.Patterns, missing),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
-            Warnings = SceneWarnings(seen),
+            Warnings = SceneWarnings(seen, shown),
             Watch = seen.Watch,
         };
     }
 
-    /// <summary>The scene's own warnings and its late finalizer crash, then each step's in the order played; null when there are none.</summary>
-    private static List<string>? SceneWarnings(ScratchObservation seen)
+    /// <summary>
+    /// The machine's free memory when a failed scene's game launched, so a run the machine was short on memory reads as such;
+    /// then the scene's own warnings and its late finalizer crash, then each step's in the order played; null when there are none.
+    /// </summary>
+    private static List<string>? SceneWarnings(ScratchObservation seen, string verdict)
     {
-        List<string> warnings = [.. seen.Warnings];
+        List<string> warnings = [];
+        if (Failed(verdict) && seen.FreeMemoryMb is { } free)
+        {
+            warnings.Add(FreeMemoryWarning(free));
+        }
+
+        warnings.AddRange(seen.Warnings);
         if (LateFinalizerCrash(seen))
         {
             warnings.Add(FinalizerCrashWarning(seen.ExitCode!.Value));
@@ -601,6 +625,13 @@ internal static partial class ScratchVerdict
         warnings.AddRange(seen.Steps.Select(step => step.Warning).OfType<string>());
         return warnings.Count > 0 ? warnings : null;
     }
+
+    /// <summary>Whether a scene's verdict is a failure the machine's free memory may explain: red, killed, or known red.</summary>
+    private static bool Failed(string verdict) => verdict is Red or Killed or KnownRed;
+
+    /// <summary>The warning naming the machine's free memory in megabytes when a scene's game launched.</summary>
+    internal static string FreeMemoryWarning(int megabytes) =>
+        string.Create(CultureInfo.InvariantCulture, $"the machine had {megabytes} MB of memory free when this scene's game launched");
 
     /// <summary>The warning of a step whose shot failed: the step's index and name, and why.</summary>
     internal static string ShotFailed(int index, string step, string reason) =>
@@ -678,19 +709,25 @@ internal static partial class ScratchVerdict
     public static ScratchSceneResult Alone(ScratchSceneResult first, ScratchSceneResult replay)
     {
         double seconds = Math.Round(first.Seconds + replay.Seconds, 1);
+        int? peak = Larger(first.PeakPrivateMb, replay.PeakPrivateMb);
         return replay.Verdict == Green
             ? replay with
             {
                 Seconds = seconds,
                 Alone = true,
+                PeakPrivateMb = peak,
             }
             : first with
             {
                 Seconds = seconds,
                 Alone = false,
                 AloneFailedAt = replay.FailedAt,
+                PeakPrivateMb = peak,
             };
     }
+
+    /// <summary>The larger of two peaks, or the one there is; null when neither run took a reading.</summary>
+    private static int? Larger(int? first, int? second) => first is { } a && second is { } b ? Math.Max(a, b) : first ?? second;
 
     /// <summary>
     /// The objects the game reported leaked at exit, "1 ObjectDB instance" or "N ObjectDB instances"; null when no line says so.

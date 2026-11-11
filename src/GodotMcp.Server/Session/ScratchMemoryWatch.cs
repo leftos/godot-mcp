@@ -18,35 +18,37 @@ internal enum MemoryReading
 }
 
 /// <summary>
-/// A scene's memory ceiling watched while its steps play: the game process's private memory read once a second, and the first
-/// reading above the ceiling recorded, then the play it watches cancelled.
+/// A scene's game watched while its steps play: its private memory read once a second, with the largest reading kept as the
+/// scene's peak, and, when the scene has a memory ceiling, the first reading above it recorded, then the play it watches cancelled.
 /// </summary>
 internal sealed class ScratchMemoryWatch : IAsyncDisposable
 {
     /// <summary>The bytes in a megabyte, what a ceiling in megabytes is compared with and its kill reason counts.</summary>
     internal const long Megabyte = 1048576;
 
-    /// <summary>Nothing recorded yet: the breach every reading is compared with.</summary>
+    /// <summary>Nothing recorded yet: the breach every reading is compared with, and the peak before any reading.</summary>
     internal const long None = -1;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
 
-    private readonly ScratchMemoryCeiling _ceiling;
+    private readonly ScratchMemoryCeiling? _ceiling;
     private readonly long _limit;
     private readonly CancellationTokenSource _play;
     private readonly CancellationTokenSource _stop;
     private readonly TimeProvider _time;
     private Task? _poll;
+    private int _processId;
     private long _breach = None;
+    private long _peak = None;
 
     /// <summary>
     /// Watches <paramref name="play"/>'s game against <paramref name="ceiling"/>, reading memory on <paramref name="time"/>'s
-    /// clock; nothing is read until <see cref="Start"/>.
+    /// clock; a null ceiling only tracks the peak, and nothing is read until <see cref="Start"/>.
     /// </summary>
-    internal ScratchMemoryWatch(ScratchMemoryCeiling ceiling, TimeProvider time, CancellationTokenSource play)
+    internal ScratchMemoryWatch(ScratchMemoryCeiling? ceiling, TimeProvider time, CancellationTokenSource play)
     {
         _ceiling = ceiling;
-        _limit = (long)(ceiling.Megabytes * Megabyte);
+        _limit = ceiling is { } watched ? (long)(watched.Megabytes * Megabyte) : long.MaxValue;
         _time = time;
         _play = play;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(play.Token);
@@ -55,8 +57,14 @@ internal sealed class ScratchMemoryWatch : IAsyncDisposable
     /// <summary>The private memory of the game at the first breach recorded, in bytes; <see cref="None"/> while none.</summary>
     internal long BreachBytes => Volatile.Read(ref _breach);
 
+    /// <summary>The largest private memory of the game recorded, in bytes; <see cref="None"/> while no reading was taken.</summary>
+    internal long PeakBytes => Volatile.Read(ref _peak);
+
+    /// <summary>The peak private memory in whole megabytes rounded down, as the kill reason counts; null while no reading was taken.</summary>
+    internal int? PeakMegabytes => PeakBytes < 0 ? null : (int)(PeakBytes / Megabyte);
+
     /// <summary>Why the scene was killed at its memory ceiling, from the breach recorded; null while none.</summary>
-    internal string? KillReason => BreachBytes < 0 ? null : Reason(_ceiling, BreachBytes);
+    internal string? KillReason => _ceiling is { } ceiling && BreachBytes >= 0 ? Reason(ceiling, BreachBytes) : null;
 
     /// <summary>Whether one reading passes <paramref name="limitBytes"/>: strictly above it, a null reading never.</summary>
     internal static bool Passed(long limitBytes, long? reading) => reading is { } bytes && bytes > limitBytes;
@@ -70,7 +78,23 @@ internal sealed class ScratchMemoryWatch : IAsyncDisposable
         + $"({bytes / Megabyte} MB private), set by {ceiling.Source}, so its game was stopped";
 
     /// <summary>Starts reading the private memory of the game process <paramref name="processId"/> once a second.</summary>
-    internal void Start(int processId) => _poll = PollAsync(processId, _stop.Token);
+    internal void Start(int processId)
+    {
+        _processId = processId;
+        _poll = PollAsync(processId, _stop.Token);
+    }
+
+    /// <summary>
+    /// Reads the game's private memory once more and counts it towards the peak, never checking the ceiling: a walk shorter
+    /// than one interval still reports the memory its game ended at.
+    /// </summary>
+    internal void FinalRead()
+    {
+        if (PrivateBytes(_processId) is { } bytes)
+        {
+            Record(bytes);
+        }
+    }
 
     /// <summary>
     /// Checks one reading: whether the ceiling is passed, whether the game is gone, or that the watch goes on. A breach records
@@ -83,6 +107,7 @@ internal sealed class ScratchMemoryWatch : IAsyncDisposable
             return MemoryReading.Exited;
         }
 
+        Record(bytes);
         if (!Passed(_limit, bytes))
         {
             return MemoryReading.Watching;
@@ -106,6 +131,20 @@ internal sealed class ScratchMemoryWatch : IAsyncDisposable
         }
 
         _stop.Dispose();
+    }
+
+    /// <summary>Counts <paramref name="bytes"/> towards the peak, keeping the largest of the readings taken so far.</summary>
+    private void Record(long bytes)
+    {
+        long seen;
+        do
+        {
+            seen = Volatile.Read(ref _peak);
+            if (bytes <= seen)
+            {
+                return;
+            }
+        } while (Interlocked.CompareExchange(ref _peak, bytes, seen) != seen);
     }
 
     private async Task PollAsync(int processId, CancellationToken token)

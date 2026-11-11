@@ -6,8 +6,23 @@ namespace GodotMcp.Server;
 /// <summary>Every message the server logs; all of it goes to stderr.</summary>
 internal static partial class Log
 {
-    /// <summary>The logger for code no caller hands one to: the load clock's sampler and the own-work job.</summary>
+    /// <summary>The logger for code no caller hands one to: the load clock's sampler, the own-work job and the free-memory read.</summary>
     public static ILogger Ambient { get; set; } = NullLogger.Instance;
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Reading the machine's free memory failed with Win32 error {Error}; the scene's result carries no free-memory figure."
+    )]
+    public static partial void FreeMemoryReadFailed(ILogger logger, int error);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Reading {Path} for the machine's free memory failed; the scene's result carries no free-memory figure."
+    )]
+    public static partial void MemoryInfoReadFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "{Path} carries no {Key} line; the scene's result carries no free-memory figure.")]
+    public static partial void MemoryInfoEntryMissing(ILogger logger, string path, string key);
 
     [LoggerMessage(
         Level = LogLevel.Debug,
@@ -326,6 +341,15 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the old scratch run log {Path} failed; it is left and the rest are pruned.")]
     public static partial void ScratchRunLogDeleteFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Listing the scratch shot folders in {Path} failed; the folder is left as it was and the run goes on."
+    )]
+    public static partial void ScratchShotFolderListFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the old scratch shot folder {Path} failed; it is left and the rest are pruned.")]
+    public static partial void ScratchShotFolderPruneFailed(ILogger logger, Exception exception, string path);
 
     [LoggerMessage(
         Level = LogLevel.Warning,

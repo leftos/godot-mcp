@@ -50,6 +50,118 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void ASceneEntryCarriesItsPeakPrivateMemoryInWholeMegabytes()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)) with { PeakPrivateMb = 1536 }, Plain);
+
+        Assert.Equal(1536, result.PeakPrivateMb);
+        Assert.Equal(1536, JsonSerializer.SerializeToNode(result)!["PeakPrivateMb"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void ASceneWithNoPeakReadingCarriesNoPeakPrivateMemory()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)), Plain);
+
+        Assert.Null(result.PeakPrivateMb);
+        Assert.False(JsonSerializer.SerializeToNode(result)!.AsObject().ContainsKey("PeakPrivateMb"));
+    }
+
+    [Fact]
+    public void AReplayAloneTakesTheLargerOfBothRunsPeaks()
+    {
+        ScratchSceneResult first = ScratchVerdict.Judge(Seen(Step(0)) with { PeakPrivateMb = 900 }, Plain);
+        ScratchSceneResult greenReplay = ScratchVerdict.Judge(Seen(Step(0)) with { PeakPrivateMb = 1200 }, Plain);
+        ScratchSceneResult redReplay = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }) with { PeakPrivateMb = 1300 }, Plain);
+
+        Assert.Equal(1200, ScratchVerdict.Alone(first, greenReplay).PeakPrivateMb);
+        Assert.Equal(1300, ScratchVerdict.Alone(first, redReplay).PeakPrivateMb);
+        Assert.Equal(900, ScratchVerdict.Alone(first, redReplay with { PeakPrivateMb = null }).PeakPrivateMb);
+    }
+
+    [Fact]
+    public void ARedSceneCarriesTheFreeMemoryItLaunchedWith()
+    {
+        ScratchSceneResult red = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }) with { FreeMemoryMb = 7800 }, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, red.Verdict);
+        Assert.Equal(["the machine had 7800 MB of memory free when this scene's game launched"], red.Warnings);
+    }
+
+    [Fact]
+    public void AKilledSceneCarriesTheFreeMemoryItLaunchedWith()
+    {
+        ScratchFailure inFlight = new(0, "step0", "the scene passed its ceiling", "");
+        ScratchObservation seen = new("S", "p.scratch-S", 0.5, 2) { Kill = inFlight, FreeMemoryMb = 7000 };
+
+        ScratchSceneResult killed = ScratchVerdict.Judge(seen, Plain);
+
+        Assert.Equal(ScratchVerdict.Killed, killed.Verdict);
+        Assert.Equal(["the machine had 7000 MB of memory free when this scene's game launched"], killed.Warnings);
+    }
+
+    [Fact]
+    public void AKnownRedSceneCarriesTheFreeMemoryItLaunchedWith()
+    {
+        ScratchSceneResult known = ScratchVerdict.Judge(
+            Seen(Step(0) with { CallError = "x" }) with
+            {
+                FreeMemoryMb = 6000,
+            },
+            Plain with
+            {
+                Known = "flaky tray",
+            }
+        );
+
+        Assert.Equal(ScratchVerdict.KnownRed, known.Verdict);
+        Assert.Equal(["the machine had 6000 MB of memory free when this scene's game launched"], known.Warnings);
+    }
+
+    [Fact]
+    public void AGreenSceneCarriesNoFreeMemoryWarning()
+    {
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0)) with { FreeMemoryMb = 7800 }, Plain);
+
+        Assert.Equal(ScratchVerdict.Green, green.Verdict);
+        Assert.Null(green.Warnings);
+    }
+
+    [Fact]
+    public void AReplayAloneKeepsTheFirstRunsPeakWhenItIsTheLargerAndTheReplayIsGreen()
+    {
+        ScratchSceneResult first = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }) with { PeakPrivateMb = 1500 }, Plain);
+        ScratchSceneResult greenReplay = ScratchVerdict.Judge(Seen(Step(0)) with { PeakPrivateMb = 1200 }, Plain);
+
+        Assert.Equal(1500, ScratchVerdict.Alone(first, greenReplay).PeakPrivateMb);
+    }
+
+    [Fact]
+    public void ASceneWhoseGameDidNotStartCarriesTheFreeMemoryItLaunchedWith()
+    {
+        ScratchSceneResult refused = ScratchVerdict.Judge(
+            Seen() with
+            {
+                Refusal = "res://s/S.tscn did not start: the bridge never connected",
+                FreeMemoryMb = 5000,
+            },
+            Plain
+        );
+
+        Assert.Equal(ScratchVerdict.Red, refused.Verdict);
+        Assert.Equal(["the machine had 5000 MB of memory free when this scene's game launched"], refused.Warnings);
+    }
+
+    [Fact]
+    public void ARedSceneWithNoFreeMemoryReadingCarriesNoWarning()
+    {
+        ScratchSceneResult red = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }), Plain);
+
+        Assert.Equal(ScratchVerdict.Red, red.Verdict);
+        Assert.Null(red.Warnings);
+    }
+
+    [Fact]
     public void ASceneWithoutBatchesCarriesNeitherBatchNorBatches()
     {
         ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)), Plain);

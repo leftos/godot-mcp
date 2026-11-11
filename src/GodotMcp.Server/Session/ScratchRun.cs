@@ -530,6 +530,8 @@ internal sealed class ScratchRun
     private GodotSession? _session;
     private LoadDeadline? _deadline;
     private string? _memoryKill;
+    private int? _memoryPeak;
+    private int? _freeMemoryMb;
     private LineMark _mark;
     private int _inFlight = -1;
     private string _rootPath = string.Empty;
@@ -589,8 +591,8 @@ internal sealed class ScratchRun
     /// <paramref name="csharp"/> readies the C# helper a state until reads a C# node's state with. <paramref name="observer"/>,
     /// a background run's, is told each scene's start, session, steps and verdict, and each replay's start; a synchronous run
     /// passes null. <paramref name="runId"/> is the run's id, which names each scene's game log, and is the background run's own;
-    /// null mints one. The log folder keeps the newest <see cref="ScratchRunLogs.Kept"/> scratch run logs, the rest pruned before
-    /// the first scene launches.
+    /// null mints one. The log folder keeps the newest <see cref="ScratchRunLogs.Kept"/> scratch run logs and shot folders, the
+    /// rest pruned before the first scene launches.
     /// </summary>
     /// <exception cref="SessionException">The prep failed.</exception>
     public static async Task<ScratchRunResult> RunAsync(
@@ -611,6 +613,7 @@ internal sealed class ScratchRun
             ShotFolders(plan.Scenes)
         );
         ScratchRunLogs.Prune(ProjectPrep.LogFolder(plan.ProjectDir), ScratchRunLogs.Kept, registry.Logger);
+        ScratchRunLogs.PruneShots(ProjectPrep.LogFolder(plan.ProjectDir), ScratchRunLogs.Kept, registry.Logger);
         if (plan.Capture is not null)
         {
             CreateShotRoot(ProjectPrep.LogFolder(plan.ProjectDir), context.RunId, registry.Logger);
@@ -1398,6 +1401,7 @@ internal sealed class ScratchRun
             {
                 OutputLogPath = ScratchRunLogs.PathFor(ProjectPrep.LogFolder(_plan.ProjectDir), session.Name, _runId),
             };
+            _freeMemoryMb = FreeMemory.AvailableMb();
             LaunchResult launched = await session.LaunchAsync(request, cancellationToken);
             _logPath = launched.Log;
         }
@@ -1535,31 +1539,33 @@ internal sealed class ScratchRun
             if (memory is not null)
             {
                 await memory.DisposeAsync();
+                memory.FinalRead();
             }
+
+            _memoryPeak = memory?.PeakMegabytes;
         }
     }
 
     /// <summary>
-    /// The watch of the scene's game against its memory ceiling, started: null when the scene has no ceiling, and one whose game
-    /// reported no process id is named in the scene's warnings and left unwatched.
+    /// The watch of the scene's game, started: it tracks the game's peak memory for every scene, and checks its memory ceiling
+    /// when it has one. Null only when the game reported no process id, which a scene with a ceiling is warned of.
     /// </summary>
     private ScratchMemoryWatch? MemoryWatch(GodotSession session, CancellationTokenSource play)
     {
-        if (_scene.MemoryCeiling is not { } ceiling)
-        {
-            return null;
-        }
-
         if (session.GameProcessId is not { } game)
         {
-            _warnings.Add(
-                "the scene's game reported no process id, so its memory ceiling of "
-                    + $"{ceiling.Megabytes.ToString(CultureInfo.InvariantCulture)} MB was not watched"
-            );
+            if (_scene.MemoryCeiling is { } ceiling)
+            {
+                _warnings.Add(
+                    "the scene's game reported no process id, so its memory ceiling of "
+                        + $"{ceiling.Megabytes.ToString(CultureInfo.InvariantCulture)} MB was not watched"
+                );
+            }
+
             return null;
         }
 
-        ScratchMemoryWatch watch = new(ceiling, _registry.Clock.Time, play);
+        ScratchMemoryWatch watch = new(_scene.MemoryCeiling, _registry.Clock.Time, play);
         watch.Start(game);
         return watch;
     }
@@ -2462,6 +2468,8 @@ internal sealed class ScratchRun
             StepNames = NamedSteps,
             TimeScale = _scene.TimeScale == _plan.TimeScale ? null : _scene.TimeScale,
             ExitHold = _scene.ExitHold,
+            PeakPrivateMb = _memoryPeak,
+            FreeMemoryMb = _freeMemoryMb,
             Warnings = [.. _warnings],
             Watch = _watch,
             Listed = _plan.ListSteps,
