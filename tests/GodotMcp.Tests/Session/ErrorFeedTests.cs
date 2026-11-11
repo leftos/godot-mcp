@@ -112,6 +112,76 @@ public sealed class ErrorFeedTests
         Assert.Equal(0, feed.Dropped);
     }
 
+    [Fact]
+    public void AMarkEntryIsNotAnErrorAndRecordsTheSeqBeforeIt()
+    {
+        ErrorFeed feed = new();
+
+        feed.Receive(Frame(("error", "a"), ("error", "b"), ("mark", "step 0 end"), ("warning", "c")));
+
+        Assert.Equal(["a", "b", "c"], feed.Since(0, 10).Select(entry => entry.Message));
+        Assert.Equal([1L, 2L, 3L], feed.Since(0, 10).Select(entry => entry.Seq));
+        Assert.Equal(["a", "b"], feed.ErrorsSince(0).Select(entry => entry.Message));
+        Assert.Equal(3, feed.Mark());
+        (IReadOnlyList<ErrorEntry> taken, long? mark) = feed.TakeThrough(0, "step 0 end", warnings: true);
+        Assert.Equal(2, mark);
+        Assert.Equal(["a", "b"], taken.Select(entry => entry.Message));
+    }
+
+    [Fact]
+    public void TakingThroughAMarkLeavesLaterEntriesForTheNextWindow()
+    {
+        ErrorFeed feed = new();
+        feed.Receive(Frame(("error", "mine"), ("mark", "step 0 end"), ("error", "next")));
+
+        (IReadOnlyList<ErrorEntry> taken, long? mark) = feed.TakeThrough(0, "step 0 end", warnings: false);
+        IReadOnlyList<ErrorEntry> rest = feed.JudgedSince(mark!.Value, warnings: false);
+
+        Assert.Equal(["mine"], taken.Select(entry => entry.Message));
+        Assert.Equal(1, mark);
+        Assert.Equal(["next"], rest.Select(entry => entry.Message));
+    }
+
+    [Fact]
+    public void AMissingMarkTakesNothing()
+    {
+        ErrorFeed feed = new();
+        feed.Receive(Frame(("error", "a"), ("warning", "w"), ("error", "b")));
+
+        (IReadOnlyList<ErrorEntry> taken, long? mark) = feed.TakeThrough(0, "step 0 end", warnings: false);
+
+        Assert.Null(mark);
+        Assert.Empty(taken);
+        Assert.Equal(["a", "b"], feed.JudgedSince(0, warnings: false).Select(entry => entry.Message));
+    }
+
+    [Fact]
+    public void TwoMarksCutThreeWindows()
+    {
+        ErrorFeed feed = new();
+        feed.Receive(Frame(("error", "one"), ("mark", "step 0 end"), ("error", "two")));
+        feed.Receive(Frame(("warning", "three"), ("mark", "step 1 end"), ("error", "four")));
+
+        (IReadOnlyList<ErrorEntry> first, long? firstMark) = feed.TakeThrough(0, "step 0 end", warnings: true);
+        (IReadOnlyList<ErrorEntry> second, long? secondMark) = feed.TakeThrough(firstMark!.Value, "step 1 end", warnings: true);
+        IReadOnlyList<ErrorEntry> third = feed.JudgedSince(secondMark!.Value, warnings: true);
+
+        Assert.Equal(["one"], first.Select(entry => entry.Message));
+        Assert.Equal(["two", "three"], second.Select(entry => entry.Message));
+        Assert.Equal(["four"], third.Select(entry => entry.Message));
+        Assert.Equal((1L, 3L), (firstMark.Value, secondMark.Value));
+    }
+
+    private static JsonObject Frame(params (string Type, string Message)[] entries) =>
+        new()
+        {
+            ["type"] = "errors",
+            ["dropped"] = 0,
+            ["entries"] = new JsonArray([
+                .. entries.Select(entry => (JsonNode)new JsonObject { ["type"] = entry.Type, ["message"] = entry.Message }),
+            ]),
+        };
+
     private static ErrorEntry Entry(string message, string type = ErrorFeed.ErrorType) =>
         new(0, type, message, "res://x.gd", 1, "f", [], string.Empty);
 }

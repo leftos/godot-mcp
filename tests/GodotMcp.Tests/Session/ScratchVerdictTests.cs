@@ -277,6 +277,92 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void ATakeThroughAMarkMovesTheFeedMarkToTheMarkNotToTheLastTaken()
+    {
+        const string Marker = ScratchRun.MarkerPrefix + "step 0 end n1";
+        ErrorFeed feed = new();
+        long mark = feed.Mark();
+        feed.Receive(ErrorsFrame(("error", "mine"), ("warning", "careful"), (ErrorFeed.EndMarkType, Marker), ("error", "the next step's")));
+
+        IReadOnlyList<ErrorEntry>? taken = ScratchRun.TakeErrors(feed, ref mark, warnings: false, Marker);
+        long afterTake = mark;
+        IReadOnlyList<ErrorEntry> next = ScratchRun.TakeErrors(feed, ref mark, warnings: false);
+
+        Assert.Equal(["mine"], taken!.Select(entry => entry.Message));
+        Assert.Equal(2, afterTake);
+        Assert.Equal(["the next step's"], next.Select(entry => entry.Message));
+    }
+
+    [Fact]
+    public void AWindowTheBridgeDidNotEndTakesEverythingAsBefore()
+    {
+        const string Marker = ScratchRun.MarkerPrefix + "step 0 end n1";
+        ErrorFeed feed = new();
+        long mark = feed.Mark();
+        feed.Receive(ErrorsFrame(("error", "mine"), ("error", "late")));
+
+        IReadOnlyList<ErrorEntry>? missing = ScratchRun.TakeErrors(feed, ref mark, warnings: false, Marker);
+        long afterMissing = mark;
+        IReadOnlyList<ErrorEntry> everything = ScratchRun.TakeErrors(feed, ref mark, warnings: false);
+
+        Assert.Null(missing);
+        Assert.Equal(0, afterMissing);
+        Assert.Equal(["mine", "late"], everything.Select(entry => entry.Message));
+        Assert.Equal(2, mark);
+    }
+
+    [Fact]
+    public void AWindowFallsBackWithAReasonOnlyWhenItsWaitCarriedTheMarker()
+    {
+        const string Marker = ScratchRun.MarkerPrefix + "step 0 end n1";
+
+        Assert.Null(ScratchRun.FallbackReason(endMarked: null, markTaken: false, Marker));
+        Assert.Null(ScratchRun.FallbackReason(endMarked: true, markTaken: true, Marker));
+        Assert.Equal("the bridge did not end the wait", ScratchRun.FallbackReason(endMarked: false, markTaken: false, Marker));
+        Assert.Equal($"the feed has no mark {Marker}", ScratchRun.FallbackReason(endMarked: true, markTaken: false, Marker));
+    }
+
+    [Fact]
+    public void AStepThatStopsTheWalkListsTheErrorsRaisedAfterItsCut()
+    {
+        const string Marker = ScratchRun.MarkerPrefix + "step 0 end n1";
+        ErrorFeed feed = new();
+        long mark = feed.Mark();
+        feed.Receive(ErrorsFrame(("error", "mine"), (ErrorFeed.EndMarkType, Marker), ("error", "from GetStatus")));
+        IReadOnlyList<ErrorEntry> window = ScratchRun.TakeErrors(feed, ref mark, warnings: false, Marker)!;
+
+        ScratchStep stopped = ScratchRun.WithErrorsAfterCut(Step(0) with { Errors = window }, feed, ref mark, warnings: false);
+
+        Assert.Equal(["mine"], stopped.Errors.Select(entry => entry.Message));
+        Assert.Equal(["from GetStatus"], stopped.ErrorsAfterCut.Select(entry => entry.Message));
+        Assert.Equal(2, mark);
+    }
+
+    [Fact]
+    public void AStepStoppedByAPatternLineKeepsItsStopReasonAndListsItsErrorsAfterTheCutApart()
+    {
+        ScratchPattern pattern = new(ScratchProfile.Compile("^FAIL"), "the scenes' own assertion prefix");
+        ErrorEntry afterCut = new(0, ErrorFeed.ErrorType, "from GetStatus", "res://a.gd", 3, "GetStatus", [], string.Empty);
+        ScratchStep stopped = Step(0) with { Lines = ["FAIL: the tray did not drop"], ErrorsAfterCut = [afterCut] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(stopped), Plain with { Patterns = [pattern] });
+
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
+        Assert.Equal("FAIL: the tray did not drop", result.FailedAt!.Error);
+        Assert.Equal(new ScratchMatch("^FAIL", "the scenes' own assertion prefix"), result.FailedAt.Pattern);
+        JsonNode step = json["details"]![0]!;
+        Assert.Equal("from GetStatus", step["errorsAfterCut"]![0]!["message"]!.GetValue<string>());
+        Assert.Empty(step["errors"]?.AsArray() ?? []);
+    }
+
+    [Theory]
+    [InlineData(true, "The bridge refused 'wait_for': no method PlayStep", "PlayStep failed: The bridge refused 'call_method': no method PlayStep")]
+    [InlineData(true, "The connection closed.", "PlayStep failed: The connection closed.")]
+    [InlineData(false, "gone", "wait_for 500 game ms failed: gone")]
+    public void APacedWaitsFailureIsPlayStepsWhenItCarriedTheCallElseThePaces(bool called, string message, string expected) =>
+        Assert.Equal(expected, ScratchRun.PacedWaitFailed(500, called, message));
+
+    [Fact]
     public void AWarningInAFullDetailsStepIsListedAsAWarning()
     {
         ScratchStep warned = Step(0) with { Errors = [Warning("slow frame", "res://a.gd", 3)] };
@@ -1147,6 +1233,30 @@ public sealed class ScratchVerdictTests
         );
         Assert.Equal(
             ["[scratch] next step out"],
+            Window(stdout.Page(100, null), stderr.Page(100, null), end, new LineMark(long.MaxValue, long.MaxValue))
+        );
+    }
+
+    [Fact]
+    public void AWindowEndsAtThePrintedMarkWhetherOrNotTheRunnerSentIt()
+    {
+        const string Marker = ScratchRun.MarkerPrefix + "step 0 end n1";
+        OutputBuffer stdout = new(100);
+        OutputBuffer stderr = new(100);
+        LineMark start = new(0, 0);
+        stdout.Add("[scratch] PlayStep line");
+        stdout.Add(Marker);
+        stderr.Add(Marker);
+        stdout.Add("[scratch] GetStatus line");
+        stderr.Add("ERROR: GetStatus error");
+        stdout.Add(Marker);
+        stderr.Add(Marker);
+        LineMark end = ScratchRun.Markers(stdout.Page(100, null), stderr.Page(100, null), start, Marker)!.Value;
+
+        Assert.Equal(new LineMark(2, 1), end);
+        Assert.Equal(["[scratch] PlayStep line"], Window(stdout.Page(100, null), stderr.Page(100, null), start, end));
+        Assert.Equal(
+            ["[scratch] GetStatus line", "ERROR: GetStatus error"],
             Window(stdout.Page(100, null), stderr.Page(100, null), end, new LineMark(long.MaxValue, long.MaxValue))
         );
     }
@@ -2752,6 +2862,16 @@ public sealed class ScratchVerdictTests
         JsonSerializer.SerializeToNode(ScratchVerdict.Summarise(scenes, PrepResult.Skipped, timeScale: 1), ToolJson.Options)!.AsObject();
 
     private static JsonObject Json(ScratchSceneResult result) => JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
+
+    private static JsonObject ErrorsFrame(params (string Type, string Message)[] entries) =>
+        new()
+        {
+            ["type"] = "errors",
+            ["dropped"] = 0,
+            ["entries"] = new JsonArray([
+                .. entries.Select(entry => (JsonNode)new JsonObject { ["type"] = entry.Type, ["message"] = entry.Message }),
+            ]),
+        };
 
     private static List<string> Window(OutputPage stdout, OutputPage stderr, LineMark after, LineMark before) =>
         ScratchRun.Window(stdout, stderr, after, before, "n1");

@@ -33,6 +33,12 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
 
     public IReadOnlyList<ErrorEntry> Errors { get; init; } = [];
 
+    /// <summary>
+    /// For a step that stopped the walk, the feed entries raised after its window ended (its GetStatus's), which no later window
+    /// takes: shown in its details, never judged.
+    /// </summary>
+    public IReadOnlyList<ErrorEntry> ErrorsAfterCut { get; init; } = [];
+
     public IReadOnlyList<string> Lines { get; init; } = [];
 
     /// <summary>How many of the window's lines the output buffer no longer held when the window closed.</summary>
@@ -245,6 +251,10 @@ internal sealed record ScratchStepResult(
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<ScratchError>? Errors { get; init; }
+
+    /// <summary>A step that stopped the walk: the errors raised after its window ended, shown and never judged; null when none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ScratchError>? ErrorsAfterCut { get; init; }
 
     /// <summary>How many distinct errors did not fit in <see cref="Errors"/>; null when all did.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -1025,6 +1035,7 @@ internal static partial class ScratchVerdict
             {
                 Errors = [.. folded.Take(limits.Errors).Select(entry => Folded(entry, limits.MessageChars))],
                 ErrorsOmitted = folded.Count > limits.Errors ? folded.Count - limits.Errors : null,
+                ErrorsAfterCut = AfterCut(step, limits),
                 Error = error,
             },
             StepLines(step, rules.Patterns, rules.DetailChars),
@@ -1094,6 +1105,15 @@ internal static partial class ScratchVerdict
 
         return lines;
     }
+
+    /// <summary>
+    /// A stopping step's errors raised after its window ended, collapsed and cut to the limits' count and message characters as
+    /// its errors are; null when it has none.
+    /// </summary>
+    private static IReadOnlyList<ScratchError>? AfterCut(ScratchStep step, DetailLimits limits) =>
+        step.ErrorsAfterCut.Count == 0
+            ? null
+            : [.. ErrorReport.Collapse([.. step.ErrorsAfterCut]).Take(limits.Errors).Select(entry => Folded(entry, limits.MessageChars))];
 
     /// <summary>
     /// The step with its lines, at most the limits' count then "… N more", fitted with its error and errors in the limits'

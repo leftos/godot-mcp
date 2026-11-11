@@ -505,6 +505,13 @@ internal sealed class ScratchRun
         "The output window over a scratch scene's GetStepUntil reads before the walk did not close on its markers: {Error}"
     );
 
+    /// <summary>A window whose last wait carried its end marker that still closed at the runner's own marker, and why.</summary>
+    private static readonly Action<ILogger, string, string, Exception?> WindowFellBack = LoggerMessage.Define<string, string>(
+        LogLevel.Warning,
+        default,
+        "scratch: {Label} window fell back to the runner's marker: {Why}"
+    );
+
     private static readonly TimeSpan MarkerPoll = TimeSpan.FromMilliseconds(10);
     private static readonly LineMark EveryLine = new(long.MaxValue, long.MaxValue);
 
@@ -988,12 +995,6 @@ internal sealed class ScratchRun
         }
     }
 
-    /// <summary>
-    /// The game ms still to wait of a paced step's pace of <paramref name="paceMs"/> after its shot condition held: the pace less
-    /// the game time the met wait_for <paramref name="reply"/> ran from PlayStep (its gameMs); 0 when none is left.
-    /// </summary>
-    internal static int ShotRemainderMs(JsonNode? reply, int paceMs) => Math.Max(0, paceMs - UntilFigures(reply).GameMs);
-
     /// <summary>Why a step's shot failed when its shot condition did not hold before its pace had run.</summary>
     internal const string ShotNotHeld = "its shot condition did not hold within its pace";
 
@@ -1296,6 +1297,33 @@ internal sealed class ScratchRun
         mark = errors.Count == 0 ? mark : Math.Max(mark, errors.Max(entry => entry.Seq));
         return errors;
     }
+
+    /// <summary>
+    /// The window's take through the bridge's end mark <paramref name="endMark"/> (<see cref="ErrorFeed.TakeThrough"/>): the
+    /// entries after <paramref name="mark"/> up to the end mark, moving <paramref name="mark"/> to the end mark itself, not to
+    /// the last entry taken, so the entries after it stay for the next window. Null, with <paramref name="mark"/> left where it
+    /// was, when the feed never received the end mark: the window then takes everything
+    /// (<see cref="TakeErrors(ErrorFeed, ref long, bool)"/>).
+    /// </summary>
+    internal static IReadOnlyList<ErrorEntry>? TakeErrors(ErrorFeed feed, ref long mark, bool warnings, string endMark)
+    {
+        (IReadOnlyList<ErrorEntry> errors, long? end) = feed.TakeThrough(mark, endMark, warnings);
+        if (end is not { } at)
+        {
+            return null;
+        }
+
+        mark = Math.Max(mark, at);
+        return errors;
+    }
+
+    /// <summary>
+    /// A step that stops the walk with the feed's entries after its window's end (<paramref name="mark"/>, which moves past them)
+    /// as its errorsAfterCut, since no later window takes them: what the runner's calls after the cut (its GetStatus) raised.
+    /// They are shown only, never judged, so the step's stop reason stays its own.
+    /// </summary>
+    internal static ScratchStep WithErrorsAfterCut(ScratchStep step, ErrorFeed feed, ref long mark, bool warnings) =>
+        TakeErrors(feed, ref mark, warnings) is { Count: > 0 } after ? step with { ErrorsAfterCut = after } : step;
 
     /// <summary>
     /// The entries of <paramref name="skipped"/>, in their order, that <paramref name="window"/> does not hold again: each matched
@@ -1715,7 +1743,7 @@ internal sealed class ScratchRun
             return error;
         }
 
-        (_launchLines, _, error) = await CloseWindowAsync(session, "launch", cancellationToken);
+        (_launchLines, _, error) = await CloseWindowAsync(session, "launch", printed: false, cancellationToken);
         _bootErrors = TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed);
         return error;
     }
@@ -1910,11 +1938,13 @@ internal sealed class ScratchRun
             _inFlight = index;
             _observer?.StepStarted(_index, index, _names[index], _names.Count, _walk.RemainingSecondsAtMost(index));
             ScratchStep step = await PlayStepAsync(session, index, limit);
-            _steps.Add(step);
             if (StopsAfter(step, _plan.Patterns, _plan.KeepGoing))
             {
+                _steps.Add(WithErrorsAfterCut(step, session.Errors, ref _feedMark, _plan.WarningsRed));
                 return;
             }
+
+            _steps.Add(step);
         }
 
         _inFlight = -1;
@@ -1937,8 +1967,12 @@ internal sealed class ScratchRun
             : await PlayInsideUntilAsync(session, index, wait, limit);
         StepShot shot = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
-        (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
-        IReadOnlyList<ErrorEntry> window = TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed);
+        (List<string> lines, long dropped, string? markerError, IReadOnlyList<ErrorEntry> window) = await EndWindowAsync(
+            session,
+            $"step {index}",
+            played.EndMarked,
+            limit
+        );
         (string? error, ErrorEntry? raised) =
             played.BridgeError is not { } bridgeError ? UnmetFailure(played.Until, played.Error, window)
             : played.ShotWaited ? ShotWaitFailure(index, _names[index], bridgeError, window)
@@ -2079,7 +2113,8 @@ internal sealed class ScratchRun
             return await PlayToShotAsync(session, index, gameMs, shotWait, limit);
         }
 
-        return new StepPlay(await PlayPacedAsync(session, index, gameMs, limit), null, null) { ShotFailure = refusal };
+        (string? error, bool? endMarked) = await PlayPacedAsync(session, index, gameMs, limit);
+        return new StepPlay(error, null, null) { ShotFailure = refusal, EndMarked = endMarked };
     }
 
     /// <summary>
@@ -2102,41 +2137,53 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// One wait_for on a paced step's shot condition, PlayStep its call, ended when the condition holds, whose met frame is the
-    /// shot, or once the step's pace has run in game time, released as the pace's own wait is: when met, the rest of the pace is
-    /// waited (<see cref="ShotRemainderMs"/>); when not, the shot fails (<see cref="ShotNotHeld"/>), and a game clock that did
-    /// not run the pace fails the step as a paced step's wait does. A wait that failed on the connection or the session is the
-    /// step's error (<see cref="ShotWaitFailed"/>); the bridge's refusal of it is judged once the step's feed entries are in
+    /// shot, or once the step's pace has run in game time, released as the pace's own wait is: when met, the bridge holds the
+    /// wait until the pace has run (endMarkerAtGameMs) and ends the step's window there (<see cref="EndMarker"/>); when not, the
+    /// shot fails (<see cref="ShotNotHeld"/>) and the wait's end ends the window. Either way a game clock that did not run the
+    /// pace fails the step as a paced step's wait does. A wait that failed on the connection or the session is the step's error
+    /// (<see cref="ShotWaitFailed"/>); the bridge's refusal of it is judged once the step's feed entries are in
     /// (<see cref="ShotWaitFailure"/>).
     /// </summary>
     private async Task<StepPlay> PlayToShotAsync(GodotSession session, int index, int gameMs, JsonObject wait, CancellationToken limit)
     {
         TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
+        wait["endMarker"] = EndMarker($"step {index}");
+        wait["endMarkerAtGameMs"] = gameMs;
         try
         {
             JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
             ScratchUntil figures = UntilFigures(reply);
-            if (!figures.Met)
+            string? stoodStill = figures.GameMs < gameMs ? PaceNotMet(gameMs, release) : null;
+            return new StepPlay(stoodStill, null, null)
             {
-                string? stoodStill = figures.GameMs < gameMs ? PaceNotMet(gameMs, release) : null;
-                return new StepPlay(stoodStill, null, null) { ShotFailure = ShotNotHeld, ShotWaited = true };
-            }
-
-            int remaining = ShotRemainderMs(reply, gameMs);
-            string? waitError = remaining > 0 ? (await WaitAsync(session, remaining, limit)).Error : null;
-            return new StepPlay(waitError, null, null) { Reply = reply, ShotWaited = true };
+                Reply = figures.Met ? reply : null,
+                ShotFailure = figures.Met ? null : ShotNotHeld,
+                ShotWaited = true,
+                EndMarked = EndMarked(reply),
+            };
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
         {
             (string? error, string? refusal) = ShotCaught(index, _names[index], e);
-            return new StepPlay(error, refusal, null) { ShotWaited = true };
+            return new StepPlay(error, refusal, null) { ShotWaited = true, EndMarked = UnmarkedUnlessClosed(e) };
         }
     }
 
-    /// <summary>PlayStep, then a wait of the step's pace in game time: null, or why the call or the wait failed.</summary>
-    private async Task<string?> PlayPacedAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
+    /// <summary>
+    /// One wait of the step's pace in game time whose call is PlayStep, so the pace starts in PlayStep's frame and no round trip
+    /// lies inside the step's window, which the wait's end ends (<see cref="EndMarker"/>): null, or why the call or the wait
+    /// failed, and whether the bridge ended the window.
+    /// </summary>
+    private async Task<(string? Error, bool? EndMarked)> PlayPacedAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
     {
-        (_, string? error) = await CallAsync(session, "PlayStep", [index], limit);
-        return error ?? (await WaitAsync(session, gameMs, limit)).Error;
+        JsonObject call = new()
+        {
+            ["node"] = _rootPath,
+            ["method"] = "PlayStep",
+            ["args"] = new JsonArray(index),
+        };
+        (string? error, bool closed, bool endMarked) = await WaitAsync(session, gameMs, EndMarker($"step {index}"), call, limit);
+        return (error, closed ? null : endMarked);
     }
 
     /// <summary>
@@ -2200,7 +2247,7 @@ internal sealed class ScratchRun
     /// </summary>
     private async Task PassOverReadLinesAsync(GodotSession session, CancellationToken cancellationToken)
     {
-        (List<string> lines, _, string? markerError) = await CloseWindowAsync(session, "until reads", cancellationToken);
+        (List<string> lines, _, string? markerError) = await CloseWindowAsync(session, "until reads", printed: false, cancellationToken);
         if (markerError is not null)
         {
             EarlyUntilWindowUnclosed(_registry.Logger, markerError, null);
@@ -2255,25 +2302,26 @@ internal sealed class ScratchRun
     {
         TimeSpan guard = _walk.GuardOf(index);
         TimeSpan release = _bounds.UntilReleaseOf(guard);
+        wait["endMarker"] = EndMarker($"step {index}");
         try
         {
             JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
             ScratchUntil until = UntilFigures(reply);
             string? notMet = until.Met ? null : UntilMissed(index, _names[index], until, guard.TotalSeconds, _scene.TimeScale);
-            return new StepPlay(notMet, null, until) { Reply = reply };
+            return new StepPlay(notMet, null, until) { Reply = reply, EndMarked = EndMarked(reply) };
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
         {
             (string? error, string? refusal) = UntilCaught(index, _names[index], e);
-            return new StepPlay(error, refusal, null);
+            return new StepPlay(error, refusal, null) { EndMarked = UnmarkedUnlessClosed(e) };
         }
     }
 
     /// <summary>
     /// How a step's play went: why it failed, or the bridge's refusal of its until's wait or its shot condition's wait, the
     /// until's figures, its wait_for reply, which holds the met frame's screenshot for a captured step (its until's, or its shot
-    /// condition's), why its shot already failed in the play, and whether the play waited on its shot condition, which says
-    /// whose wait a refusal is.
+    /// condition's), why its shot already failed in the play, whether the play waited on its shot condition, which says
+    /// whose wait a refusal is, and whether the bridge ended the step's window as the step's last wait ended.
     /// </summary>
     private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until)
     {
@@ -2282,36 +2330,102 @@ internal sealed class ScratchRun
         public string? ShotFailure { get; init; }
 
         public bool ShotWaited { get; init; }
+
+        /// <summary>Whether the bridge ended the step's window as its last wait ended; null when no wait carrying the marker ran.</summary>
+        public bool? EndMarked { get; init; }
     }
 
     /// <summary>
     /// The wait after the last step, the exit hold else that step's pace, the longer of its game time and its wall time: an
-    /// error in the feed during it (or a warning when scratch.warnings is "red"), or a wait not met, fails the scene's exit.
+    /// error in the feed during it (or a warning when scratch.warnings is "red"), or a wait not met, fails the scene's exit. The
+    /// wait ends the exit's "pace" window (<see cref="EndMarker"/>).
     /// </summary>
     private async Task PaceAfterAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
-        (string? waitError, bool closed) = await WaitAsync(session, gameMs, limit);
-        (_paceLines, _, string? markerError) = await CloseWindowAsync(session, "pace", limit);
-        string? feedError = ScratchVerdict.FeedError(TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed));
+        (string? waitError, bool closed, bool endMarked) = await WaitAsync(session, gameMs, EndMarker("pace"), null, limit);
+        (_paceLines, _, string? markerError, IReadOnlyList<ErrorEntry> errors) = await EndWindowAsync(
+            session,
+            "pace",
+            closed ? null : endMarked,
+            limit
+        );
+        string? feedError = ScratchVerdict.FeedError(errors);
         _afterClosed = closed && feedError is null;
         // A closed connection's wait error comes before the marker's, which then fails only because the game is gone.
         _afterError = feedError ?? waitError ?? markerError;
     }
 
     /// <summary>
-    /// Has the game print a marker line to stdout and to stderr, waits until both have arrived, and returns the lines of the
-    /// window they close, the marker lines left out, and how many of its lines the output buffer no longer held; the next
-    /// window starts after the markers. When the markers fail or do not arrive in time, the window takes every line so far,
-    /// with why.
+    /// Ends the window <paramref name="label"/> of a step or of the exit, whose last wait has ended: when the bridge ended it
+    /// (<paramref name="endMarked"/>, the wait's reply said so) and the feed holds its mark, at the marker lines the bridge
+    /// printed and the feed's mark, so what the game printed or raised after the wait's end, the runner's own calls since
+    /// included, stays for the next window; else as before, at a marker the game is told to print now, taking every feed entry
+    /// so far. A window whose last wait carried its marker (<paramref name="endMarked"/> not null) and still falls back is logged
+    /// (<see cref="FallbackReason"/>). Returns the window's lines, how many the output buffer no longer held, why its markers
+    /// failed, and its entries.
+    /// </summary>
+    private async Task<(List<string> Lines, long Dropped, string? Error, IReadOnlyList<ErrorEntry> Errors)> EndWindowAsync(
+        GodotSession session,
+        string label,
+        bool? endMarked,
+        CancellationToken limit
+    )
+    {
+        string marker = EndMarker(label);
+        IReadOnlyList<ErrorEntry>? marked = endMarked == true ? TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed, marker) : null;
+        if (FallbackReason(endMarked, marked is not null, marker) is { } why)
+        {
+            WindowFellBack(_registry.Logger, label, why, null);
+        }
+
+        (List<string> lines, long dropped, string? error) = await CloseWindowAsync(session, label, marked is not null, limit);
+        return (lines, dropped, error, marked ?? TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed));
+    }
+
+    /// <summary>
+    /// Why a window whose last wait was sent with its marker falls back to the runner's marker: the bridge did not end the wait
+    /// (<paramref name="endMarked"/> false: the reply lacked endMarked, or the wait failed), or it did but the feed holds no mark
+    /// <paramref name="marker"/> (<paramref name="markTaken"/> false); null when the window ends at the bridge's marker, or when no
+    /// wait carried the marker (<paramref name="endMarked"/> null: no wait ran).
+    /// </summary>
+    internal static string? FallbackReason(bool? endMarked, bool markTaken, string marker) =>
+        endMarked switch
+        {
+            false => "the bridge did not end the wait",
+            true when !markTaken => $"the feed has no mark {marker}",
+            _ => null,
+        };
+
+    /// <summary>
+    /// The marker line that ends the window <paramref name="label"/>, which the bridge prints when it ends the window itself
+    /// (the server-only endMarker of the window's last wait_for) and the game is told to print otherwise (<see cref="MarkerScript"/>).
+    /// </summary>
+    private string EndMarker(string label) => $"{MarkerPrefix}{label} end {_nonce}";
+
+    /// <summary>
+    /// A marked wait that threw: not ended by the bridge (false), or null when the game closed the connection, whose window then
+    /// falls back as expected, unreported.
+    /// </summary>
+    private static bool? UnmarkedUnlessClosed(Exception e) => e is IOException ? null : false;
+
+    /// <summary>Whether a wait_for reply says the bridge ended the window as the wait ended (its result's endMarked).</summary>
+    private static bool EndMarked(JsonNode? reply) => reply?["endMarked"] is JsonValue value && value.TryGetValue(out bool marked) && marked;
+
+    /// <summary>
+    /// Has the game print a marker line to stdout and to stderr, unless the bridge has already printed it
+    /// (<paramref name="printed"/>), waits until both have arrived, and returns the lines of the window they close, the marker
+    /// lines left out, and how many of its lines the output buffer no longer held; the next window starts after the markers.
+    /// When the markers fail or do not arrive in time, the window takes every line so far, with why.
     /// </summary>
     private async Task<(List<string> Lines, long Dropped, string? Error)> CloseWindowAsync(
         GodotSession session,
         string label,
+        bool printed,
         CancellationToken limit
     )
     {
-        string marker = $"{MarkerPrefix}{label} end {_nonce}";
-        (_, string? error) = await ScriptAsync(session, MarkerScript(marker), limit);
+        string marker = EndMarker(label);
+        string? error = printed ? null : (await ScriptAsync(session, MarkerScript(marker), limit)).Error;
         LineMark? found = error is null ? await WaitForMarkersAsync(session, marker, limit) : null;
         (OutputPage stdout, OutputPage stderr, LineMark total) = Output(session);
         LineMark after = _mark;
@@ -2405,9 +2519,17 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// wait_for {gameMs}: null once the game's clock has run that long; else why it did not, and whether that was the game closing
-    /// the bridge connection. Released at that game time at the scene's time scale plus the step allowance.
+    /// the bridge connection. Released at that game time at the scene's time scale plus the step allowance. The wait's end, met
+    /// or not, ends the window <paramref name="endMarker"/> closes (the bridge prints it and marks the error feed), and the
+    /// reply says whether it did.
     /// </summary>
-    private async Task<(string? Error, bool Closed)> WaitAsync(GodotSession session, int gameMs, CancellationToken limit)
+    private async Task<(string? Error, bool Closed, bool EndMarked)> WaitAsync(
+        GodotSession session,
+        int gameMs,
+        string endMarker,
+        JsonObject? call,
+        CancellationToken limit
+    )
     {
         TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
         JsonObject parameters = new()
@@ -2415,21 +2537,43 @@ internal sealed class ScratchRun
             ["gameMs"] = gameMs,
             ["kind"] = "gameMs",
             ["timeoutMs"] = (int)release.TotalMilliseconds,
+            ["endMarker"] = endMarker,
         };
+        if (call is not null)
+        {
+            parameters["call"] = call;
+            parameters["keepRaised"] = true;
+        }
+
         try
         {
             JsonNode? reply = await session.SendAsync("wait_for", parameters, release + ReplyAllowance, limit, release);
-            return (reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet ? PaceNotMet(gameMs, release) : null, false);
+            string? notMet = reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet ? PaceNotMet(gameMs, release) : null;
+            return (notMet, false, EndMarked(reply));
         }
         catch (IOException e)
         {
-            return (PaceFailed(gameMs, e.Message), true);
+            return (PaceFailed(gameMs, e.Message), true, false);
         }
         catch (Exception e) when (e is InvalidOperationException or SessionException)
         {
-            return (PaceFailed(gameMs, e.Message), false);
+            return (PacedWaitFailed(gameMs, call is not null, e.Message), false, false);
         }
     }
+
+    /// <summary>
+    /// Why a pace wait of <paramref name="gameMs"/> failed with <paramref name="message"/>: when it carried PlayStep as its call
+    /// (<paramref name="called"/>), PlayStep's failure in the words a call_method of it failed with before the pace was one wait
+    /// with it (the bridge's refusal of the wait read as its refusal of call_method); any wait without a call, the pace's failure.
+    /// </summary>
+    internal static string PacedWaitFailed(int gameMs, bool called, string message) =>
+        called ? $"PlayStep failed: {AsCallMethodRefusal(message)}" : PaceFailed(gameMs, message);
+
+    /// <summary><paramref name="message"/> with the bridge's wait_for refusal prefix read as its call_method one.</summary>
+    private static string AsCallMethodRefusal(string message) =>
+        message.StartsWith(BridgeRefusalPrefix, StringComparison.Ordinal)
+            ? $"The bridge refused 'call_method': {message[BridgeRefusalPrefix.Length..]}"
+            : message;
 
     /// <summary>Why a step failed when the game's clock did not run its pace of <paramref name="gameMs"/> before its release.</summary>
     private static string PaceNotMet(int gameMs, TimeSpan release) =>

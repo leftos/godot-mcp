@@ -1,10 +1,11 @@
 extends "res://scratch/scratch_probe.gd"
 ## A scene paced at 0.1 s whose last step, "arm", godot-mcp.json paces at 2 s: that step only arms a
-## flag, the server's GetStatus after it sets a second one, and the wait after the last step, sent
-## only after that step's window closed, starts a 1.5 s game-time timer through the hook on that
-## wait's start, so the error comes from the wait itself and not from server latency. Red with no
-## failed step and the error in its exit; were the wait after the scene's 0.1 s instead, the game
-## would be stopped long before the timer fires.
+## flag, the server's GetStatus after it sets a second one, and the wait after the last step starts
+## a 1.5 s game-time timer through the hook on that wait's start. The step's window ends where its
+## pace wait ended in game time, so the error is the exit's whatever the server's latency; this
+## pins that the wait after the last step is that step's own 2 s pace. Red with no failed step and
+## the error in its exit; were the wait after the scene's 0.1 s instead, the game would be stopped
+## long before the timer fires.
 
 const FIRE_S := 1.5
 const WAIT_STARTED_GROUP := "godot_mcp_wait_started"

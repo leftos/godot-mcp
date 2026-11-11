@@ -15,6 +15,16 @@ Design for GMCP-340, with GMCP-537's option (b) folded in so lines and errors sp
 
 Build after GMCP-552 lands (both edit `ScratchRun.cs`; no shared function).
 
+### After review (orchestrator, fix round 1)
+
+9. Decision 1 is corrected: a game-time wait is met on `seconds`, which at the `process_frame` emission already holds the frame's delta (Godot 4.7.2 `scene/main/scene_tree.cpp`, `SceneTree::process`: `process_time` set, then `process_frame` emitted, then `_process`, then timers). So a timer firing in the frame the clock crosses the pace runs after the cut and belongs to the next step. A draw-checked wait (a shot condition, a captured until) is met at `frame_post_draw`, and its cut lands at the next `process_frame`.
+10. A paced step plays as one `wait_for` whose call is PlayStep, so its pace starts in PlayStep's frame and no server round trip sits inside the window. A shot met before its pace keeps polling in the bridge until the pace, then ends the window; the server sends no remainder wait.
+11. A step that stops the walk takes the feed's entries after its cut into its own errors, since no later window exists.
+12. An unmet shot wait still ends its window; `endMarkerAtGameMs` gates only a met one.
+13. A bridge with no logger prints no marker and sets no `endMarked`, so `endMarked` always means a mark is in the feed.
+14. A wait sent with `endMarker` whose window still falls back logs one stderr warning naming the step and why.
+15. The exit hold still starts after the last step's GetStatus, shot and window round trips, so how far past the last step's cut an error is still judged moves with latency: booked as its own item, not built here.
+
 ## Explorer's map
 
 PROTOCOL: 1 overlay: none (docs/agents/explore.md absent), read CLAUDE.md rules via the harness (.claude/rules/tool-docs.md seen); 2 README: not re-read (the earlier map's read stands; unmeasured); 3 Task Index: row "A scratch step's feed window" (ARCHITECTURE.md:79) found and used, no row for the line windows or the early reads; 4 design docs: DECISIONS.md grep only (no window or marker decision found), plans/ not read; 5 source: done (ScratchRun.cs, ErrorFeed.cs, bridge time/logger/bridge/signal_wait, Godot 4.7.2 logger.cpp, print_string.cpp, os.cpp, error_macros.cpp); 6 search: used for tests, fixtures, docs; stated below.
@@ -121,7 +131,7 @@ Count: 27 sites, 15 changing (1, 3, 5-11, 18, 23, 25 and the new test fixtures n
 | Case | What the game prints / raises | Lands in |
 |---|---|---|
 | Normal step, line printed in the 2nd frame of the pace | line | that step |
-| Line from a timer at exactly the pace | fires in the frame the clock crosses; the check is the next frame's emission | that step |
+| Line from a timer at exactly the pace | fires in the frame the clock crosses, after that frame's `process_frame` check already saw the pace (decision 9) | next step (exit for the last) |
 | Line from a timer a little past the pace, or any node `_process` in the met frame | after the met check | next step (exit for the last) |
 | Line from the met frame's physics step | before the check | that step |
 | Line printed by GetStatus, the shot, the next GetStepUntil | after the cut | next step (exit's `pace` window for the last step's GetStatus) |
@@ -138,7 +148,7 @@ Count: 27 sites, 15 changing (1, 3, 5-11, 18, 23, 25 and the new test fixtures n
 | Game quits in a step | no marker, no sentinel; IOException | fallback: take everything so far, "end marker failed" error, as today |
 | Game quits in the hold | same, `Closed` true | fallback as today; clean exit 0 still green |
 | Pace wait times out (clock stood still) | bridge ends the poll unmet and prints | up to the poll's end: the step; `PaceNotMet` fails the step |
-| Server released the wait before the bridge replied | no marker until a late answer | fallback / `MarkerTimeout` path |
+| Server released the wait before the bridge replied | the server sends a cancel and waits for its answer, so the poll ends and prints | the marked path |
 | PlayStep itself failed (no wait ran) | none | fallback run_script marker, take everything |
 | Thread print or error in the cut's instant | unspecified | either side |
 

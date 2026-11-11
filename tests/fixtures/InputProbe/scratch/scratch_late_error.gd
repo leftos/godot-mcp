@@ -1,9 +1,10 @@
 extends "res://scratch/scratch_probe.gd"
 ## A scene whose only step only arms a flag: the server's GetStatus after it sets a second flag, and
-## the wait after the last step, which the server sends only after that step's window closed and its
-## errors were taken, starts a 0.5 s game-time timer through the hook on that wait's start, so no
-## margin against server latency is left. The wait is the 2 s godot-mcp.json paces this scene at, so
-## the error is in the exit with no failed step.
+## the wait after the last step starts a 0.5 s game-time timer through the hook on that wait's
+## start. The step's window ends where its pace wait ended in game time, which no server latency
+## moves, so this pins that an error raised inside the wait after the last step is the exit's. The
+## wait is the 2 s godot-mcp.json paces this scene at, so the error is in the exit with no failed
+## step.
 
 const FIRE_S := 0.5
 const WAIT_STARTED_GROUP := "godot_mcp_wait_started"

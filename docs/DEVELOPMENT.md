@@ -215,7 +215,7 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   Unit `EditorSessionTests` and `EditorOutputNoiseTests` and the bridge test `tests/bridge/test_editor_mode.gd` cover the session kind, the output filter and the bridge's editor mode.
 
-  Itests `ScratchFolderTests` (the `scratchfolder` group) and `ScratchFolderParallelTests` (the `scratchparallel` group) play the whole `tests/fixtures/InputProbe/scratch/` folder to its verdicts, one scene at a time and three at a time. They are split from `scratch` and from each other because each makes some 20 to 26 Godot launches in sequence, and launches slow under other work on the machine, so one group of both ran out its 300 s ceiling.
+  Itests `ScratchFolderTests` (the `scratchfolder` group) and `ScratchFolderParallelTests` (the `scratchparallel` group) play the whole `tests/fixtures/InputProbe/scratch/` folder to its verdicts, one scene at a time and three at a time. They are split from `scratch` and from each other because each makes some 20 to 26 Godot launches in sequence, and launches slow under other work on the machine, so one group of both ran out its 300 s ceiling. A new scene in `tests/fixtures/InputProbe/scratch` must also be added to `ScratchFolderTests`' scene, verdict and pace lists and to its counts, since those facts must match the folder.
 
   Itest `ScratchExpectRunTests` (also in the `scratchfolder` group, on the same folder, which holds 21 scenes) plays `ScratchExitLine`, whose `_exit_tree` prints `[scratch] store folder removed: exit-line`, under `scratch.expect` and `scratch.expectFor`: the expected line keeps it green, and one it never prints turns it red with the pattern in `exit.missing`.
 

@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `stop_project` results carry `folder`: whether the folder is clean afterwards, and the running owners of any file left.
 - `run_scratches` takes a ceiling per batch (an `options.ceilings` array, or `--ceiling <scene>#<batch>=<seconds>`), and the profile's `scratch.ceilings` one per headless or windowed run.
 - Every `run_scratches` scene entry reports `peakPrivateMb`, its game's peak private memory, and a failed entry's warnings name the machine's free memory at launch.
+- A `run_scratches` step that stops the walk lists the errors raised after its window ended as `errorsAfterCut`.
 
 ### Changed
 
@@ -17,12 +18,15 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A scratch `userData` game's throwaway `user://` lives under the system temp folder, outside the project, and the server deletes ones a killed server left behind.
 - A project keeps only its 20 newest `run_scratches` shot folders, as it already does its run logs.
 - `crop_screenshot` reads any PNG on a local drive, tracked or outside the checkout, and crops a tracked or outside one into the checkout's `.tmp`.
+- What a scratch scene's `GetStatus` prints or raises belongs to the next step, or the exit, so a `push_error` there fails that one.
+- A paced scratch step's pace starts in its `PlayStep`'s own frame, and a coroutine `PlayStep` is no longer awaited before it.
 
 ### Fixed
 
 - A real-time clip whose encoder stalled over its stop reports its full length: nvenc now encodes without B-frames, which cut a gap at the clip's end.
 - A `run_scratches` step fails on an error another thread or a timer logs while its `GetStepUntil` is read before the walk, instead of staying green.
 - `crop_screenshot` never follows a link to a network path or reads a network drive, which could hand the user's network credentials to that host.
+- A line or error a game prints just after a `run_scratches` step's pace belongs to the next step whatever the server's load.
 
 ## 0.39.0 - 2026-11-10
 

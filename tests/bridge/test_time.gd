@@ -1,4 +1,4 @@
-# gdlint: disable=max-public-methods, private-method-call
+# gdlint: disable=max-public-methods, private-method-call, max-file-lines
 # Each test is a public method the runner finds by its test_ prefix, so the count is the coverage;
 # the tests call the clock's private helpers directly.
 extends "res://gd_test.gd"
@@ -12,6 +12,341 @@ extends "res://gd_test.gd"
 signal test_frame
 
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
+
+
+## Records each line printed while it is registered, as [text, whether it went to stderr].
+class LineRecorder:
+	extends Logger
+
+	var lines: Array = []
+	var _lock := Mutex.new()
+
+	func _log_message(message: String, error: bool) -> void:
+		_lock.lock()
+		lines.append([message.strip_edges(), error])
+		_lock.unlock()
+
+	## The recorded lines whose text is text.
+	func of(text: String) -> Array:
+		_lock.lock()
+		var found: Array = lines.filter(func(line: Array) -> bool: return line[0] == text)
+		_lock.unlock()
+		return found
+
+
+## A wait whose params carry an end marker ends the step's window in the frame its poll ended:
+## the marker goes to stdout, then stderr, and the logger's entries hold it as a mark between the
+## entries logged before the poll's last check and those logged after it.
+# gdlint: ignore=max-line-length
+func test_a_wait_with_an_end_marker_prints_it_to_stdout_and_stderr_and_marks_the_logger_when_it_ends(
+) -> void:
+	var rig: Dictionary = _then_rig()
+	var marker: String = "[test] end marker met"
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	rig["target"].log_to_feed(Logger.ERROR_TYPE_ERROR, "before")
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, {"endMarker": marker}
+	)
+	rig["target"].log_to_feed(Logger.ERROR_TYPE_ERROR, "after")
+	OS.remove_logger(recorder)
+	assert_eq(recorder.of(marker), [[marker, false], [marker, true]], "stdout, then stderr")
+	var entries: Array = rig["bridge"]._logger.take_pending()[0]
+	assert_eq(
+		entries.map(func(entry: Dictionary) -> Array: return [entry["type"], entry["message"]]),
+		[["error", "before"], ["mark", marker], ["error", "after"]],
+		"the mark falls between the entries logged before and after the wait's end"
+	)
+	assert_eq(outcome["result"]["met"], true, "the outcome is kept")
+	_free_then_rig(rig)
+
+
+func test_an_unmet_wait_still_prints_its_end_marker() -> void:
+	var rig: Dictionary = _then_rig()
+	var marker: String = "[test] end marker unmet"
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [false, "idle"], 0, {"endMarker": marker}
+	)
+	OS.remove_logger(recorder)
+	assert_eq(outcome["result"]["met"], false, "the wait ended unmet")
+	assert_eq(recorder.of(marker).size(), 2, "its marker is printed to both streams all the same")
+	assert_eq(outcome["result"].get("endMarked"), true, "and the result says so")
+	assert_eq(
+		rig["bridge"]._logger.take_pending()[0],
+		[{"type": "mark", "message": marker}],
+		"the logger holds its mark"
+	)
+	_free_then_rig(rig)
+
+
+## A shot condition's wait carries endMarkerAtGameMs, the step's pace: met before the game time its
+## last check saw reaches the pace, its poll ends nothing (a captured one is held to the pace,
+## test_a_shot_met_before_its_end_marker_game_ms_prints_it_once_the_clock_reaches_it); at the
+## pace, it ends the window.
+func test_a_shot_wait_met_before_its_limit_prints_no_marker() -> void:
+	var rig: Dictionary = _then_rig()
+	var marker: String = "[test] end marker shot"
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	var params: Dictionary = {"endMarker": marker, "endMarkerAtGameMs": 100, "_gameClock": clock}
+	_time_script.advance_game_clock(clock, false, 0.06)
+	_time_script.advance_game_clock(clock, false, 0.06)
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var early: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, params
+	)
+	var early_lines: int = recorder.of(marker).size()
+	var early_entries: Array = rig["bridge"]._logger.take_pending()[0]
+	_time_script.advance_game_clock(clock, false, 0.06)
+	var at_pace: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, params
+	)
+	OS.remove_logger(recorder)
+	assert_eq(early_lines, 0, "met with 60 ms seen of 100: no marker printed")
+	assert_eq(early_entries, [], "and no mark")
+	assert_true(not early["result"].has("endMarked"), "and the result does not say endMarked")
+	assert_eq(recorder.of(marker).size(), 2, "met with 120 ms seen: the marker is printed")
+	assert_eq(at_pace["result"].get("endMarked"), true, "and the result says so")
+	_free_then_rig(rig)
+
+
+func test_a_wait_without_an_end_marker_prints_nothing() -> void:
+	var rig: Dictionary = _then_rig()
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, {}
+	)
+	OS.remove_logger(recorder)
+	var printed: Array = recorder.lines.filter(
+		func(line: Array) -> bool: return str(line[0]).contains("end marker")
+	)
+	assert_eq(printed, [], "no marker line")
+	assert_eq(rig["bridge"]._logger.take_pending(), [[], 0], "no mark")
+	assert_true(not outcome["result"].has("endMarked"), "no endMarked")
+	_free_then_rig(rig)
+
+
+## endMarked is the server's sign that the bridge ended the window and the feed holds its mark, so
+## it is on the result of a wait that printed its marker; a dormant bridge, with no logger, ends
+## nothing: no marker, no endMarked, and the server closes the window its own way.
+# gdlint: ignore=function-name
+func test_the_result_says_endMarked() -> void:
+	var rig: Dictionary = _then_rig()
+	var marker: String = "[test] end marker said"
+	var dormant: String = "[test] end marker dormant"
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, {"endMarker": marker}
+	)
+	var logger: Logger = rig["bridge"]._logger
+	rig["bridge"]._logger = null
+	var unmarked: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, {"endMarker": dormant}
+	)
+	OS.remove_logger(recorder)
+	rig["bridge"]._logger = logger
+	assert_eq(outcome["result"].get("endMarked"), true, "endMarked: true")
+	assert_true(not unmarked["result"].has("endMarked"), "no logger: no endMarked")
+	assert_eq(recorder.of(dormant), [], "no logger: no marker printed")
+	_free_then_rig(rig)
+
+
+## A paced step's pace is one wait whose call is PlayStep, carrying keepRaised: the call runs in the
+## clock's first frame, which the clock counts, so the pace starts in PlayStep's frame; an error the
+## call logs is its raised, not its failure, as for an until's call. Without keepRaised it fails.
+func test_a_keep_raised_wait_calls_in_its_clocks_first_frame_and_keeps_the_calls_error() -> void:
+	var rig: Dictionary = _then_rig()
+	rig["time"].wait_tree = _compile("extends RefCounted\n\nvar paused: bool = false\n")
+	var call: Dictionary = {"node": "CallTarget", "method": "fail", "args": []}
+	var kept: Array = []
+	var failed: Array = []
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	var keeping := func() -> void:
+		var called: Dictionary = {}
+		var params: Dictionary = {"call": call, "keepRaised": true}
+		var why: String = await rig["time"]._start_with_call(params, called, clock, test_frame)
+		kept.append([why, called])
+	var failing := func() -> void:
+		var other: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+		var why: String = await rig["time"]._start_with_call({"call": call}, {}, other, test_frame)
+		failed.append(why)
+	keeping.call()
+	failing.call()
+	test_frame.emit()
+	rig["bridge"]._logger.take_pending()
+	assert_eq(kept.size(), 1, "the keep-raised start answered")
+	if kept.size() == 1:
+		assert_eq(kept[0][0], "", "the call's logged error is not its failure")
+		assert_eq(kept[0][1], {"value": 3, "raised": "the method failed"}, "its value and raised")
+	assert_eq(clock["frames"], 1, "the call's frame is the clock's first")
+	assert_eq(failed, ["the method failed"], "without keepRaised the logged error fails the call")
+	_free_then_rig(rig)
+
+
+## A shot condition met before its endMarkerAtGameMs, once captured, holds the wait until the game
+## time a check sees reaches it, then ends the window: the server sends no remainder wait.
+func test_a_shot_met_before_its_end_marker_game_ms_prints_it_once_the_clock_reaches_it() -> void:
+	var rig: Dictionary = _then_rig()
+	var tree: RefCounted = _compile("extends RefCounted\n\nsignal process_frame\n")
+	rig["time"].wait_tree = tree
+	var marker: String = "[test] end marker held"
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	var params: Dictionary = {"endMarker": marker, "endMarkerAtGameMs": 100, "_gameClock": clock}
+	_time_script.advance_game_clock(clock, false, 0.06)
+	_time_script.advance_game_clock(clock, false, 0.06)
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcomes: Array = []
+	var holding := func() -> void:
+		outcomes.append(
+			await rig["time"]._hold_to_window_end(
+				{"result": {"met": true}}, params, 60000.0, Time.get_ticks_msec()
+			)
+		)
+	holding.call()
+	tree.process_frame.emit()
+	var held: bool = outcomes.is_empty() and recorder.of(marker).is_empty()
+	_time_script.advance_game_clock(clock, false, 0.06)
+	tree.process_frame.emit()
+	OS.remove_logger(recorder)
+	assert_true(held, "60 ms seen of 100: still held, nothing printed")
+	assert_eq(recorder.of(marker).size(), 2, "120 ms seen: the marker is printed")
+	assert_eq(outcomes.size(), 1, "and the wait answers")
+	if outcomes.size() == 1:
+		assert_eq(outcomes[0]["result"].get("endMarked"), true, "with endMarked")
+	assert_eq(
+		rig["bridge"]._logger.take_pending()[0],
+		[{"type": "mark", "message": marker}],
+		"the logger holds its mark"
+	)
+	_free_then_rig(rig)
+
+
+## A held shot whose clock stands still (frames go by, the game paused) stays held until the server
+## cancels the wait; the cancel still ends the window.
+func test_a_held_shot_stays_held_while_its_clock_stands_still_and_a_cancel_ends_it() -> void:
+	var rig: Dictionary = _then_rig()
+	var tree: RefCounted = _compile("extends RefCounted\n\nsignal process_frame\n")
+	rig["time"].wait_tree = tree
+	var marker: String = "[test] end marker cancelled"
+	var clock: Dictionary = {"seconds": 0.06, "seen": 0.06, "frames": 1}
+	var params: Dictionary = {"endMarker": marker, "endMarkerAtGameMs": 100, "_gameClock": clock}
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcomes: Array = []
+	var holding := func() -> void:
+		outcomes.append(
+			await rig["time"]._hold_to_window_end(
+				{"result": {"met": true}}, params, 60000.0, Time.get_ticks_msec()
+			)
+		)
+	holding.call()
+	for frame in 3:
+		_time_script.advance_game_clock(clock, true, 0.016)
+		tree.process_frame.emit()
+	var held: bool = outcomes.is_empty() and recorder.of(marker).is_empty()
+	params["_cancelled"] = true
+	tree.process_frame.emit()
+	OS.remove_logger(recorder)
+	assert_true(held, "three paused frames: still held, nothing printed")
+	assert_eq(recorder.of(marker).size(), 2, "the cancel ends the window: printed once per stream")
+	assert_eq(outcomes.size(), 1, "and the wait answers")
+	if outcomes.size() == 1:
+		assert_eq(outcomes[0]["result"].get("endMarked"), true, "with endMarked")
+	_free_then_rig(rig)
+
+
+## A paced step's keepRaised wait is never refused on a paused tree: its call (PlayStep, which may
+## unpause it) runs, as an until's does.
+func test_a_keep_raised_wait_on_a_paused_tree_is_not_refused_and_its_call_runs() -> void:
+	var rig: Dictionary = _then_rig()
+	var fixture: Node = _compile(
+		"extends Node\n\n\nfunc _on_godot_mcp_wait_started(_kind: String) -> void:\n\tpass\n"
+	)
+	var tree: Object = _wait_tree_rig(fixture)
+	tree.paused = true
+	rig["time"].wait_tree = tree
+	var params: Dictionary = {
+		"kind": "gameMs",
+		"gameMs": 100,
+		"timeoutMs": 5000,
+		"keepRaised": true,
+		"_cancelled": true,
+		"call": {"node": "CallTarget", "method": "add", "args": [1, 2]},
+	}
+	var outcomes: Array = []
+	var waiting := func() -> void: outcomes.append(await rig["time"].wait_for(params))
+	waiting.call()
+	tree.process_frame.emit()
+	assert_eq(outcomes.size(), 1, "the wait answers")
+	if outcomes.size() == 1:
+		assert_true(outcomes[0].has("result"), "not refused: %s" % outcomes[0])
+	assert_eq(rig["target"].calls, 1, "its call ran")
+	var plain: Dictionary = params.duplicate()
+	plain.erase("keepRaised")
+	var refused: Dictionary = await rig["time"].wait_for(plain)
+	assert_eq(refused, {"error": rig["time"].PAUSED_REFUSAL}, "without keepRaised: refused")
+	fixture.free()
+	_free_then_rig(rig)
+
+
+## endMarkerAtGameMs gates only a met shot wait: one that ends unmet is the step's last wait.
+func test_an_unmet_shot_wait_before_its_end_marker_game_ms_still_ends_its_window() -> void:
+	var rig: Dictionary = _then_rig()
+	var marker: String = "[test] end marker unmet shot"
+	var clock: Dictionary = {"seconds": 0.06, "seen": 0.05, "frames": 2}
+	var params: Dictionary = {"endMarker": marker, "endMarkerAtGameMs": 100, "_gameClock": clock}
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [false, "idle"], 0, params
+	)
+	OS.remove_logger(recorder)
+	assert_eq(recorder.of(marker).size(), 2, "the marker is printed")
+	assert_eq(outcome["result"].get("endMarked"), true, "and the result says so")
+	_free_then_rig(rig)
+
+
+func test_a_signal_wait_with_an_end_marker_ends_its_window() -> void:
+	var rig: Dictionary = _then_rig()
+	var marker: String = "[test] end marker signal"
+	var params: Dictionary = {
+		"node": "CallTarget",
+		"signal": "pinged",
+		"call": {"node": "CallTarget", "method": "ping", "args": [4]},
+		"endMarker": marker,
+	}
+	var hold: Dictionary = {}
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var caught: Variant = rig["time"].signal_wait.signal_probe(params, hold)
+	var outcome: Dictionary = await rig["time"].signal_wait._call_and_poll_signal(
+		caught, params, 1000, hold
+	)
+	OS.remove_logger(recorder)
+	assert_eq(outcome["result"]["met"], true, "the signal wait is met")
+	assert_eq(outcome["result"].get("endMarked"), true, "endMarked")
+	assert_eq(recorder.of(marker).size(), 2, "the marker is printed")
+	_free_then_rig(rig)
+
+
+## A screenshot wait ends its window before any capture; unmet, it never reaches one.
+func test_a_screenshot_wait_with_an_end_marker_ends_its_window() -> void:
+	var rig: Dictionary = _then_rig()
+	var marker: String = "[test] end marker screenshot"
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [false, "idle"], 0, {"endMarker": marker, "screenshot": true}
+	)
+	OS.remove_logger(recorder)
+	assert_eq(outcome["result"].get("endMarked"), true, "endMarked")
+	assert_eq(recorder.of(marker).size(), 2, "the marker is printed")
+	_free_then_rig(rig)
 
 
 func test_paused_refusal_lets_only_a_check_once_wait_run_while_paused() -> void:

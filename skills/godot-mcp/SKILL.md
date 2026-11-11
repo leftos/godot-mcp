@@ -88,7 +88,7 @@ A scene whose root also has a public `GetStepUntil(int)` returns, per step, a `w
 
 Such a step ignores its pace: it waits for its condition, and a condition that has not held after 15 s of load-adjusted time (so a loaded machine that draws fewer frames gets more game time) is hung, red and stops the scene, even with `options.keepGoing`, and the step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`.
 
-A step whose work runs on after `PlayStep` returns (an awaited task, a tween) needs a `GetStepUntil` condition: a paced step's next `PlayStep` comes one pace later whether or not that work is done, `keepGoing` or not. Only errors (`push_error`, `GD.PushError`, a throw from `PlayStep`) and lines the scene's patterns match turn a step red; `GetStatus()` text and `printerr` never do.
+A step whose work runs on after `PlayStep` returns (an awaited task, a tween) needs a `GetStepUntil` condition: a paced step's next `PlayStep` comes one pace later whether or not that work is done, `keepGoing` or not. Only errors (`push_error`, `GD.PushError`, a throw from `PlayStep`) and lines the scene's patterns match turn a step red; `GetStatus()` text and `printerr` never do. A step's window ends at its pace's end in game time, so what `GetStatus()` prints or raises belongs to the next step (or the exit after the last): a `push_error` in it fails that one.
 
 For a windowed look at one moment, run the scene with `run_project` and play its step by the name `run_scratches` reports: `call_method` on the scene root with method `PlayStep` and the name as its one argument (or the same as an `options.call`), with no index to count.
 

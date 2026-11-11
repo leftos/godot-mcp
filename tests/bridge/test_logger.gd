@@ -1,3 +1,5 @@
+# gdlint: disable=max-public-methods
+# Each test is a public method the runner finds by its test_ prefix, so the count is the coverage.
 extends "res://gd_test.gd"
 ## The error feed's logger (bridge/godot_mcp_logger.gd): how an error becomes an entry, where it
 ## is located, and the cap on pending entries. _log_error is called directly, as the engine would.
@@ -84,6 +86,72 @@ func test_pending_is_capped_and_counts_the_dropped() -> void:
 	assert_eq((taken[0] as Array).size(), cap, "entries stop at the cap")
 	assert_eq(taken[1], 3, "the rest are counted as dropped")
 	assert_eq(logger.take_pending(), [[], 0], "taking starts both over")
+
+
+## A held mark after dropped entries is no entry: nothing logged since is lost, and an error held
+## before the drop is still found.
+func test_a_held_mark_after_dropped_entries_is_not_a_lost_entry() -> void:
+	var logger: Logger = _logger_script.new()
+	var none: Array[ScriptBacktrace] = []
+	var cap: int = _logger_script.get_script_constant_map()["MAX_PENDING"]
+	var error: int = Logger.ERROR_TYPE_ERROR
+	for index in cap + 2:
+		logger._log_error("f", "res://a.gd", index, "c%d" % index, "", false, error, none)
+	logger.mark("step 0 end")
+	var next: int = logger.sequence()
+	assert_eq(next, cap + 2, "a mark takes no sequence number")
+	assert_true(not logger.lost_since(next), "nothing logged since the mark: nothing lost")
+	assert_true(logger.lost_since(cap), "an entry dropped over the cap is lost")
+	assert_eq(logger.first_error_since(cap - 1), "c%d" % (cap - 1), "the last held error is found")
+	var sent: Logger = _logger_script.new()
+	sent._log_error("f", "res://a.gd", 1, "sent", "", false, error, none)
+	sent.take_pending()
+	sent.mark("step 1 end")
+	assert_true(sent.lost_since(0), "the entry take_pending sent is no longer held")
+	assert_true(
+		not sent.lost_since(1), "a held mark after it is no entry, so nothing since is lost"
+	)
+	assert_eq(sent.first_error_since(1), "", "and no error since")
+
+
+func test_a_mark_sits_among_the_entries_in_the_order_they_were_appended() -> void:
+	var logger: Logger = _logger_script.new()
+	var none: Array[ScriptBacktrace] = []
+	logger._log_error("f", "res://a.gd", 1, "one", "", false, Logger.ERROR_TYPE_ERROR, none)
+	logger.mark("step 0 end")
+	logger._log_error("f", "res://a.gd", 2, "two", "", false, Logger.ERROR_TYPE_WARNING, none)
+	var entries: Array = logger.take_pending()[0]
+	assert_eq(
+		entries.map(func(entry: Dictionary) -> String: return entry["message"]),
+		["one", "step 0 end", "two"],
+		"the mark sits where it was appended"
+	)
+	assert_eq(entries[1], {"type": "mark", "message": "step 0 end"}, "a mark entry")
+	assert_eq(logger.sequence(), 2, "a mark takes no sequence number")
+
+
+func test_a_mark_survives_a_full_pending_list() -> void:
+	var logger: Logger = _logger_script.new()
+	var none: Array[ScriptBacktrace] = []
+	var cap: int = _logger_script.get_script_constant_map()["MAX_PENDING"]
+	for index in cap + 2:
+		logger._log_error("f", "res://a.gd", index, "c", "", false, Logger.ERROR_TYPE_ERROR, none)
+	logger.mark("step 1 end")
+	var taken: Array = logger.take_pending()
+	assert_eq((taken[0] as Array).size(), cap + 1, "the cap's entries and the mark")
+	assert_eq(taken[0][-1], {"type": "mark", "message": "step 1 end"}, "the mark is held")
+	assert_eq(taken[1], 2, "only the entries over the cap are dropped")
+
+
+func test_take_pending_hands_the_mark_with_the_entries() -> void:
+	var logger: Logger = _logger_script.new()
+	var none: Array[ScriptBacktrace] = []
+	logger.mark("pace end")
+	logger._log_error("f", "res://a.gd", 1, "late", "", false, Logger.ERROR_TYPE_ERROR, none)
+	var taken: Array = logger.take_pending()
+	assert_eq(taken[0][0], {"type": "mark", "message": "pace end"}, "the mark first")
+	assert_eq(taken[0][1]["message"], "late", "then the entry after it")
+	assert_eq(logger.take_pending(), [[], 0], "taken once")
 
 
 func test_a_muted_error_is_dropped_only_with_its_windows_script_on_top() -> void:

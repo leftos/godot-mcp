@@ -225,13 +225,6 @@ public sealed class ScratchUntilTests
         );
     }
 
-    [Theory]
-    [InlineData("{\"met\":true,\"gameMs\":16,\"elapsedMs\":17,\"frames\":1}", 2000, 1984)]
-    [InlineData("{\"met\":true,\"gameMs\":2000,\"elapsedMs\":2001,\"frames\":120}", 2000, 0)]
-    [InlineData("{\"met\":true,\"gameMs\":2016,\"elapsedMs\":2017,\"frames\":121}", 2000, 0)]
-    public void AMetShotConditionLeavesThePaceLessTheGameTimeItRanToWait(string reply, int paceMs, int remainingMs) =>
-        Assert.Equal(remainingMs, ScratchRun.ShotRemainderMs(JsonNode.Parse(reply), paceMs));
-
     [Fact]
     public void AShotConditionThatDidNotHoldWithinItsPaceIsTheShotsWarning() =>
         Assert.Equal(

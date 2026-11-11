@@ -38,8 +38,11 @@ var _pending: Array = []
 var _dropped: int = 0
 ## Entries logged since the logger was made, held or dropped: the sequence number the next entry
 ## takes. The held entries are numbered on from the first one take_pending has not sent, and the
-## dropped ones come after them, since nothing is held once the cap is reached.
+## dropped ones come after them, since no entry is held once the cap is reached. A mark is no
+## entry: it takes no number, and is held even over the cap (_held_marks counts the held ones).
 var _sequence: int = 0
+## The marks _pending holds among its entries.
+var _held_marks: int = 0
 ## The mute windows open, keyed by the path of the script they were opened for: how many
 ## mute(true, path) calls are not yet closed by a mute(false, path). Touched only on the main
 ## thread, and read only once _log_error knows it runs there.
@@ -165,27 +168,40 @@ func sequence() -> int:
 ## not seen.
 func first_error_since(since: int) -> String:
 	_mutex.lock()
-	var first_held: int = _sequence - _dropped - _pending.size()
+	var number: int = _sequence - _dropped - (_pending.size() - _held_marks)
 	var found: String = ""
-	for index in range(maxi(0, since - first_held), _pending.size()):
-		var entry: Dictionary = _pending[index]
-		if entry["type"] == "error":
+	for entry: Dictionary in _pending:
+		if entry["type"] == "mark":
+			continue
+		if number >= since and entry["type"] == "error":
 			found = entry["message"]
 			break
+		number += 1
 	_mutex.unlock()
 	return found
 
 
 ## Whether an entry logged at or after sequence number since is no longer held: dropped over the
 ## cap, or already sent by take_pending. Held entries run from the first not yet taken, and an
-## entry logged while the pending list is full is counted and dropped.
+## entry logged while the pending list is full is counted and dropped; a held mark is no entry.
 func lost_since(since: int) -> bool:
 	_mutex.lock()
-	var held: int = _pending.size()
+	var held: int = _pending.size() - _held_marks
 	var first_held: int = _sequence - _dropped - held
 	var logged: int = _sequence - since
 	_mutex.unlock()
 	return logged > maxi(0, first_held + held - maxi(since, first_held))
+
+
+## Appends a mark entry {type: "mark", message: label} under the mutex every thread's entries are
+## appended under, so it falls at one point in their order: a scratch step's window end, which the
+## server cuts the feed at. It is no entry, so it takes no sequence number, and it is held even
+## over the cap, since a lost mark would merge two windows; on the main thread.
+func mark(label: String) -> void:
+	_mutex.lock()
+	_pending.append({"type": "mark", "message": label})
+	_held_marks += 1
+	_mutex.unlock()
 
 
 ## The entries logged since the last call and how many were dropped over the cap, as
@@ -195,6 +211,7 @@ func take_pending() -> Array:
 	var taken: Array = [_pending, _dropped]
 	_pending = []
 	_dropped = 0
+	_held_marks = 0
 	_mutex.unlock()
 	return taken
 

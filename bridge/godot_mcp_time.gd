@@ -396,9 +396,9 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 ## asked in a request, putting its {value} into called; nothing when params has no call or called
 ## already holds its value. Returns why the call failed, or "".
 ##
-## A wait with params.limitGameMs is a scratch step's until, and an error the called method logs is
-## not its failure: call_now keeps that error, called then holds {value, raised}, and the wait goes
-## on, the step's feed entries reporting the error as a paced step's are.
+## A wait with params.limitGameMs (a scratch step's until) or params.keepRaised (a scratch paced
+## step's pace) does not fail on an error the called method logs: call_now keeps that error, called
+## then holds {value, raised}, and the wait goes on, the step's feed entries reporting the error.
 ##
 ## It runs inside a process_frame emission, which SceneTree::process sends before it processes
 ## the nodes (scene/main/scene_tree.cpp L713, L719 in 4.7.2), so a method called here has its
@@ -407,7 +407,8 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 func _call_once(params: Dictionary, called: Dictionary) -> String:
 	if not called.is_empty() or not params.get("call") is Dictionary:
 		return ""
-	var outcome: Variant = bridge._inspect.call_now(params["call"], params.has("limitGameMs"))
+	var keep_raised: bool = params.has("limitGameMs") or bool(params.get("keepRaised", false))
+	var outcome: Variant = bridge._inspect.call_now(params["call"], keep_raised)
 	if outcome is String:
 		return outcome
 	called.merge(outcome)
@@ -470,7 +471,9 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 ## on; a met wait runs then, once, in that frame (see _poll_capturing). Calls
 ## _on_godot_mcp_wait_started(kind) on every node in the godot_mcp_wait_started group as the wait
 ## starts, before any check: a scene that must time something from the wait's start (a scratch test
-## fixture) joins the group. _tree() is the tree it reads and tells.
+## fixture) joins the group. _tree() is the tree it reads and tells. Scratch's own params, which
+## the MCP tool never sends: endMarker ends the step's window as the wait ends, endMarkerAtGameMs
+## holds a met one's end to that game time (_end_window), keepRaised keeps a call's error.
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var tree: Object = _tree()
@@ -478,7 +481,8 @@ func wait_for(params: Dictionary) -> Dictionary:
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
 	if kind == "signal":
 		return await signal_wait._wait_for_signal(params, timeout_ms, tree.process_frame)
-	var refusal: String = _paused_refusal(tree.paused, timeout_ms, params.has("limitGameMs"))
+	var limited: bool = params.has("limitGameMs") or bool(params.get("keepRaised", false))
+	var refusal: String = _paused_refusal(tree.paused, timeout_ms, limited)
 	if not refusal.is_empty():
 		return {"error": refusal}
 	if kind in GAME_TIME_KINDS:
@@ -529,9 +533,9 @@ static func _with_call(outcome: Dictionary, called: Dictionary) -> Dictionary:
 
 ## Why a non-signal wait cannot run now, or empty: a pausable node's state cannot change while
 ## the tree is paused, so a non-signal wait could only time out; only a check-once wait
-## (timeout_ms 0) runs while paused. A wait with a game-time limit (a scratch step's until, whose
-## call may pause the tree itself) is never refused: on a paused tree it ends at the server's
-## real-time backstop, which reads it as a clock that stood still.
+## (timeout_ms 0) runs while paused. A scratch step's wait (limitGameMs: an until; keepRaised: a
+## paced step's pace), whose call may pause or unpause the tree itself, is never refused: on a
+## tree still paused it ends at the server's real-time backstop, read as a clock that stood still.
 func _paused_refusal(paused: bool, timeout_ms: int, limited: bool) -> String:
 	return PAUSED_REFUSAL if paused and timeout_ms > 0 and not limited else ""
 
@@ -578,7 +582,7 @@ func _start_with_call(
 ## Advances clock by this frame, as _capture_points counts game time: this node's process delta,
 ## which Engine.time_scale already scales, unless the tree is paused.
 func _tick_game_clock(clock: Dictionary) -> void:
-	advance_game_clock(clock, get_tree().paused, get_process_delta_time())
+	advance_game_clock(clock, _tree().paused, get_process_delta_time())
 
 
 ## Adds a frame of delta seconds to clock {seconds, seen, frames}; a paused frame adds nothing.
@@ -642,22 +646,78 @@ static func _add_game_ms(outcome: Dictionary, params: Dictionary) -> void:
 ## Polls probe as _poll does, for params.backstopMs when the server sends one, else timeout_ms,
 ## until a cancel of the request; with params.screenshot a met wait also captures the frame it was
 ## met on: a waiting one checks probe at each frame's draw instead (_check_at_draws), a
-## check-once one captures the draw of the frame it runs in. A met wait also runs params.then in
-## the met frame (_finish_then). Returns _poll's outcome, its result with then and screenshot or
-## warning when met and captured, or {error} when then.call failed.
+## check-once one captures the draw of the frame it runs in. The poll's end first ends a scratch
+## step's window (_end_window). A met wait also runs params.then in the met frame (_finish_then).
+## Returns _poll's outcome, its result with then and screenshot or warning when met and captured,
+## or {error} when then.call failed.
 func _poll_and_capture(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
 	var bound_ms: float = _bound_ms(params, timeout_ms)
+	var began: int = Time.get_ticks_msec()
 	if not bool(params.get("screenshot", false)):
-		return _finish_then(await _poll(probe, bound_ms, params), params, {})
+		var polled: Dictionary = await _poll(probe, bound_ms, params)
+		return _finish_then(_end_window(polled, params), params, {})
 	var drawn: Dictionary = {"params": params}
 	if timeout_ms > 0:
 		probe = _check_at_draws(probe, drawn)
-	var outcome: Dictionary = await _poll(probe, bound_ms, params)
+	var outcome: Dictionary = _end_window(await _poll(probe, bound_ms, params), params)
 	_stop_draw_checks(drawn)
 	outcome = _finish_then(outcome, params, drawn)
 	if outcome.has("error") or not outcome["result"]["met"]:
 		return outcome
-	return await _with_capture(drawn.get("image"), params, outcome["result"])
+	var captured: Dictionary = await _with_capture(drawn.get("image"), params, outcome["result"])
+	return await _hold_to_window_end(captured, params, bound_ms, began)
+
+
+## With params.endMarker, ends a scratch step's window as its poll ends, met or not: prints the
+## marker to stdout and stderr, marks the logger (godot_mcp_logger.gd mark) and adds endMarked:
+## true, which so always means the feed holds the mark; no logger (dormant), no end. A met poll
+## short of params.endMarkerAtGameMs (seen game time) ends it later (_hold_to_window_end); a failed
+## one never. Scratch sends no then, and its screenshot waits carry limitGameMs, so this runs
+## before any capture. Returns outcome.
+func _end_window(outcome: Dictionary, params: Dictionary) -> Dictionary:
+	if not params.has("endMarker") or not outcome.has("result"):
+		return outcome
+	if _window_end_later(outcome, params):
+		return outcome
+	var logger: Variant = bridge.get("_logger") if bridge != null else null
+	if logger == null:
+		return outcome
+	var marker: String = str(params["endMarker"])
+	print(marker)
+	printerr(marker)
+	logger.mark(marker)
+	outcome["result"]["endMarked"] = true
+	return outcome
+
+
+## Whether a met poll's window ends later: params.endMarkerAtGameMs not yet seen (no clock: seen).
+static func _window_end_later(outcome: Dictionary, params: Dictionary) -> bool:
+	var at_ms: int = int(params.get("endMarkerAtGameMs", -1))
+	if at_ms < 0 or not params.has("_gameClock"):
+		return false
+	return bool(outcome["result"]["met"]) and _seen_game_ms(params) < at_ms
+
+
+## A shot met before its params.endMarkerAtGameMs, once captured: waits frame by frame until the
+## game time a check sees (seen, a frame behind a gameMs wait's seconds: a shot step's window ends
+## a frame after a paced step's would) reaches it, within bound_ms of real time from began (the
+## poll's start) or a cancel, then ends the window (_end_window). Any other outcome as it is.
+func _hold_to_window_end(
+	outcome: Dictionary, params: Dictionary, bound_ms: float, began: int
+) -> Dictionary:
+	if not outcome.has("result") or not _window_end_later(outcome, params):
+		return outcome
+	while _window_end_later(outcome, params) and Time.get_ticks_msec() - began < bound_ms:
+		if params.get("_cancelled", false):
+			break
+		await _tree().process_frame
+	params["endMarkerAtGameMs"] = -1
+	return _end_window(outcome, params)
+
+
+## The whole game milliseconds params._gameClock's last check could see.
+static func _seen_game_ms(params: Dictionary) -> int:
+	return floori(float(params["_gameClock"]["seen"]) * 1000.0)
 
 
 ## With params.edge, checks probe once now, as the baseline the wait's later checks rise from:

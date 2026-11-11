@@ -41,8 +41,14 @@ internal sealed class ErrorFeed
     public const int Capacity = 500;
     public const string ErrorType = "error";
     public const string WarningType = "warning";
+
+    /// <summary>The wire type of the bridge's window-end entry, an end mark, which is never kept as an entry.</summary>
+    public const string EndMarkType = "mark";
     private readonly Lock _lock = new();
     private readonly Queue<ErrorEntry> _entries = new(Capacity);
+
+    // Each end mark received and not yet taken: the Seq of the last entry received before it, by its message.
+    private readonly Dictionary<string, long> _endMarks = new(StringComparer.Ordinal);
     private long _lastSeq;
     private long _dropped;
 
@@ -69,7 +75,8 @@ internal sealed class ErrorFeed
 
     /// <summary>
     /// Adds the entries of one bridge frame <c>{type: "errors", entries, dropped}</c>. A malformed entry keeps the fields it
-    /// has, so nothing the bridge sends can fault the connection's read loop.
+    /// has, so nothing the bridge sends can fault the connection's read loop. An entry of type "mark" (a scratch step's window
+    /// end, which the bridge's logger appends among the entries) is an end mark, never an entry (<see cref="Add"/>).
     /// </summary>
     public void Receive(JsonObject frame)
     {
@@ -77,7 +84,11 @@ internal sealed class ErrorFeed
         Add(entries, ReadNumber(frame["dropped"]));
     }
 
-    /// <summary>Numbers and keeps <paramref name="entries"/> (their own Seq is ignored) and adds the bridge's dropped count.</summary>
+    /// <summary>
+    /// Numbers and keeps <paramref name="entries"/> (their own Seq is ignored) and adds the bridge's dropped count. An entry of
+    /// type <see cref="EndMarkType"/> is not kept: it records its message as an end mark at the Seq of the last entry before it,
+    /// which <see cref="TakeThrough"/> reads.
+    /// </summary>
     public void Add(IReadOnlyList<ErrorEntry> entries, long bridgeDropped)
     {
         lock (_lock)
@@ -85,6 +96,12 @@ internal sealed class ErrorFeed
             _dropped += Math.Max(0, bridgeDropped);
             foreach (ErrorEntry entry in entries)
             {
+                if (entry.Type == EndMarkType)
+                {
+                    _endMarks[entry.Message] = _lastSeq;
+                    continue;
+                }
+
                 if (_entries.Count == Capacity)
                 {
                     _entries.Dequeue();
@@ -93,6 +110,24 @@ internal sealed class ErrorFeed
 
                 _entries.Enqueue(entry with { Seq = ++_lastSeq });
             }
+        }
+    }
+
+    /// <summary>
+    /// A scratch window's take up to its end: every kept entry <see cref="JudgedSince"/> gives after <paramref name="seq"/>,
+    /// up to and including the Seq of the end mark <paramref name="endMark"/>, and that Seq, the end mark being taken with it;
+    /// or, when no such end mark was received, no entry and a null Seq, the caller then taking the window its own way.
+    /// </summary>
+    public (IReadOnlyList<ErrorEntry> Entries, long? Mark) TakeThrough(long seq, string endMark, bool warnings)
+    {
+        lock (_lock)
+        {
+            if (!_endMarks.Remove(endMark, out long end))
+            {
+                return ([], null);
+            }
+
+            return ([.. _entries.Where(entry => entry.Seq > seq && entry.Seq <= end && (warnings || entry.IsError))], end);
         }
     }
 
@@ -131,7 +166,12 @@ internal sealed class ErrorFeed
         List<string> stack = item["stack"] is JsonArray frames ? [.. frames.OfType<JsonValue>().Select(frame => frame.ToString())] : [];
         return new ErrorEntry(
             0,
-            HandshakeExpectation.ReadString(item, "type") == WarningType ? WarningType : ErrorType,
+            HandshakeExpectation.ReadString(item, "type") switch
+            {
+                WarningType => WarningType,
+                EndMarkType => EndMarkType,
+                _ => ErrorType,
+            },
             HandshakeExpectation.ReadString(item, "message") ?? string.Empty,
             HandshakeExpectation.ReadString(item, "file") ?? string.Empty,
             (int)ReadNumber(item["line"]),

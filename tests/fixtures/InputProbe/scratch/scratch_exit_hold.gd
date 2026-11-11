@@ -2,8 +2,9 @@ extends "res://scratch/scratch_probe.gd"
 ## A scene paced at 0.1 s whose last step, "arm", is an until step: godot-mcp.json paces it at 30 s,
 ## its until's limit, and gives the scene an exit hold of 3 s. The step's until holds at once, and
 ## the server's GetStatus after it sets a second flag; the wait after the last step, the 3 s exit
-## hold, sent only after that step's window closed, starts the timers through the hook on that
-## wait's start: a line at 1 s of game time, inside the hold, which the profile expects, and an
+## hold, starts the timers through the hook on that wait's start (the step's window ended where its
+## until wait ended in game time, so no server latency places them): a line at 1 s of game time,
+## inside the hold, which the profile expects, and an
 ## error at 25 s, past the hold but inside the 30 s the step's pace would wait after it. Green: were
 ## the wait after the last step that step's pace, the error would fall inside it and turn the scene
 ## red; were there no wait, the expected line would be missing.
