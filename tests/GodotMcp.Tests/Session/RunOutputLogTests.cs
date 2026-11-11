@@ -1,6 +1,5 @@
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Tests.Session;
@@ -162,21 +161,5 @@ public sealed class RunOutputLogTests : IDisposable
             Closed = true;
             base.Dispose(disposing);
         }
-    }
-
-    /// <summary>Every message logged, formatted.</summary>
-    private sealed class RecordingLogger : ILogger
-    {
-        private readonly List<string> _messages = [];
-
-        public IReadOnlyList<string> Messages => _messages;
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            _messages.Add(formatter(state, exception));
     }
 }

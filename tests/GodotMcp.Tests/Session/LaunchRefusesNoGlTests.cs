@@ -41,7 +41,7 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
     private readonly BridgeListener _listener;
     private readonly SessionRegistry _sessions;
     private readonly SessionRegistry _retrying;
-    private readonly RecordingLogger _retryingLog = new();
+    private readonly RecordingLogger<GodotSession> _retryingLog = new();
     private readonly ConcurrentQueue<FakeRunProcess> _launched = new();
 
     // The exit codes the next launches' processes exit with, in order, each at once or once the test releases it (held); a
@@ -178,7 +178,7 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
         await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
 
         await RegistryHarness.WaitUntilAsync(() =>
-            _retryingLog.Messages.Any(entry =>
+            _retryingLog.Entries.Any(entry =>
                 entry.Level == LogLevel.Information && entry.Text.StartsWith("A replaced Godot run on", StringComparison.Ordinal)
             )
         );
@@ -415,24 +415,6 @@ public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
     }
 
     private static LaunchRequest Request(string project) => new(project, null, [], [], Quiet: false, ShutOutRealGamepads: false, Prepare: false);
-
-    /// <summary>Every message logged through the registry's logger, with its level, formatted.</summary>
-    private sealed class RecordingLogger : ILogger<GodotSession>
-    {
-        private readonly ConcurrentQueue<(LogLevel Level, string Text)> _messages = new();
-
-        public IReadOnlyList<(LogLevel Level, string Text)> Messages => [.. _messages];
-
-        public IReadOnlyList<string> Warnings => [.. _messages.Where(entry => entry.Level == LogLevel.Warning).Select(entry => entry.Text)];
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            _messages.Enqueue((logLevel, formatter(state, exception)));
-    }
 
     /// <summary>
     /// A fake run process: a real started child process, so the run has a pid and an exit, whose output the test passes on

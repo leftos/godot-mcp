@@ -1782,7 +1782,7 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The link is a junction, made with mklink /J.");
         string target = _temp.Combine("real-saves");
         Directory.CreateDirectory(target);
-        GodotMcp.Tests.Session.ScratchUserDataTests.MakeJunction(_temp.Combine("saves"), target);
+        Links.MakeJunction(_temp.Combine("saves"), target);
 
         string refusal = Refused(() => Merge(new RunOptions(UserData: Json("""{"seed": "saves"}"""))));
 

@@ -6,7 +6,6 @@ using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
 using GodotMcp.Tests.Wire;
 using GodotMcp.TestSupport;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
@@ -49,7 +48,7 @@ public sealed class HeadlessHostsTests : IDisposable
     private readonly BridgeListener _listener;
     private readonly SessionRegistry _registry;
     private readonly ConcurrentQueue<FakeHost> _launched = new();
-    private readonly RecordingLogger _log = new();
+    private readonly RecordingLogger<GodotSession> _log = new();
     private readonly ConcurrentQueue<FakeHostMode> _nextModes = new();
     private FakeHostMode _launchMode = FakeHostMode.Answer;
 
@@ -1329,22 +1328,6 @@ public sealed class HeadlessHostsTests : IDisposable
 
         /// <summary>Answers with a failed operation (<c>ok: false</c>) and <c>stale: true</c> in its result object.</summary>
         StaleFailure,
-    }
-
-    /// <summary>Every message logged through the registry's logger, formatted.</summary>
-    private sealed class RecordingLogger : ILogger<GodotSession>
-    {
-        private readonly ConcurrentQueue<string> _messages = new();
-
-        public IEnumerable<string> Messages => _messages;
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            _messages.Enqueue(formatter(state, exception));
     }
 
     /// <summary>

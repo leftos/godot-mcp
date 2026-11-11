@@ -165,8 +165,8 @@ public sealed class OutputDestinationTests : IDisposable
         Directory.CreateDirectory(Path.Combine(outside, "y"));
         Directory.CreateDirectory(Path.Combine(Worktree, "assets"));
         Directory.CreateDirectory(Path.Combine(Worktree, "docs"));
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Worktree, "assets", "shared"), outside);
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Worktree, "docs", "a"), Path.Combine(Worktree, "assets", "shared", "y"));
+        Links.MakeJunction(Path.Combine(Worktree, "assets", "shared"), outside);
+        Links.MakeJunction(Path.Combine(Worktree, "docs", "a"), Path.Combine(Worktree, "assets", "shared", "y"));
         string shot = Path.Combine(Worktree, "docs", "a", "x.png");
 
         Assert.Equal($"path {shot} leads through a link to {outside}, outside {WorktreePlaces(project)}", Refused(project, shot).Message);
@@ -233,7 +233,7 @@ public sealed class OutputDestinationTests : IDisposable
         string project = Directory.CreateDirectory(_temp.Combine("game")).FullName;
         string outside = OutsideFolder();
         // Only the \\?\ form keeps a trailing space, so the junction is made under a plain name and renamed to "docs ".
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(project, "j"), outside);
+        Links.MakeJunction(Path.Combine(project, "j"), outside);
         Directory.Move(@"\\?\" + Path.Combine(project, "j"), @"\\?\" + Path.Combine(project, "docs "));
 
         McpException refused = Refused(project, "docs /x.png");
@@ -357,7 +357,7 @@ public sealed class OutputDestinationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string project = Directory.CreateDirectory(_temp.Combine("game")).FullName;
         string outside = OutsideFolder();
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(project, "out"), outside);
+        Links.MakeJunction(Path.Combine(project, "out"), outside);
         Directory.Delete(outside);
 
         Assert.Equal(
@@ -377,7 +377,7 @@ public sealed class OutputDestinationTests : IDisposable
         string shortName = Path.GetFileName(ShortPath(dotGit));
         Assert.SkipUnless(shortName != ".git", $"the volume holding {dotGit} makes no short (8.3) names");
         Directory.CreateDirectory(Path.Combine(Main, "docs"));
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Main, "docs", "g"), Path.Combine(Main, shortName));
+        Links.MakeJunction(Path.Combine(Main, "docs", "g"), Path.Combine(Main, shortName));
 
         McpException refused = Refused(Main, "docs/g/x.png");
 
@@ -396,7 +396,7 @@ public sealed class OutputDestinationTests : IDisposable
         File.WriteAllBytes(secret, PngBytes);
         string folder = Directory.CreateDirectory(Path.Combine(project, ".godot", "godot-mcp", "screenshots")).FullName;
         string capture = Path.Combine(folder, "capture.png");
-        ScreenshotPathValidationTests.MakeHardLink(capture, secret);
+        Links.MakeHardLink(capture, secret);
 
         McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Save(capture, target, overwrite: false));
 
@@ -414,7 +414,7 @@ public sealed class OutputDestinationTests : IDisposable
         File.WriteAllBytes(Path.Combine(outside, "capture.png"), PngBytes);
         string folder = Path.Combine(project, ".godot", "godot-mcp", "screenshots");
         Directory.CreateDirectory(Path.GetDirectoryName(folder)!);
-        ScreenshotPathValidationTests.MakeJunction(folder, outside);
+        Links.MakeJunction(folder, outside);
         string capture = Path.Combine(folder, "capture.png");
 
         McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Save(capture, target, overwrite: false));
@@ -435,7 +435,7 @@ public sealed class OutputDestinationTests : IDisposable
         string project = GameInWorktree();
         string outside = OutsideFolder();
         Directory.CreateDirectory(Path.Combine(Worktree, "docs"));
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Worktree, "docs", "out"), outside);
+        Links.MakeJunction(Path.Combine(Worktree, "docs", "out"), outside);
         string shot = Path.Combine(Worktree, "docs", "out", "x.png");
 
         Assert.Equal($"path {shot} leads through a link to {outside}, outside {WorktreePlaces(project)}", Refused(project, shot).Message);
@@ -448,7 +448,7 @@ public sealed class OutputDestinationTests : IDisposable
         string project = GameInWorktree();
         string mainDocs = Directory.CreateDirectory(Path.Combine(Main, "docs")).FullName;
         Directory.CreateDirectory(Path.Combine(Worktree, "docs"));
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Worktree, "docs", "m"), mainDocs);
+        Links.MakeJunction(Path.Combine(Worktree, "docs", "m"), mainDocs);
         string shot = Path.Combine(Worktree, "docs", "m", "x.png");
 
         Assert.Equal($"path {shot} leads through a link to {mainDocs}, outside {WorktreePlaces(project)}", Refused(project, shot).Message);
@@ -460,7 +460,7 @@ public sealed class OutputDestinationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string project = GameInWorktree();
         string owner = Directory.CreateDirectory(Path.Combine(Main, ".tmp", "owner")).FullName;
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Worktree, "keep"), owner);
+        Links.MakeJunction(Path.Combine(Worktree, "keep"), owner);
         string shot = Path.Combine(Worktree, "keep", "x.png");
 
         Assert.Equal(shot, Resolve(project, shot));
@@ -472,7 +472,7 @@ public sealed class OutputDestinationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string project = GameInWorktree();
         string outside = OutsideFolder();
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Main, ".tmp"), outside);
+        Links.MakeJunction(Path.Combine(Main, ".tmp"), outside);
         string shot = Path.Combine(Main, ".tmp", "x.png");
 
         Assert.Equal($"path {shot} leads through a link to {outside}, outside {WorktreePlaces(project)}", Refused(project, shot).Message);
@@ -485,7 +485,7 @@ public sealed class OutputDestinationTests : IDisposable
         string project = GameInWorktree();
         string dotGit = Path.Combine(Main, ".git");
         Directory.CreateDirectory(Path.Combine(Worktree, "docs"));
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(Worktree, "docs", "g"), dotGit);
+        Links.MakeJunction(Path.Combine(Worktree, "docs", "g"), dotGit);
         string shot = Path.Combine(Worktree, "docs", "g", "x.png");
 
         Assert.Equal($"path {shot} leads through a link to {dotGit}, outside {WorktreePlaces(project)}", Refused(project, shot).Message);
@@ -498,9 +498,9 @@ public sealed class OutputDestinationTests : IDisposable
         string project = _temp.Path;
         string real = Directory.CreateDirectory(Path.Combine(project, "real")).FullName;
         string gone = Directory.CreateDirectory(Path.Combine(project, "gone")).FullName;
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(real, "c"), gone);
+        Links.MakeJunction(Path.Combine(real, "c"), gone);
         Directory.Delete(gone);
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(project, "a"), real);
+        Links.MakeJunction(Path.Combine(project, "a"), real);
 
         Assert.Equal(
             $"path a/c/x.png leads through a link at {Path.Combine(real, "c")} whose target {gone} does not exist",
@@ -516,7 +516,7 @@ public sealed class OutputDestinationTests : IDisposable
         string other = Path.Combine(project, "other.png");
         File.WriteAllBytes(other, [1, 2]);
         string destination = Path.Combine(project, "shot.png");
-        ScreenshotPathValidationTests.MakeHardLink(destination, other);
+        Links.MakeHardLink(destination, other);
         OutputTarget target = Destination(project, "shot.png", overwrite: true);
 
         ScreenshotTarget.Save(WriteCapture(project), target, overwrite: true);
@@ -559,7 +559,7 @@ public sealed class OutputDestinationTests : IDisposable
         OutputTarget target = Destination(project, "docs/sub/x.png", overwrite: false);
         string outside = OutsideFolder();
         Directory.Delete(sub);
-        ScreenshotPathValidationTests.MakeJunction(sub, outside);
+        Links.MakeJunction(sub, outside);
 
         McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Save(capture, target, overwrite: false));
 
@@ -588,7 +588,7 @@ public sealed class OutputDestinationTests : IDisposable
         string other = _temp.Combine("other.mp4");
         File.WriteAllBytes(other, [1, 2]);
         string destination = _temp.Combine("clip.mp4");
-        ScreenshotPathValidationTests.MakeHardLink(destination, other);
+        Links.MakeHardLink(destination, other);
         string source = Path.Combine(Directory.CreateDirectory(_temp.Combine("recordings")).FullName, "clip.mp4");
         File.WriteAllBytes(source, [7, 7, 7]);
 
@@ -693,7 +693,7 @@ public sealed class OutputDestinationTests : IDisposable
         string other = _temp.Combine("other.mp4");
         File.WriteAllBytes(other, [1, 2]);
         string destination = _temp.Combine("clip.mp4");
-        ScreenshotPathValidationTests.MakeHardLink(destination, other);
+        Links.MakeHardLink(destination, other);
         string source = Path.Combine(Directory.CreateDirectory(_temp.Combine("recordings")).FullName, "clip.mp4");
         File.WriteAllBytes(source, [7, 7, 7]);
 

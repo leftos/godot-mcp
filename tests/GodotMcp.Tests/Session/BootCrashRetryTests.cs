@@ -1,9 +1,7 @@
-using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
 using GodotMcp.TestSupport;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Tests.Session;
@@ -22,7 +20,7 @@ public sealed class BootCrashRetryTests : IDisposable
 
     private readonly TempDirectory _temp = new();
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
-    private readonly RecordingLogger _log = new();
+    private readonly RecordingLogger<GodotSession> _log = new();
     private readonly string? _configuredGodot = Environment.GetEnvironmentVariable(Installation.GodotPathVariable);
     private readonly string _calls;
     private readonly string _marker;
@@ -160,21 +158,5 @@ public sealed class BootCrashRetryTests : IDisposable
         ProjectPrepFixtures.WriteFile(ImportFingerprints.PathIn(game), "{\"icon.png.import\":\"a stale md5\"}", ProjectPrepFixtures.Old);
         PrepContext context = new(game, _log, () => [], () => { }) { RetryBootCrashOnce = retry };
         return await ProjectPrep.RunAsync(context, TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>Every message logged, with its level.</summary>
-    private sealed class RecordingLogger : ILogger<GodotSession>
-    {
-        private readonly ConcurrentQueue<(LogLevel Level, string Text)> _messages = new();
-
-        public IReadOnlyList<string> Warnings => [.. _messages.Where(entry => entry.Level == LogLevel.Warning).Select(entry => entry.Text)];
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            _messages.Enqueue((logLevel, formatter(state, exception)));
     }
 }

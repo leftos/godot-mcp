@@ -288,7 +288,7 @@ public sealed class AgentSweepTests : IDisposable
         WriteAgent(agents, "player", "Read", Marker);
         InitRepository(repository);
         string alias = _temp.Combine("alias");
-        MakeJunction(alias, _temp.Combine("root"));
+        Links.MakeJunction(alias, _temp.Combine("root"));
 
         (int status, string output) = Sweep(dryRun: false, _temp.Combine("root"), alias);
         // Removed as a link before the temp folder's cleanup, whose recursive delete would otherwise go through it.
@@ -300,13 +300,6 @@ public sealed class AgentSweepTests : IDisposable
         Assert.DoesNotContain(alias, output, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("sweep: 1 changed, 0 unchanged", output, StringComparison.Ordinal);
         Assert.Contains("1 commits, 0 failed commits", output, StringComparison.Ordinal);
-    }
-
-    private static void MakeJunction(string link, string target)
-    {
-        using System.Diagnostics.Process mklink = System.Diagnostics.Process.Start("cmd", ["/c", "mklink", "/J", link, target])!;
-        mklink.WaitForExit();
-        Assert.Equal(0, mklink.ExitCode);
     }
 
     private (int Status, string Output) Sweep(bool dryRun, params string[] roots)

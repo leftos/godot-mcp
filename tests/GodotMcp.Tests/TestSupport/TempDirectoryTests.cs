@@ -330,7 +330,7 @@ public sealed class TempDirectoryTests
             string file = target.Combine("kept.txt");
             File.WriteAllText(file, "kept");
             File.SetAttributes(file, FileAttributes.ReadOnly);
-            ScreenshotPathValidationTests.MakeJunction(temp.Combine("linked"), target.Path);
+            Links.MakeJunction(temp.Combine("linked"), target.Path);
 
             temp.Dispose();
 

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
@@ -158,7 +157,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         string elsewhere = Directory.CreateDirectory(Path.Combine(_temp.Path, "elsewhere")).FullName;
         Directory.CreateDirectory(CheckoutTmp);
-        MakeJunction(Path.Combine(CheckoutTmp, "out"), elsewhere);
+        Links.MakeJunction(Path.Combine(CheckoutTmp, "out"), elsewhere);
 
         McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/out/shot.png", overwrite: false));
 
@@ -172,7 +171,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         string docs = Directory.CreateDirectory(Path.Combine(project, "docs")).FullName;
         Directory.CreateDirectory(CheckoutTmp);
-        MakeJunction(Path.Combine(CheckoutTmp, "docs"), docs);
+        Links.MakeJunction(Path.Combine(CheckoutTmp, "docs"), docs);
 
         Assert.Equal(Path.Combine(CheckoutTmp, "docs", "shot.png"), Resolve(project, "../../.tmp/docs/shot.png", overwrite: false));
     }
@@ -183,7 +182,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         string elsewhere = Directory.CreateDirectory(Path.Combine(_temp.Path, "elsewhere")).FullName;
-        MakeJunction(CheckoutTmp, elsewhere);
+        Links.MakeJunction(CheckoutTmp, elsewhere);
 
         McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/x.png", overwrite: false));
 
@@ -197,7 +196,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         string dotGodot = Directory.CreateDirectory(Path.Combine(project, ".godot")).FullName;
         Directory.CreateDirectory(CheckoutTmp);
-        MakeJunction(Path.Combine(CheckoutTmp, "g"), dotGodot);
+        Links.MakeJunction(Path.Combine(CheckoutTmp, "g"), dotGodot);
 
         McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/g/x.png", overwrite: false));
 
@@ -213,7 +212,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         Directory.CreateDirectory(CheckoutTmp);
-        MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
+        Links.MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
 
         McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/p/.godot/x.png", overwrite: false));
 
@@ -231,7 +230,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         Directory.CreateDirectory(Path.Combine(project, "docs"));
         Directory.CreateDirectory(CheckoutTmp);
-        MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
+        Links.MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
 
         Assert.Equal(Path.Combine(CheckoutTmp, "p", "docs", "x.png"), Resolve(project, "../../.tmp/p/docs/x.png", overwrite: false));
     }
@@ -242,7 +241,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         string real = Directory.CreateDirectory(Path.Combine(CheckoutTmp, "real")).FullName;
-        MakeJunction(Path.Combine(CheckoutTmp, "inner"), real);
+        Links.MakeJunction(Path.Combine(CheckoutTmp, "inner"), real);
 
         Assert.Equal(Path.Combine(CheckoutTmp, "inner", "x.png"), Resolve(project, "../../.tmp/inner/x.png", overwrite: false));
     }
@@ -321,7 +320,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         using TempDirectory outside = new();
-        MakeJunction(Path.Combine(Project, "addons"), outside.Path);
+        Links.MakeJunction(Path.Combine(Project, "addons"), outside.Path);
 
         McpException refused = Assert.Throws<McpException>(() => Resolve(Project, "addons/shot.png", overwrite: false));
 
@@ -333,7 +332,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string screenshots = Directory.CreateDirectory(Path.Combine(Project, ".godot", "godot-mcp")).FullName;
-        MakeJunction(Path.Combine(Project, "shots"), screenshots);
+        Links.MakeJunction(Path.Combine(Project, "shots"), screenshots);
 
         McpException refused = Assert.Throws<McpException>(() => Resolve(Project, "shots/shot.png", overwrite: false));
 
@@ -348,7 +347,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         string docs = Directory.CreateDirectory(Path.Combine(Project, "docs")).FullName;
-        MakeJunction(Path.Combine(Project, "shots"), docs);
+        Links.MakeJunction(Path.Combine(Project, "shots"), docs);
 
         Assert.Equal(Path.Combine(Project, "shots", "shot.png"), Resolve(Project, "shots/shot.png", overwrite: false));
     }
@@ -527,7 +526,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         Directory.CreateDirectory(Path.Combine(project, "docs"));
         Directory.CreateDirectory(CheckoutTmp);
-        MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
+        Links.MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
 
         McpException refused = Assert.Throws<McpException>(() => InTmp(project, "../../.tmp/p/docs/x.png", overwrite: false, "capture_frames"));
 
@@ -552,7 +551,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are made with mklink");
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         Directory.CreateDirectory(Path.Combine(project, "docs"));
-        MakeJunction(CheckoutTmp, project);
+        Links.MakeJunction(CheckoutTmp, project);
 
         McpException refused = Assert.Throws<McpException>(() => InTmp(project, "../../.tmp/docs/x.png", overwrite: false, "take_screenshot"));
 
@@ -584,7 +583,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string shots = Directory.CreateDirectory(Path.Combine(CheckoutTmp, "shots")).FullName;
         OutputTarget target = ScreenshotTarget.ResolveInTmp(project, "../../.tmp/shots/a.png", false, "take_screenshot", NullLogger.Instance);
         Directory.Delete(shots);
-        MakeJunction(shots, project);
+        Links.MakeJunction(shots, project);
 
         McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.SaveInTmp(capture, target, overwrite: false, "take_screenshot"));
 
@@ -695,34 +694,6 @@ public sealed class ScreenshotPathValidationTests : IDisposable
 
     private static OutputTarget Destination(string project, string path, bool overwrite) =>
         ScreenshotTarget.Resolve(project, path, overwrite, NullLogger.Instance);
-
-    // A junction needs no privilege, unlike a directory symbolic link, and .NET has no API that makes one.
-    internal static void MakeJunction(string link, string target) => Mklink("/J", link, target);
-
-    /// <summary>Makes <paramref name="link"/> a second name of the file <paramref name="target"/>.</summary>
-    internal static void MakeHardLink(string link, string target) => Mklink("/H", link, target);
-
-    private static void Mklink(string kind, string link, string target)
-    {
-        ProcessStartInfo start = new("cmd.exe")
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (string argument in new[] { "/c", "mklink", kind, link, target })
-        {
-            start.ArgumentList.Add(argument);
-        }
-
-        using Process mklink = Process.Start(start)!;
-        mklink.StandardInput.Close();
-        string output = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
-        mklink.WaitForExit();
-        Assert.True(mklink.ExitCode == 0, $"mklink {kind} {link} {target} failed: {output}");
-    }
 
     private string WriteCapture()
     {

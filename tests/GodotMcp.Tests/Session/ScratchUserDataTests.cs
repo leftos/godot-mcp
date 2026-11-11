@@ -103,7 +103,7 @@ public sealed class ScratchUserDataTests : IDisposable
         File.WriteAllText(Path.Combine(target, "keep.txt"), "kept");
         Directory.CreateDirectory(Path.GetDirectoryName(Root)!);
         ScratchUserData.Delete(Root);
-        MakeJunction(Root, target);
+        Links.MakeJunction(Root, target);
 
         string userDir = ScratchUserData.Create(project, Root, seed, NoSettings, recording: false);
 
@@ -121,20 +121,12 @@ public sealed class ScratchUserDataTests : IDisposable
         File.WriteAllText(Path.Combine(target, "keep.txt"), "kept");
         Directory.CreateDirectory(Path.GetDirectoryName(Root)!);
         ScratchUserData.Delete(Root);
-        MakeJunction(Root, target);
+        Links.MakeJunction(Root, target);
 
         ScratchUserData.Delete(Root);
 
         Assert.False(Directory.Exists(Root));
         Assert.Equal("kept", File.ReadAllText(Path.Combine(target, "keep.txt")));
-    }
-
-    /// <summary>Makes <paramref name="link"/> a junction to <paramref name="target"/>.</summary>
-    internal static void MakeJunction(string link, string target)
-    {
-        using System.Diagnostics.Process mklink = System.Diagnostics.Process.Start("cmd", ["/c", "mklink", "/J", link, target])!;
-        mklink.WaitForExit();
-        Assert.Equal(0, mklink.ExitCode);
     }
 
     [Fact]
@@ -243,7 +235,7 @@ public sealed class ScratchUserDataTests : IDisposable
         string name = Path.GetFileName(Root);
         Directory.CreateDirectory(Path.Combine(target, name));
         File.WriteAllText(Path.Combine(target, name, "keep.txt"), "kept");
-        MakeJunction(parent, target);
+        Links.MakeJunction(parent, target);
 
         IOException refused = Assert.Throws<IOException>(() => ScratchUserData.Delete(Path.Combine(parent, name)));
 
@@ -261,7 +253,7 @@ public sealed class ScratchUserDataTests : IDisposable
         string parent = Path.Combine(holder, "godot-mcp");
         string target = _temp.Combine("elsewhere");
         Directory.CreateDirectory(target);
-        MakeJunction(parent, target);
+        Links.MakeJunction(parent, target);
         string root = Path.Combine(parent, "userdata-Probe");
 
         SessionException refused = Assert.Throws<SessionException>(() =>
@@ -338,7 +330,7 @@ public sealed class ScratchUserDataTests : IDisposable
         string target = _temp.Combine("elsewhere");
         string leftover = Path.Combine(target, FolderOf(Dead, "Probe"));
         Directory.CreateDirectory(leftover);
-        MakeJunction(parent, target);
+        Links.MakeJunction(parent, target);
 
         ScratchUserData.SweepLeftovers(parent, _errors);
 
@@ -362,7 +354,7 @@ public sealed class ScratchUserDataTests : IDisposable
         Directory.CreateDirectory(target);
         File.WriteAllText(Path.Combine(target, "keep.txt"), "kept");
         string folder = Path.Combine(parent, FolderOf(Dead, "Probe"));
-        MakeJunction(folder, target);
+        Links.MakeJunction(folder, target);
 
         ScratchUserData.SweepLeftovers(parent, _errors);
 

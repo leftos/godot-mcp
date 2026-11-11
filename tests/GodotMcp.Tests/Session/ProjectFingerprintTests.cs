@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
 
@@ -150,7 +149,7 @@ public sealed class ProjectFingerprintTests : IDisposable
     public void AJunctionToAnAncestorIsListedAsItselfAndNotFollowed()
     {
         string link = Path.Combine(_game, "scenes", "loop");
-        CreateJunction(link, _game);
+        Links.MakeJunction(link, _game);
         try
         {
             var first = ProjectFingerprint.Take(_game);
@@ -176,32 +175,6 @@ public sealed class ProjectFingerprintTests : IDisposable
 
         Assert.NotEqual(taken, missing);
         Assert.Equal(0, missing.Count);
-    }
-
-    /// <summary>
-    /// A junction at <paramref name="link"/> to <paramref name="target"/>: <c>mklink /J</c> on Windows, which needs no privilege
-    /// where a symbolic link does, and a symbolic link elsewhere.
-    /// </summary>
-    private static void CreateJunction(string link, string target)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            Directory.CreateSymbolicLink(link, target);
-            return;
-        }
-
-        ProcessStartInfo start = new("cmd.exe", ["/c", "mklink", "/J", link, target])
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        using Process mklink = Process.Start(start) ?? throw new InvalidOperationException("cmd.exe did not start");
-        // A line or two each way, which no pipe buffer fills, so reading one after the other cannot block.
-        string output = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
-        mklink.WaitForExit();
-        Assert.True(mklink.ExitCode == 0, $"mklink /J exited {mklink.ExitCode}: {output}");
     }
 
     private void Write(string relative, string text)

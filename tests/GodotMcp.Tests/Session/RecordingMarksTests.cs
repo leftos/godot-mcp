@@ -691,7 +691,7 @@ public sealed class RecordingMarksTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
         using TempDirectory project = new();
         Recording recording = await MovieInAsync(project);
-        ScreenshotPathValidationTests.MakeJunction(project.Combine("j"), Directory.CreateDirectory(project.Combine("clips")).FullName);
+        Links.MakeJunction(project.Combine("j"), Directory.CreateDirectory(project.Combine("clips")).FullName);
         recording.Mark("start", 0, Destination(project, "clips/a.mp4", overwrite: false), overwrite: false);
         recording.Mark("stop", 60);
         OutputTarget again = Destination(project, "j/a.mp4", overwrite: true);
@@ -716,7 +716,7 @@ public sealed class RecordingMarksTests
         recording.Mark("start", 120, second, overwrite: true);
         recording.Mark("stop", 180);
         string clips = Directory.CreateDirectory(project.Combine("clips")).FullName;
-        ScreenshotPathValidationTests.MakeJunction(project.Combine("other"), clips);
+        Links.MakeJunction(project.Combine("other"), clips);
 
         RecordingResult result = await CutMakingClipsAsync(recording, failFirst: false);
 

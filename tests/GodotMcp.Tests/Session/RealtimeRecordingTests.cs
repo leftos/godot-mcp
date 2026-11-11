@@ -736,7 +736,7 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         _fake.BeforeRemux = () =>
         {
             Directory.Delete(clips);
-            ScreenshotPathValidationTests.MakeJunction(clips, outside.Path);
+            Links.MakeJunction(clips, outside.Path);
             return Task.CompletedTask;
         };
 

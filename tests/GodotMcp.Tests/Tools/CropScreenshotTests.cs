@@ -156,7 +156,7 @@ public sealed class CropScreenshotTests : IDisposable
         string secret = Path.Combine(outside, "secret.png");
         File.Copy(_shot, secret);
         string junction = Path.Combine(_folder, "linked");
-        ScreenshotPathValidationTests.MakeJunction(junction, outside);
+        Links.MakeJunction(junction, outside);
         string image = Path.Combine(junction, "secret.png");
 
         McpException refused;
@@ -179,7 +179,7 @@ public sealed class CropScreenshotTests : IDisposable
         string secret = Path.Combine(other.Path, "secret.png");
         File.Copy(_shot, secret);
         string link = Path.Combine(Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName, "hard.png");
-        ScreenshotPathValidationTests.MakeHardLink(link, secret);
+        Links.MakeHardLink(link, secret);
 
         (JsonElement result, _) = CropIn(project, link, new CropRect(0, 0, 1, 1));
 
@@ -336,7 +336,7 @@ public sealed class CropScreenshotTests : IDisposable
     {
         string outside = Directory.CreateDirectory(_temp.Combine("outside")).FullName;
         string junction = Path.Combine(_folder, "linked");
-        ScreenshotPathValidationTests.MakeJunction(junction, outside);
+        Links.MakeJunction(junction, outside);
 
         McpException refused = Assert.Throws<McpException>(() =>
             ScreenshotCropTool.Write(new CropFolder(_project, junction, MayCreate: false), "shot", Source().Encode(), Path.Exists)
@@ -423,7 +423,7 @@ public sealed class CropScreenshotTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "mklink /J and the final-path check are Windows'");
         string outside = Directory.CreateDirectory(_temp.Combine("outside")).FullName;
         string junction = Path.Combine(_folder, "linked");
-        ScreenshotPathValidationTests.MakeJunction(junction, outside);
+        Links.MakeJunction(junction, outside);
         try
         {
             File.CreateSymbolicLink(Path.Combine(outside, "link.png"), _shot);
@@ -748,7 +748,7 @@ public sealed class CropScreenshotTests : IDisposable
         string outside = Directory.CreateDirectory(temp.Combine("outside")).FullName;
         File.WriteAllBytes(Path.Combine(outside, "x.png"), Source().Encode());
         string junction = Path.Combine(files, "verylonglinkname");
-        ScreenshotPathValidationTests.MakeJunction(junction, outside);
+        Links.MakeJunction(junction, outside);
         string shortLink = ShortPath(junction);
         Assert.SkipUnless(!HasNoShortName(shortLink, junction), $"the volume holding {junction} makes no short (8.3) names");
 
@@ -928,7 +928,7 @@ public sealed class CropScreenshotTests : IDisposable
     public void AProjectPathThatIsAJunctionToALocalFolderIsCropped()
     {
         string link = _temp.Combine("gamelink");
-        ScreenshotPathValidationTests.MakeJunction(link, _project);
+        Links.MakeJunction(link, _project);
 
         (JsonElement result, _) = CropIn(link, Relative, new CropRect(0, 0, 1, 1));
 
@@ -1050,7 +1050,7 @@ public sealed class CropScreenshotTests : IDisposable
         string outside = Directory.CreateDirectory(temp.Combine("outside")).FullName;
         File.WriteAllBytes(Path.Combine(outside, "x.png"), Source().Encode());
         string tmp = Path.Combine(checkout, ".tmp");
-        ScreenshotPathValidationTests.MakeJunction(tmp, outside);
+        Links.MakeJunction(tmp, outside);
 
         (JsonElement result, _) = CropIn(project, Path.Combine(tmp, "x.png"), new CropRect(0, 0, 1, 1));
 
@@ -1068,7 +1068,7 @@ public sealed class CropScreenshotTests : IDisposable
         File.WriteAllBytes(Path.Combine(outside, "x.png"), Source().Encode());
         Directory.CreateDirectory(Path.Combine(project, ".godot"));
         string godotMcp = Path.Combine(project, ".godot", "godot-mcp");
-        ScreenshotPathValidationTests.MakeJunction(godotMcp, outside);
+        Links.MakeJunction(godotMcp, outside);
 
         (JsonElement result, _) = CropIn(project, Path.Combine(godotMcp, "x.png"), new CropRect(0, 0, 1, 1));
 
@@ -1084,10 +1084,10 @@ public sealed class CropScreenshotTests : IDisposable
         string project = Path.Combine(checkout, "game");
         string outsideTmp = Directory.CreateDirectory(temp.Combine("outside-tmp")).FullName;
         string outsideMcp = Directory.CreateDirectory(temp.Combine("outside-mcp")).FullName;
-        ScreenshotPathValidationTests.MakeJunction(Path.Combine(checkout, ".tmp"), outsideTmp);
+        Links.MakeJunction(Path.Combine(checkout, ".tmp"), outsideTmp);
         Directory.CreateDirectory(Path.Combine(project, ".godot"));
         string godotMcp = Path.Combine(project, ".godot", "godot-mcp");
-        ScreenshotPathValidationTests.MakeJunction(godotMcp, outsideMcp);
+        Links.MakeJunction(godotMcp, outsideMcp);
         string image = Path.Combine(project, "art.png");
         File.WriteAllBytes(image, Source().Encode());
 

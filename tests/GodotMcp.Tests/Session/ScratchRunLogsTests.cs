@@ -1,7 +1,6 @@
 using GodotMcp.Server.Session;
 using GodotMcp.Tests.Tools;
 using GodotMcp.TestSupport;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Tests.Session;
@@ -120,7 +119,7 @@ public sealed class ScratchRunLogsTests : IDisposable
         string shot = Path.Combine(target, "0-step.png");
         File.WriteAllText(shot, "x");
         string link = _temp.Combine("scratch-20261031T231358-abcd");
-        ScreenshotPathValidationTests.MakeJunction(link, target);
+        Links.MakeJunction(link, target);
 
         ScratchRunLogs.PruneShots(_temp.Path, keep: 0, NullLogger.Instance);
 
@@ -170,20 +169,4 @@ public sealed class ScratchRunLogsTests : IDisposable
 
     /// <summary>The names in <paramref name="names"/> whose folder is still in the temp folder, in the same order.</summary>
     private List<string> PresentFolders(List<string> names) => [.. names.Where(name => Directory.Exists(_temp.Combine(name)))];
-
-    /// <summary>A logger keeping every message it is given, for the warnings a prune logs.</summary>
-    private sealed class RecordingLogger : ILogger
-    {
-        private readonly List<string> _messages = [];
-
-        public IReadOnlyList<string> Messages => _messages;
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            _messages.Add(formatter(state, exception));
-    }
 }
