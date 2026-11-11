@@ -49,7 +49,7 @@ def _read(tmp_path: Path, log_lines: list[str]) -> tuple[str, str]:
     return kind, kill
 
 
-@pytest.mark.parametrize("prefix", [f"{STAMP} gat ", ""], ids=["stamped", "bare"])
+@pytest.mark.parametrize("prefix", [f"{STAMP} gat ", f"{STAMP} err ", f"{STAMP} out ", ""], ids=["stamped", "err", "out", "bare"])
 def test_a_stalled_kill_line_is_read_stamped_or_bare(tmp_path: Path, prefix: str) -> None:
     lines = [f"{STAMP} gat gate: running pwsh", f"{prefix}{STALLED}"]
 

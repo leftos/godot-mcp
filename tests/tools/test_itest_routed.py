@@ -233,6 +233,20 @@ def test_a_not_routed_line_followed_by_a_failed_verdict_is_a_run(tmp_path: Path)
     assert _no_run_line(tmp_path, lines) == "<null>"
 
 
+def test_a_routed_kill_and_failed_verdict_on_the_err_stream_is_a_run(tmp_path: Path) -> None:
+    killed = "gate: STALLED: no output and no CPU for 121 s; killed"
+    failed = "gate: FAILED (status 124)"
+    lines = [f"{STAMP} err {killed}", f"{STAMP} err {failed}"]
+
+    assert _no_run_line(tmp_path, lines) == "<null>"
+
+
+def test_an_out_stamped_passed_verdict_is_a_run(tmp_path: Path) -> None:
+    lines = [f"{STAMP} out {PASSED}"]
+
+    assert _no_run_line(tmp_path, lines) == "<null>"
+
+
 def test_a_not_routed_line_followed_by_a_kill_line_is_a_run(tmp_path: Path) -> None:
     lines = [_stamped(FASTER), _stamped("gate: running pwsh"), _stamped(STALLED)]
 

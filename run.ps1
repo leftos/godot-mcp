@@ -18,7 +18,7 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
 
   build    dotnet build GodotMcp.slnx in Release, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
-           then its dotnet test -c Release --no-build; ceiling 180 s
+           then its dotnet test -c Release --no-build; ceiling 600 s
   itest    runs as up to two heavy gate runs, which the gate routes to the builder: pwsh -NoProfile -File run.ps1 itest
            -InGate -Groups <the hidden groups> under gate run from the repo root, .tmp/itest-gate.log, ceiling 1800 s,
            then, when the run includes a visible-desktop group (capture), pwsh -NoProfile -File run.ps1 itest-capture as
@@ -415,20 +415,22 @@ $gateWrapper = Join-Path $root 'tools/gate.ps1'
 $pwshPath = [Environment]::ProcessPath
 
 # The last kill line of the gate in a log, or $null: a match whose first group is the line from "gate:" on and whose
-# second is STALLED, TIMED OUT or BACKSTOP. A line may carry the gate's stamp and stream.
+# second is STALLED, TIMED OUT or BACKSTOP. A line may carry the gate's stamp and stream, the stream being gat (the
+# gate's own lines), out or err (a routed run's inner gate comes through as its command's output).
 function Get-GateKillLine {
     param([Parameter(Mandatory)] [string]$Log)
-    $pattern = '^(?:\S+ gat )?(gate: (STALLED|TIMED OUT|BACKSTOP).*)$'
-    return Select-String -LiteralPath $Log -Pattern $pattern -ErrorAction SilentlyContinue | Select-Object -Last 1
+    $pattern = '^(?:\S+ (?:gat|out|err) )?(gate: (STALLED|TIMED OUT|BACKSTOP).*)$'
+    return Select-String -LiteralPath $Log -Pattern $pattern -CaseSensitive -ErrorAction SilentlyContinue | Select-Object -Last 1
 }
 
 # Why a routed run's log shows no test ran: the text from "gate:" on of its last not-routed line, or "the gate's log has
 # no passed verdict"; $null when the log has a verdict of a command that ran: the gate's passed or FAILED verdict or
-# its kill line (STALLED, TIMED OUT, BACKSTOP). A line may carry the gate's stamp and stream.
+# its kill line (STALLED, TIMED OUT, BACKSTOP). A line may carry the gate's stamp and stream, the stream being gat
+# (the gate's own lines), out or err (a routed run's inner gate comes through as its command's output).
 function Get-GateNoRunLine {
     param([Parameter(Mandatory)] [string]$Log)
-    $pattern = '^(?:\S+ gat )?(gate: (?:passed in |FAILED \(status |STALLED|TIMED OUT|BACKSTOP|not routed: ).*)$'
-    $lines = @(Select-String -LiteralPath $Log -Pattern $pattern -ErrorAction SilentlyContinue |
+    $pattern = '^(?:\S+ (?:gat|out|err) )?(gate: (?:passed in |FAILED \(status |STALLED|TIMED OUT|BACKSTOP|not routed: ).*)$'
+    $lines = @(Select-String -LiteralPath $Log -Pattern $pattern -CaseSensitive -ErrorAction SilentlyContinue |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
     if ($lines | Where-Object { -not $_.StartsWith('gate: not routed: ') }) {
         return $null
@@ -639,13 +641,16 @@ function Invoke-GdtestImport {
 
 # Prints every FAIL line of gdtest's log after a failed run, under a header. The tail above is the log's last 15 lines,
 # which end with the watch test's expected "ERROR: shout" backtrace on every run, and stdout and stderr are not kept in
-# time order, so a failure's FAIL lines sit further up. A log with no FAIL line (a crash, a gate kill) says so, and so
-# does a missing log, never throwing.
+# time order, so a failure's FAIL lines sit further up. Each line carries the gate's stamp and stream (out for the
+# runner's prints), which are not printed. A log with no FAIL line (a crash, a gate kill) says so, and so does a missing
+# log, never throwing.
 function Show-GdtestFailures {
     param([Parameter(Mandatory)] [string]$Log)
     $failures = @()
     if (Test-Path -LiteralPath $Log -PathType Leaf) {
-        $failures = @(Get-Content -LiteralPath $Log | Where-Object { $_ -match '^FAIL ' })
+        $pattern = '^(?:\S+ (?:gat|out|err) )?(FAIL .*)$'
+        $failures = @(Select-String -LiteralPath $Log -Pattern $pattern -CaseSensitive -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
     }
     if ($failures.Count -eq 0) {
         Write-Host 'gdtest: no FAIL line in .tmp/gdtest.log; read the log for the cause'
@@ -674,14 +679,19 @@ function Get-TestArgumentList {
     return $arguments
 }
 
-# The arguments of an itest run of the test project's classes: Get-TestArgumentList's --no-build ones, then Microsoft
-# Testing Platform's diagnostic file (--diagnostic, written as each message arrives). That file is the only sink that
-# keeps a hung test's name while the test is still running: under dotnet test, MTP's pipe-mode output device drops every
-# informational message xUnit sends, xUnit's "[Long Running Test]" line among them, so neither the console nor the
-# group's log carries it. The folder is this function's own one under .tmp, cleared first so a run never reads an
-# earlier run's line, and -Name is the gate log's name, whose .diag folder Show-ItestLongRunning reads.
+# The arguments of a run of a test project's classes, and the folder its diagnostic file is in: Get-TestArgumentList's
+# --no-build ones, then Microsoft Testing Platform's diagnostic file (--diagnostic, written as each message arrives).
+# That file is the only sink that keeps a hung test's name while the test is still running: under dotnet test, MTP's
+# pipe-mode output device drops every informational message xUnit sends, xUnit's "[Long Running Test]" line among them,
+# so neither the console nor the run's log carries it. Each run gets a new subfolder of the name's own one under .tmp,
+# cleared first so a local run never keeps an earlier run's line: dotnet test refuses a --diagnostic-output-directory
+# that already exists, and a routed run's folder stays on the machine it ran on, so a fixed folder fails its second run.
+# The path handed to dotnet is relative to the repo root, which every caller runs dotnet from. -Project is the test
+# project the run is of: the integration tests' for an itest, the unit tests' for run.ps1 test. Returns @{ Arguments;
+# Folder }, Folder being the folder where the reader finds the diagnostic file.
 function Get-ItestArgumentList {
     param(
+        [Parameter(Mandatory)] [string]$Project,
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Classes,
         [Parameter(Mandatory)] [string]$Name
     )
@@ -689,13 +699,14 @@ function Get-ItestArgumentList {
     if (Test-Path -LiteralPath $folder) {
         Remove-Item -LiteralPath $folder -Recurse -Force
     }
-    $arguments = Get-TestArgumentList -Project $itestProject -Classes $Classes -NoBuild
+    $arguments = Get-TestArgumentList -Project $Project -Classes $Classes -NoBuild
     if ($Classes.Count -eq 0) {
         $arguments += '--'
     }
+    $run = [guid]::NewGuid().ToString('N')
     $arguments += @('--diagnostic', '--diagnostic-verbosity', 'Information', '--diagnostic-synchronous-write',
-        '--diagnostic-output-directory', $folder)
-    return $arguments
+        '--diagnostic-output-directory', ".tmp/$Name.diag/$run")
+    return @{ Arguments = $arguments; Folder = (Join-Path $folder $run) }
 }
 
 # Every test class the integration test project declares: a `public sealed [partial] class <Name>Tests` in one of its
@@ -1037,7 +1048,9 @@ function Get-ItestFilterSlot {
 }
 
 # Starts a group's gate as a process of its own, so the lanes' gates run at once: its console output (the gate's tail
-# and verdict) goes to .tmp/itest-<group>.console, its errors to .tmp/itest-<group>.console.err. Returns the process.
+# and verdict) goes to .tmp/itest-<group>.console, its errors to .tmp/itest-<group>.console.err. Returns @{ Process;
+# Folder }, the folder being where the group's diagnostic file is: the run's own folder, or the csharp group's name
+# folder, cleared here so its own process's run lands in an empty one.
 function Invoke-ItestGroupProcess {
     param(
         [Parameter(Mandatory)] [string]$Group,
@@ -1046,10 +1059,16 @@ function Invoke-ItestGroupProcess {
     if ($Group -eq 'csharp') {
         $command = Get-ItestCsharpCommand -Filter ''
         $ceiling = $itestCsharpCeiling
+        $folder = Join-Path $logDir "itest-$Group.diag"
+        if (Test-Path -LiteralPath $folder) {
+            Remove-Item -LiteralPath $folder -Recurse -Force
+        }
     }
     else {
         $classes = @($itestGroups[$Group] | ForEach-Object { "$itestNamespace.$_" })
-        $command = Get-ItestCommand -Arguments (Get-ItestArgumentList -Classes $classes -Name "itest-$Group")
+        $run = Get-ItestArgumentList -Project $itestProject -Classes $classes -Name "itest-$Group"
+        $command = Get-ItestCommand -Arguments $run.Arguments
+        $folder = $run.Folder
         $ceiling = $itestCeiling
     }
     $log = Join-Path $logDir "itest-$Group.log"
@@ -1062,7 +1081,7 @@ function Invoke-ItestGroupProcess {
         -NoNewWindow -PassThru -RedirectStandardOutput $console -RedirectStandardError "$console.err"
     # Without a handle taken while it runs, the process object of Start-Process has no ExitCode once it has exited.
     $null = $process.Handle
-    return $process
+    return @{ Process = $process; Folder = $folder }
 }
 
 # The failure blocks of a test log, each an array of lines: a "failed <Test> (<time>)" line as Microsoft Testing Platform
@@ -1096,28 +1115,32 @@ function Get-ItestFailureBlock {
     return $blocks.ToArray()
 }
 
-# Prints the last of xUnit's "[Long Running Test]" lines in a name's diagnostic folder: the tests still running when it
+# Prints the last of xUnit's "[Long Running Test]" lines in a run's diagnostic folder: the tests still running when it
 # was written, which is where a killed run's hung test is named, since dotnet test's pipe-mode output device drops the
-# line from the console and the group's log. Nothing is printed when the folder or the line is missing.
+# line from the console and the run's log. -Folder is searched whole: a run's own folder, as Get-ItestArgumentList
+# returned it, or a group's name folder, whose file its own process writes under a run of its own. -Label is what the
+# line calls the run ("itest itest-lifecycle", "test"). Nothing is printed when the folder or the line is missing.
 function Show-ItestLongRunning {
-    param([Parameter(Mandatory)] [string]$Name)
-    $folder = Join-Path $logDir "$Name.diag"
-    if (-not (Test-Path -LiteralPath $folder)) {
+    param(
+        [Parameter(Mandatory)] [string]$Folder,
+        [Parameter(Mandatory)] [string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $Folder)) {
         return
     }
     try {
-        $lines = @(Get-ChildItem -LiteralPath $folder -Filter '*.diag' -File -ErrorAction Stop |
+        $lines = @(Get-ChildItem -LiteralPath $Folder -Filter '*.diag' -File -Recurse -ErrorAction Stop |
             Select-String -Pattern '\[Long Running Test\]' |
             ForEach-Object { $_.Line })
     }
     catch {
-        Write-Host "itest ${Name}: could not read the diagnostics in ${folder}: $($_.Exception.GetBaseException().Message)"
+        Write-Host "${Label}: could not read the diagnostics in ${Folder}: $($_.Exception.GetBaseException().Message)"
         return
     }
     if ($lines.Count -eq 0) {
         return
     }
-    Write-Host "itest ${Name}: still running when it was killed: $($lines[-1])"
+    Write-Host "${Label}: still running when it was killed: $($lines[-1])"
 }
 
 # Prints, after a failed group's console output, the failure block of each failed test in its lane log, so the message
@@ -1155,12 +1178,14 @@ function Show-ItestFailureBlock {
 }
 
 # Prints a finished group's console output under a header, with the gate's kill line and its reading when it was
-# killed, and the failure blocks of its failed tests when it failed. Returns the group's exit status.
+# killed, the last "[Long Running Test]" line of -Folder (its name folder for the csharp group, whose own process writes
+# the run there) and the failure blocks of its failed tests when it failed. Returns the group's exit status.
 function Complete-ItestGroup {
     param(
         [Parameter(Mandatory)] [string]$Group,
         [Parameter(Mandatory)] [string]$Lane,
-        [Parameter(Mandatory)] [System.Diagnostics.Process]$Process
+        [Parameter(Mandatory)] [System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Folder
     )
     $Process.WaitForExit()
     $status = $Process.ExitCode
@@ -1169,9 +1194,11 @@ function Complete-ItestGroup {
     Get-Content -LiteralPath $console, "$console.err" -ErrorAction SilentlyContinue | Out-Host
     if ($status -eq 124) {
         Write-Host "itest-$Group was killed by the gate: $(Get-GateKill -Log (Join-Path $logDir "itest-$Group.log"))" -ForegroundColor Yellow
+        if ($Folder) {
+            Show-ItestLongRunning -Folder $Folder -Label "itest itest-$Group"
+        }
     }
     if ($status -ne 0) {
-        Show-ItestLongRunning -Name "itest-$Group"
         Show-ItestFailureBlock -Group $Group -Log (Join-Path $logDir "itest-$Group.log")
     }
     return $status
@@ -1188,7 +1215,8 @@ function Invoke-ItestLaneNext {
         return
     }
     $group = $Queues[$Lane].Dequeue()
-    $Running[$Lane] = @{ Group = $group; Process = (Invoke-ItestGroupProcess -Group $group -Lane $Lane) }
+    $started = Invoke-ItestGroupProcess -Group $group -Lane $Lane
+    $Running[$Lane] = @{ Group = $group; Process = $started.Process; Folder = $started.Folder }
 }
 
 # Stops the gates of the groups still running (an interrupted run), each with its whole process tree: the wrapper's
@@ -1223,7 +1251,8 @@ function Invoke-ItestLane {
                 if (-not $entry.Process.WaitForExit(500)) {
                     continue
                 }
-                $statuses[$entry.Group] = Complete-ItestGroup -Group $entry.Group -Lane $lane -Process $entry.Process
+                $statuses[$entry.Group] = Complete-ItestGroup -Group $entry.Group -Lane $lane -Process $entry.Process `
+                    -Folder $entry.Folder
                 $running.Remove($lane)
                 Invoke-ItestLaneNext -Lane $lane -Queues $queues -Running $running
             }
@@ -1312,17 +1341,21 @@ function Invoke-ItestFiltered {
     $name = Get-ItestFilterLogName -Filter $Filters[0]
     $slot = Get-ItestFilterSlot -Filters $Filters
     if (Test-ItestFilterNeedsDotnet -Filters $Filters) {
+        $folder = Join-Path $logDir 'itest-csharp.diag'
+        if (Test-Path -LiteralPath $folder) {
+            Remove-Item -LiteralPath $folder -Recurse -Force
+        }
         $command = Get-ItestCsharpCommand -Filter $Filters[0]
         $status = Invoke-Gated -Name $name -TimeoutSeconds $itestCsharpCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
-        if ($status -ne 0) {
-            Show-ItestLongRunning -Name 'itest-csharp'
+        if ($status -eq 124) {
+            Show-ItestLongRunning -Folder $folder -Label 'itest itest-csharp'
         }
         return $status
     }
-    $arguments = Get-ItestArgumentList -Classes $Filters -Name $name
-    $status = Invoke-ItestGated -Name $name -Arguments $arguments -Slot $slot
-    if ($status -ne 0) {
-        Show-ItestLongRunning -Name $name
+    $run = Get-ItestArgumentList -Project $itestProject -Classes $Filters -Name $name
+    $status = Invoke-ItestGated -Name $name -Arguments $run.Arguments -Slot $slot
+    if ($status -eq 124) {
+        Show-ItestLongRunning -Folder $run.Folder -Label "itest $name"
     }
     return $status
 }
@@ -1362,7 +1395,8 @@ function Invoke-ItestCsharp {
     if ($classes.Count -eq 0) {
         $classes = @($itestGroups['csharp'] | ForEach-Object { "$itestNamespace.$_" })
     }
-    $command = Get-ItestCommand -Arguments (Get-ItestArgumentList -Classes $classes -Name 'itest-csharp')
+    $run = Get-ItestArgumentList -Project $itestProject -Classes $classes -Name 'itest-csharp'
+    $command = Get-ItestCommand -Arguments $run.Arguments
     & $command.Program @($command.Arguments) | Out-Host
     return $LASTEXITCODE
 }
@@ -1391,7 +1425,8 @@ function Invoke-ItestCapture {
     if ($classes.Count -eq 0) {
         $classes = @($itestVisibleGroups | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
     }
-    $command = Get-ItestCommand -Arguments (Get-ItestArgumentList -Classes $classes -Name 'itest-capture') -Visible
+    $run = Get-ItestArgumentList -Project $itestProject -Classes $classes -Name 'itest-capture'
+    $command = Get-ItestCommand -Arguments $run.Arguments -Visible
     & $command.Program @($command.Arguments) | Out-Host
     return $LASTEXITCODE
 }
@@ -1888,12 +1923,17 @@ try {
             if ($build -ne 0) {
                 exit $build
             }
-            $arguments = Get-TestArgumentList -Project $unitTestProject -Classes $filterClasses -NoBuild
+            $run = Get-ItestArgumentList -Project $unitTestProject -Classes $filterClasses -Name 'test'
             # The whole unit suite runs its classes in parallel across the machine; a filtered run is a class or two.
             $slot = if ($filterClasses.Count -gt 0) { 'light' } else { 'heavy' }
             # A hang guard a passing run never reaches: the whole suite took 125-130 s on the build box, so 600 s leaves
-            # room for its growth; a hung test still ends at the gate's stall kill long before it.
-            exit (Invoke-Logged -Name 'test' -TimeoutSeconds 600 -Arguments $arguments -Slot $slot)
+            # room for its growth; a hung test still ends at the gate's stall kill long before it, and the diagnostic
+            # file names it. Only the kill names it: the line says the test was still running when it was killed.
+            $status = Invoke-Logged -Name 'test' -TimeoutSeconds 600 -Arguments $run.Arguments -Slot $slot
+            if ($status -eq 124) {
+                Show-ItestLongRunning -Folder $run.Folder -Label 'test'
+            }
+            exit $status
         }
         'itest' {
             if ($InGate) {

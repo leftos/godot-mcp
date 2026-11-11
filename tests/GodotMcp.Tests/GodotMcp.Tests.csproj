@@ -23,6 +23,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- xUnit's "[Long Running Test]" line, which run.ps1 reads from the diagnostic file to name a hung unit test. -->
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The capture helper targets a Windows TFM this project cannot reference, so its pure argument, crop and audio pipe
        files are compiled in here instead; they use nothing of WinRT, Vortice or WASAPI. -->
   <ItemGroup>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -51,13 +52,14 @@ STAGED_FILES = {
     "helper/GodotMcp.Dotnet.Core.dll": "helper/GodotMcp.Dotnet.Core.dll",
 }
 TEST_ASSEMBLY = "tests/GodotMcp.IntegrationTests/bin/Release/net10.0/GodotMcp.IntegrationTests.dll"
-# The Microsoft Testing Platform arguments every itest run gets, whose folder is <name>.diag under the run's own .tmp.
+# The Microsoft Testing Platform arguments every itest run gets, whose folder is <name>.diag/<run id> under the run's .tmp.
 DIAG_ARGS = "--diagnostic --diagnostic-verbosity Information --diagnostic-synchronous-write --diagnostic-output-directory"
 
 
-def _diag_folder(root: Path, name: str = "itest-csharp") -> str:
-    """The diagnostic folder run.ps1 hands an itest run of root whose gate log is called name."""
-    return str(root / ".tmp" / f"{name}.diag")
+def _diag_folder(name: str = "itest-csharp") -> str:
+    """The pattern of the diagnostic folder run.ps1 hands a run whose gate log is called name, relative to the repo
+    root: the name's own folder and, inside it, the id of that run alone."""
+    return re.escape(f".tmp/{name}.diag") + r"/[0-9a-f]{32}"
 
 
 GROUP_CLASSES = " ".join(
@@ -103,7 +105,7 @@ def test_the_group_lays_out_the_helper_builds_the_tests_then_runs_them_without_a
     assert "GodotMcp.IntegrationTests.csproj -c Release -warnaserror" in lines[3], lines
     test_call = lines[-1]
     assert "-c Release --no-build" in test_call, test_call
-    assert test_call.endswith(f"--filter-class {test_filter or GROUP_CLASSES} {DIAG_ARGS} {_diag_folder(root)}"), test_call
+    assert re.search(rf"--filter-class {re.escape(test_filter or GROUP_CLASSES)} {DIAG_ARGS} {_diag_folder()}$", test_call), test_call
     layout = root / "bin" / "dotnet"
     assert (layout / "godot_mcp_dotnet.gdextension").read_text(encoding="utf-8") == "gdextension"
     for staged, laid_out in STAGED_FILES.items():
@@ -147,7 +149,7 @@ def test_the_group_inside_an_itest_run_that_built_the_project_skips_the_build_an
     assert skip in result.stdout, result.stdout + result.stderr
     test_call = lines[-1]
     assert "-c Release --no-build" in test_call, test_call
-    assert test_call.endswith(f"--filter-class {GROUP_CLASSES} {DIAG_ARGS} {_diag_folder(root)}"), test_call
+    assert re.search(rf"--filter-class {GROUP_CLASSES} {DIAG_ARGS} {_diag_folder()}$", test_call), test_call
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the stand-in dotnet is a .cmd")
