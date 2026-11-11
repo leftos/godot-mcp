@@ -849,6 +849,142 @@ public sealed class SessionAttachTests : IAsyncDisposable
         );
     }
 
+    // The join's wait starts with the call, not with the prep lock: a prep holding the folder for the whole wait ends the call
+    // at its deadline, with nothing written and the game still dormant.
+    [Fact]
+    public async Task AJoinWhoseWaitEndsWhileThePrepLockIsHeldWritesNoJoinFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+        SemaphoreSlim folderLock = harness.Sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        Task<AttachResult> join = harness.Sessions.AttachAsync(
+            new AttachRequest(alpha, null, TimeSpan.FromSeconds(1), false, false, null),
+            cancellation
+        );
+        try
+        {
+            await RegistryHarness.AdvanceUntilDoneAsync(time, join, cancellation);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+
+        SessionException timedOut = await Assert.ThrowsAsync<SessionException>(() => join);
+        Assert.Equal(
+            $"The dormant game (pid 4101) on {alpha} was not joined within 1 s: a prep held the folder for the whole wait, so the "
+                + "join file was never written and the game is still dormant. Call attach_project again once the prep is done.",
+            timedOut.Message
+        );
+        Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
+        Assert.True(File.Exists(DormantGames.EntryPathIn(alpha, 4101)));
+        Assert.Empty(harness.Sessions.List(includeStopped: true));
+    }
+
+    // The wait's budget covers the time a prep holds the folder: 1.5 s of it are spent on the lock, and the join ends at 2 s
+    // from the call, not 2 s from the lock's release.
+    [Fact]
+    public async Task AJoinsWaitCountsTheTimeThePrepLockWasHeld()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+        SemaphoreSlim folderLock = harness.Sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        // The accept registers synchronously inside the call, and with it the deadline the lock wait spends.
+        Task<AttachResult> join = harness.Sessions.AttachAsync(
+            new AttachRequest(alpha, null, TimeSpan.FromSeconds(2), false, false, null),
+            cancellation
+        );
+        try
+        {
+            for (int step = 0; step < 15; step++)
+            {
+                time.Advance(TimeSpan.FromMilliseconds(100));
+                await Task.Delay(TimeSpan.FromMilliseconds(5), cancellation);
+            }
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
+        for (int step = 0; step < 6; step++)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(TimeSpan.FromMilliseconds(5), cancellation);
+        }
+
+        // No more of the clock is spent: a join whose deadline started at the release would end only at 3.5 s, so it would
+        // hang here and fail as hung.
+        SessionException timedOut = await Assert.ThrowsAsync<SessionException>(() => join.WaitAsync(RegistryHarness.HangGuard, cancellation));
+        Assert.Equal(
+            $"The dormant game (pid 4101) on {alpha} did not answer within 2 s, so the join is abandoned and its join file is "
+                + "removed. It may be paused under a debugger or frozen; resume it, then call attach_project again.",
+            timedOut.Message
+        );
+        Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
+    }
+
+    // A join cancelled while it waits on the prep lock writes nothing and leaves the lock to the prep.
+    [Fact]
+    public async Task ACancelledJoinWaitingOnThePrepLockWritesNothing()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+        SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        Task<AttachResult> join = _harness.Sessions.AttachAsync(
+            new AttachRequest(alpha, null, RegistryHarness.LongWait, false, false, 4101),
+            cancel.Token
+        );
+        try
+        {
+            await RegistryHarness.WaitUntilAsync(() => _harness.Sessions.List(includeStopped: true).Count > 0, join);
+            await cancel.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => join);
+
+            Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
+            Assert.Empty(_harness.Sessions.List(includeStopped: true));
+            Assert.Equal(0, folderLock.CurrentCount);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
+
+    // The project's own override.cfg is refused as a plain attach's is, and the join then writes no join file.
+    [Fact]
+    public async Task AJoinWhoseOverrideIsRefusedWritesNoJoinFile()
+    {
+        string alpha = _harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+        File.WriteAllText(OverrideFile.PathIn(alpha), "[autoload]\n\nGodotMcpBridge=\"*res://game/bridge.gd\"\n");
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, null, RegistryHarness.LongWait, false, false, 4101),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Contains($"{OverrideFile.PathIn(alpha)} already exists and is the project's own", refused.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
     [Fact]
     public async Task JoinsOfTwoDormantGamesWaitAtOnce()
     {

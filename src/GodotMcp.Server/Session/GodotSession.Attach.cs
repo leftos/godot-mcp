@@ -28,6 +28,12 @@ internal sealed partial class GodotSession
     private string? _handoffToken;
 
     /// <summary>
+    /// Whether this attach was a join that wrote its dormant game's join file; the timeout text is chosen by it, since an armed
+    /// folder always has an override.cfg whether or not the game was ever woken.
+    /// </summary>
+    private bool _joinFileWritten;
+
+    /// <summary>
     /// The dormant game this attach joins, by its process id, chosen when the session was reserved; null for an attach that
     /// waits for a launch, and for a run.
     /// </summary>
@@ -265,14 +271,13 @@ internal sealed partial class GodotSession
     {
         BridgeEndpoint endpoint = new(registry.Listener.Port, CreateToken());
         _handoffToken = endpoint.Token;
+        _joinFileWritten = false;
         BridgeConnection connection;
         try
         {
             if (JoinPid is int pid)
             {
-                // The override goes through the prep lock as an attach's does, before the join file wakes the game.
-                await WriteOverrideUnderPrepLockAsync(bridgeScript, cancellationToken);
-                connection = await JoinDormantGameAsync(endpoint, pid, wait, cancellationToken);
+                connection = await JoinDormantGameAsync(bridgeScript, endpoint, pid, wait, cancellationToken);
             }
             else
             {
@@ -326,15 +331,25 @@ internal sealed partial class GodotSession
             throw;
         }
 
-        // The override's write races the accept: a deadline or cancel that ends the accept while a prep holds the lock ends the
-        // call at once, and a game that dials before the override lands is kept until the write is done.
+        await WriteOverrideWhileAwaitingAsync(bridgeScript, abandon, accepted);
+        return await accepted;
+    }
+
+    /// <summary>
+    /// Writes the override under the folder's prep lock while the accept waits for the game: a deadline or cancel that ends the
+    /// accept while a prep holds the lock ends the call at once, and a game that dials before the override lands is kept until
+    /// the write is done.
+    /// </summary>
+    /// <returns>False when the accept ended first, unsuccessfully, so the caller returns its outcome; true once the override is written.</returns>
+    private async Task<bool> WriteOverrideWhileAwaitingAsync(string bridgeScript, CancellationTokenSource abandon, Task<BridgeConnection> accepted)
+    {
         Task writing = WriteOverrideUnderPrepLockAsync(bridgeScript, abandon.Token);
         await Task.WhenAny(writing, accepted);
         if (accepted.IsCompleted && !accepted.IsCompletedSuccessfully)
         {
             await abandon.CancelAsync();
             await writing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            return await accepted;
+            return false;
         }
 
         try
@@ -347,7 +362,7 @@ internal sealed partial class GodotSession
             throw;
         }
 
-        return await accepted;
+        return true;
     }
 
     /// <summary>
@@ -365,13 +380,33 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
-    /// Joins the dormant game <paramref name="pid"/>: the join file is written only once the wait is registered, since the game
-    /// dials within one poll of it and the listener refuses a hello whose token no session awaits.
+    /// Joins the dormant game <paramref name="pid"/>: the wait is registered before the override's write, so its deadline covers
+    /// the wait for the folder's prep lock too, and the join file is written only once the override is in place and the wait is
+    /// still pending, since the game dials within one poll of the join file and the listener refuses a hello whose token no
+    /// session awaits.
     /// </summary>
-    private async Task<BridgeConnection> JoinDormantGameAsync(BridgeEndpoint endpoint, int pid, TimeSpan wait, CancellationToken cancellationToken)
+    private async Task<BridgeConnection> JoinDormantGameAsync(
+        string bridgeScript,
+        BridgeEndpoint endpoint,
+        int pid,
+        TimeSpan wait,
+        CancellationToken cancellationToken
+    )
     {
         using var abandon = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task<BridgeConnection> accepted = AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, abandon.Token);
+        if (!await WriteOverrideWhileAwaitingAsync(bridgeScript, abandon, accepted))
+        {
+            return await accepted;
+        }
+
+        // The accept may have ended between the override's write and the join file: one written then would wake a game that no
+        // session awaits, so nothing is published once the accept has ended.
+        if (accepted.IsCompleted)
+        {
+            return await accepted;
+        }
+
         try
         {
             registry.OverrideFolders.Hold(
@@ -385,6 +420,7 @@ internal sealed partial class GodotSession
             throw;
         }
 
+        _joinFileWritten = true;
         return await accepted;
     }
 
@@ -461,6 +497,14 @@ internal sealed partial class GodotSession
 
     private string DescribeJoinTimeout(int pid, TimeSpan wait, string backstop)
     {
+        if (!_joinFileWritten)
+        {
+            // The deadline ended while a prep held the lock the override is written under, so the game was never woken.
+            return $"The dormant game (pid {pid}) on {ProjectDir} was not joined within {wait.TotalSeconds:0} s{backstop}: a prep held "
+                + "the folder for the whole wait, so the join file was never written and the game is still dormant. Call "
+                + "attach_project again once the prep is done.";
+        }
+
         if (!File.Exists(DormantGames.EntryPathIn(ProjectDir, pid)))
         {
             // Another attach on the folder took the game, which read the attach file before the join file arrived, or it quit.
