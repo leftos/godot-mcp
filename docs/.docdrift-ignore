@@ -1,6 +1,7 @@
 # Runtime state the server writes into a game's .godot/godot-mcp/ or its install folder
 armed.json
 attach.json
+build-diagnostics.json
 import-fingerprints.json
 remote.json
 runtimeconfig.json
