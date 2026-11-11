@@ -2,12 +2,17 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.40.1 - 2026-11-11
 
 ### Fixed
 
 - An install replaces its `current` pointer even while a reader holds the file open, instead of retrying 20 times and failing.
 - A `run_scratches` shot step whose clock passes its pace while its frame is captured still ends its window at the pace.
+
+### For agents
+
+- `run.ps1 install` (and the release's `install.ps1`) replaces its `current` pointer even while a reader holds the file open, instead of retrying 20 times and failing with "Access to the path is denied".
+- `run_scratches`: a shot step whose game clock passes its pace while its frame is being captured still ends its window at the pace, instead of falling back to the runner's marker (and its stderr warning).
 
 ## 0.40.0 - 2026-11-11
 
