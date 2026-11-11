@@ -10,15 +10,16 @@ called through the repo's wrapper tools/gate.ps1, which hands it to the installe
 wrapper runs the command directly, with no log, slot or watchdog): its whole output goes to .tmp/<command>.log, the last
 lines are printed, and it exits with the command's own status, or 124 when the gate's watchdog killed it with every
 process it started. The watchdog kills a run for the first of three reasons, each named by a kill line in the log that
-this script prints with its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on
-a clock that runs slower while other work keeps the machine busy: a busy loop or a ceiling set too tight) or BACKSTOP
-(five times the ceiling in plain wall time: the machine was busy, so run it once more alone). The ceilings below are
-load-adjusted. On GitHub Actions, where no gate is installed, a command runs ungated instead: its output still goes to
-the same log, and the job's timeout-minutes bounds it in place of the ceiling and watchdog.
+this script prints with its reading: STALLED (no output and no CPU for 120 s: it hung; test widens that window to 420 s),
+TIMED OUT (the ceiling ran out on a clock that runs slower while other work keeps the machine busy: a busy loop or a
+ceiling set too tight) or BACKSTOP (five times the ceiling in plain wall time: the machine was busy, so run it once more
+alone). The ceilings below are load-adjusted. On GitHub Actions, where no gate is installed, a command runs ungated
+instead: its output still goes to the same log, and the job's timeout-minutes bounds it in place of the ceiling and
+watchdog.
 
   build    dotnet build GodotMcp.slnx in Release, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
-           then its dotnet test -c Release --no-build; ceiling 600 s
+           then its dotnet test -c Release --no-build; ceiling 600 s, stall window 420 s
   itest    runs as up to two heavy gate runs, which the gate routes to the builder: pwsh -NoProfile -File run.ps1 itest
            -InGate -Groups <the hidden groups> under gate run from the repo root, .tmp/itest-gate.log, ceiling 1800 s,
            then, when the run includes a visible-desktop group (capture), pwsh -NoProfile -File run.ps1 itest-capture as
@@ -284,6 +285,9 @@ $itestCsharpCeiling = $itestCeiling + 120
 $itestCaptureCeiling = $itestCeiling + 120
 # The ceiling of the one heavy gate run a whole itest goes out as, the gate repo's figure for the routed itest.
 $itestRoutedCeiling = 1800
+# The unit run's stall window: its longest hang guard (300 s, RegistryHarness.HangGuard) plus a 120 s margin, under its
+# 600 s ceiling, so a hung test fails on its own guard's message instead of the gate's stall kill.
+$testStallSeconds = 420
 # Which groups a changed file touches, for itest-groups and itest -Since: ordered pairs of a path pattern, '/'-separated
 # from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all' (every group
 # but the visible groups table's), 'none', 'class' (the group listing the class a test file is named for), or a list of
@@ -498,6 +502,7 @@ function Invoke-Gated {
         [Parameter(Mandatory)] [string]$Program,
         [Parameter(Mandatory)] [string[]]$Arguments,
         [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot,
+        [int]$StallSeconds = 0,
         [switch]$NoMarkers
     )
     $log = Join-Path $logDir "$Name.log"
@@ -508,6 +513,9 @@ function Invoke-Gated {
     $gateOptions = @('run', '--log', $log, '--timeout', $TimeoutSeconds, '--slot', $Slot, '--tail', 15)
     if ($NoMarkers) {
         $gateOptions += '--no-markers'
+    }
+    if ($StallSeconds -gt 0) {
+        $gateOptions += @('--stall', $StallSeconds)
     }
     & $pwshPath -NoProfile -File $gateWrapper @gateOptions -- $Program @Arguments | Out-Host
     $status = $LASTEXITCODE
@@ -523,9 +531,10 @@ function Invoke-Logged {
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [int]$TimeoutSeconds,
         [Parameter(Mandatory)] [string[]]$Arguments,
-        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot
+        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot,
+        [int]$StallSeconds = 0
     )
-    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments -Slot $Slot
+    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments -Slot $Slot -StallSeconds $StallSeconds
 }
 
 # Builds a test project in $configuration, warnings as errors, under its own gate, so the run after it has nothing to
@@ -1927,9 +1936,9 @@ try {
             # The whole unit suite runs its classes in parallel across the machine; a filtered run is a class or two.
             $slot = if ($filterClasses.Count -gt 0) { 'light' } else { 'heavy' }
             # A hang guard a passing run never reaches: the whole suite took 125-130 s on the build box, so 600 s leaves
-            # room for its growth; a hung test still ends at the gate's stall kill long before it, and the diagnostic
-            # file names it. Only the kill names it: the line says the test was still running when it was killed.
-            $status = Invoke-Logged -Name 'test' -TimeoutSeconds 600 -Arguments $run.Arguments -Slot $slot
+            # room for its growth. The run passes a stall window above its longest hang guard (300 s), so a hung test
+            # fails on its own guard's message first, naming it; the gate's stall kill would end the run before it.
+            $status = Invoke-Logged -Name 'test' -TimeoutSeconds 600 -StallSeconds $testStallSeconds -Arguments $run.Arguments -Slot $slot
             if ($status -eq 124) {
                 Show-ItestLongRunning -Folder $run.Folder -Label 'test'
             }

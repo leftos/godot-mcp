@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -350,3 +351,47 @@ def test_filter_with_since_is_refused_before_the_gate(routed_repo: Path) -> None
 
     assert result.returncode == 2, result.stdout + result.stderr
     assert not _gate_args(routed_repo).exists()
+
+
+# A stand-in for the gate wrapper that lets a run go on: it appends the words it was called with, one JSON line per
+# call, to .tmp/gate-calls.jsonl and exits 0, so a run with more than one gate call records them all.
+GATE_STUB_PASSING = """$argv = [Environment]::GetCommandLineArgs()
+$at = [Array]::IndexOf($argv, '-File')
+$words = @($argv | Select-Object -Skip ($at + 2))
+$tmp = Join-Path (Split-Path -Parent $PSScriptRoot) '.tmp'
+New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+Add-Content -LiteralPath (Join-Path $tmp 'gate-calls.jsonl') -Value (ConvertTo-Json -InputObject @($words) -Compress) -Encoding utf8
+exit 0
+"""
+
+
+@pytest.fixture
+def passing_gate_repo(repo: Path) -> Path:
+    """The repo with a gate stub that exits 0, so a verb with a build gate and a test gate runs to the second one."""
+    (repo / "tools" / "gate.ps1").write_text(GATE_STUB_PASSING, encoding="utf-8", newline="\n")
+    return repo
+
+
+def _gate_calls(repo: Path) -> list[list[str]]:
+    lines = (repo / ".tmp" / "gate-calls.jsonl").read_text(encoding="utf-8-sig").splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
+
+
+def test_the_unit_test_run_passes_a_stall_above_its_hang_guard(passing_gate_repo: Path) -> None:
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-File", str(passing_gate_repo / "run.ps1"), "test"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    calls = _gate_calls(passing_gate_repo)
+    assert len(calls) == 2, result.stdout + result.stderr
+    build_call, test_call = calls
+    assert build_call[build_call.index("--timeout") + 1] == "300"
+    assert "--stall" not in build_call
+    ceiling = test_call.index("--timeout")
+    assert test_call[ceiling + 1] == "600"
+    assert "--stall" in test_call[ceiling:], test_call
+    assert test_call[test_call.index("--stall", ceiling) + 1] == "420"
