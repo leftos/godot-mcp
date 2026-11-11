@@ -425,7 +425,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
         StopResult stopped = await StopSessionAsync(target, discard, cancellationToken);
         bool hostStopped = Volatile.Read(ref _headlessHosts) is { } hosts && await hosts.StopIfIdleAsync(target.ProjectDir, "stop_project");
-        return stopped with { HeadlessHostStopped = hostStopped };
+        return stopped with { HeadlessHostStopped = hostStopped, Folder = FolderHolders.After(target.ProjectDir) };
     }
 
     /// <summary>
@@ -481,7 +481,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         if (target is not null)
         {
             StopResult stopped = await StopSessionAsync(target, discard, cancellationToken);
-            return stopped with { HeadlessHostStopped = await StopHeadlessHostAsync(projectDir, cancellationToken) };
+            bool hostStopped = await StopHeadlessHostAsync(projectDir, cancellationToken);
+            return stopped with { HeadlessHostStopped = hostStopped, Folder = FolderHolders.After(projectDir) };
         }
 
         return await StopIdleFolderAsync(projectDir, cancellationToken);
@@ -608,6 +609,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             ArmedRemoved = cleared.ArmedRemoved,
             Warning = IdleStopWarning(waited, left),
             GameStillRunning = waited is null ? null : StillRunningOrNull(waited),
+            Folder = FolderHolders.After(projectDir),
         };
     }
 
@@ -1298,22 +1300,47 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                     : throw new SessionException($"session '{named.Name}' runs {named.ProjectDir}, not projectPath {projectDir}; pass one of them.");
             }
 
-            GodotSession[] live =
-            [
-                .. Ordered()
-                    .Where(other =>
-                        other.IsLive
-                        && other.Kind != SessionKind.Process
-                        && !ScratchRuns.Holds(other)
-                        && ProjectPaths.AreSame(other.ProjectDir, projectDir)
-                    ),
-            ];
+            GodotSession[] live = LiveSessionsIn(projectDir);
             return live.Length <= 1
                 ? live.FirstOrDefault()
                 : throw new SessionException(
                     $"Several sessions run in {projectDir}: {string.Join(", ", live.Select(other => other.Name))}; pass session to choose one."
                 );
         }
+    }
+
+    /// <summary>
+    /// The live sessions on the folder stop_project with the folder stops, ordered by name: neither process nor scratch ones.
+    /// The caller holds the lock.
+    /// </summary>
+    private GodotSession[] LiveSessionsIn(string projectDir) =>
+        [
+            .. Ordered()
+                .Where(other =>
+                    other.IsLive
+                    && other.Kind != SessionKind.Process
+                    && !ScratchRuns.Holds(other)
+                    && ProjectPaths.AreSame(other.ProjectDir, projectDir)
+                ),
+        ];
+
+    /// <summary>
+    /// Who holds the folder's override.cfg and armed.json (<see cref="FolderHolders.Inspect"/>), with this server's live sessions
+    /// there and whether it armed it. Takes neither the owners list's hold nor the folder's prep lock: a snapshot.
+    /// </summary>
+    /// <exception cref="SessionException">The path is empty or holds no project.godot.</exception>
+    public FolderHoldersView Holders(string projectPath)
+    {
+        string projectDir = NormaliseProjectDir(projectPath);
+        string[] sessions;
+        bool armed;
+        lock (_lock)
+        {
+            sessions = [.. LiveSessionsIn(projectDir).Select(session => session.Name)];
+            armed = _armed.ContainsKey(projectDir);
+        }
+
+        return FolderHolders.Inspect(projectDir, sessions, armed, OwnerProbe.Machine);
     }
 
     /// <summary>

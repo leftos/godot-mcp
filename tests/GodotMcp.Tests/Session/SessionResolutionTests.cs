@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Tests.Wire;
@@ -250,4 +251,122 @@ public sealed class SessionResolutionTests : IAsyncDisposable
         Assert.NotNull(listed.GameStartTime);
         Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, pid) { GameStartTime = listed.GameStartTime }, listed);
     }
+
+    [Fact]
+    public void ListSessionsWithoutProjectPathCarriesNoHolders()
+    {
+        using var listed = JsonDocument.Parse(new ProjectTools(_harness.Sessions).ListSessions());
+
+        Assert.False(listed.RootElement.TryGetProperty("holders", out _));
+    }
+
+    [Fact]
+    public void ListSessionsWithProjectPathCarriesTheFoldersHolders()
+    {
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        OverrideOwner dead = new(Environment.ProcessId, OverrideOwner.Current.StartTicks - 1);
+        File.WriteAllText(OverrideFile.PathIn(alpha), $"{OverrideFile.Marker}\n{OverrideFile.OwnersPrefix}{dead}\n[autoload]\n");
+
+        using var listed = JsonDocument.Parse(new ProjectTools(_harness.Sessions).ListSessions(projectPath: alpha));
+
+        JsonElement holders = listed.RootElement.GetProperty("holders");
+        Assert.Equal(alpha, holders.GetProperty("projectPath").GetString());
+        Assert.Equal(("godot-mcp", "absent"), (holders.GetProperty("overrideCfg").GetString(), holders.GetProperty("armedJson").GetString()));
+        JsonElement owner = Assert.Single(holders.GetProperty("owners").EnumerateArray().ToArray());
+        Assert.Equal(
+            ("override.cfg", dead.ProcessId, false, false, true),
+            (
+                owner.GetProperty("file").GetString(),
+                owner.GetProperty("pid").GetInt32(),
+                owner.GetProperty("alive").GetBoolean(),
+                owner.GetProperty("thisServer").GetBoolean(),
+                owner.GetProperty("readable").GetBoolean()
+            )
+        );
+        Assert.Empty(holders.GetProperty("sessions").EnumerateArray());
+        Assert.False(holders.GetProperty("armed").GetBoolean());
+        Assert.True(holders.GetProperty("stopProjectWouldRemove").GetBoolean());
+        Assert.False(holders.TryGetProperty("reason", out _));
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task TheHoldersOfAFolderThisServerArmedSayItIsArmed()
+    {
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        await _harness.Sessions.ArmAsync(
+            alpha,
+            new ArmSettings(Quiet: false, ShutOutRealGamepads: false, Mute: false),
+            TestContext.Current.CancellationToken
+        );
+
+        FolderHoldersView view = _harness.Sessions.Holders(alpha);
+
+        Assert.True(view.Armed);
+        Assert.Equal(("godot-mcp", "godot-mcp"), (view.OverrideCfg, view.ArmedJson));
+        Assert.Equal([OverrideFile.FileName, ArmFile.FileName], view.Owners.Select(owner => owner.File));
+        Assert.All(view.Owners, owner => Assert.True(owner.ThisServer));
+    }
+
+    [Fact]
+    public async Task TheHoldersViewWaitsOnNeitherTheOwnersListNorThePrepLock()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        SemaphoreSlim folderLock = _harness.Sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        try
+        {
+            using FileStream list = new(_harness.Sessions.OverrideFolders.ListPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+            FolderHoldersView view = await Task.Run(() => _harness.Sessions.Holders(alpha), cancellation)
+                .WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+            Assert.Equal(alpha, view.ProjectPath);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task AStopBySessionNameSaysTheFolderIsCleanAfterItsRelease()
+    {
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
+
+        StopResult stopped = await _harness.Sessions.StopAsync("server", TestContext.Current.CancellationToken);
+
+        Assert.True(stopped.OverrideRemoved);
+        Assert.Equal(FolderState.NothingLeft, stopped.Folder);
+    }
+
+    [Fact]
+    public async Task AStopStillReturnsItsResultWhenAFileOfTheFolderCannotBeRead()
+    {
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
+        Directory.CreateDirectory(ArmFile.PathIn(alpha));
+
+        StopResult stopped = await _harness.Sessions.StopAsync("server", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new FolderState(false, []), stopped.Folder);
+    }
+
+    [Fact]
+    public void AStopResultCarriesItsFolder() =>
+        Assert.Equal(
+            "{\"session\":\"game\",\"projectPath\":\"X:/game\",\"exitCode\":0,\"killed\":false,\"overrideRemoved\":true,"
+                + "\"alreadyExited\":false,\"gameExitCode\":0,\"headlessHostStopped\":false,\"folder\":{\"clean\":true,\"holders\":[]}}",
+            JsonSerializer.Serialize(
+                new StopResult("game", "X:/game", 0, false, true)
+                {
+                    AlreadyExited = false,
+                    GameExitCode = 0,
+                    Folder = FolderState.NothingLeft,
+                },
+                ProjectTools.Json
+            )
+        );
 }

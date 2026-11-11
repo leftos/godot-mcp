@@ -4,6 +4,11 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `list_sessions` with `projectPath` reports who holds that folder's `override.cfg` and `armed.json`, and whether `stop_project` would remove them.
+- `stop_project` results carry `folder`: whether the folder is clean afterwards, and the running owners of any file left.
+
 ### Fixed
 
 - A `run_scratches` step fails on an error another thread or a timer logs while its `GetStepUntil` is read before the walk, instead of staying green.

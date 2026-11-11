@@ -199,20 +199,33 @@ internal static class OverrideFile
     /// (<see cref="LeftoverFile.RemoveIfStale(string, Func{string, LeftoverRemoval?}, Action)"/>). An owner entry that does
     /// not read as an owner counts as live; an unmarked file is never deleted.
     /// </summary>
-    public static LeftoverRemoval RemoveIfStale(string projectDir) => LeftoverFile.RemoveIfStale(PathIn(projectDir), KeepReason);
+    public static LeftoverRemoval RemoveIfStale(string projectDir) =>
+        LeftoverFile.RemoveIfStale(PathIn(projectDir), text => KeepReason(text, static owner => owner.IsAlive()));
 
-    /// <summary>Why a marked file's text keeps it: the project's own file, a live owner or an unreadable one; null when it is stale.</summary>
-    private static LeftoverRemoval? KeepReason(string text)
+    /// <summary>
+    /// Why a marked file's text keeps it: the project's own file, a live owner or an unreadable one; null when it is stale.
+    /// <paramref name="isAlive"/> says whether an owner other than this server still runs.
+    /// </summary>
+    public static LeftoverRemoval? KeepReason(string text, Func<OverrideOwner, bool> isAlive)
     {
-        int afterMarker = LineEnd(text, 0);
-        if (text[..afterMarker].TrimEnd() != Marker)
+        if (!IsMarked(text))
         {
             return new LeftoverRemoval(LeftoverState.NotOurs);
         }
 
+        return OwnerEntries(text) is { } entries ? LeftoverFile.KeepReason(entries, isAlive) : null;
+    }
+
+    /// <summary>
+    /// The entries of a marked file's owners line as written, an entry that does not read as an owner included; null when the
+    /// file has no owners line.
+    /// </summary>
+    public static IReadOnlyList<string>? OwnerEntries(string text)
+    {
+        int afterMarker = LineEnd(text, 0);
         string second = text[afterMarker..LineEnd(text, afterMarker)].TrimEnd();
         return second.StartsWith(OwnersPrefix, StringComparison.Ordinal)
-            ? LeftoverFile.KeepReason(second[OwnersPrefix.Length..].Split(',', StringSplitOptions.RemoveEmptyEntries))
+            ? second[OwnersPrefix.Length..].Split(',', StringSplitOptions.RemoveEmptyEntries)
             : null;
     }
 
@@ -449,6 +462,9 @@ internal enum LeftoverState
 /// <summary>A stale-file removal's outcome and the owner that kept the file: a live owner's pid, or the unreadable entry.</summary>
 internal sealed record LeftoverRemoval(LeftoverState State, string? Owner = null);
 
+/// <summary>A file as <see cref="LeftoverFile.ReadShared"/> read it: whether it exists, and its text; null when it could not be read.</summary>
+internal sealed record SharedRead(bool Exists, string? Text);
+
 /// <summary>The judge-then-delete that <see cref="OverrideFile"/> and <see cref="ArmFile"/> share.</summary>
 internal static class LeftoverFile
 {
@@ -523,6 +539,26 @@ internal static class LeftoverFile
         }
     }
 
+    /// <summary>
+    /// The file's text read through the fully shared open the judge reads with, so a writer's in-place write and a plain
+    /// delete still go through while it reads. godot-mcp's own stale-file delete does not: its delete-open shares only deletion
+    /// (<see cref="RemoveIfStale(string, Func{string, LeftoverRemoval?}, Action)"/>), so a stop clearing the folder while this read's
+    /// handle is open fails that open and keeps the file as open in another process. <see cref="SharedRead.Text"/> is null when the
+    /// file is missing or another handle refuses the open.
+    /// </summary>
+    public static SharedRead ReadShared(string path)
+    {
+        if (Open(path, FileShare.ReadWrite | FileShare.Delete) is not { } shared)
+        {
+            return new SharedRead(File.Exists(path), null);
+        }
+
+        using (shared)
+        {
+            return new SharedRead(true, Decode(ReadAll(shared)));
+        }
+    }
+
     /// <summary>Why <see cref="Open"/> gave nothing: the file is gone, else another handle holds it.</summary>
     private static LeftoverRemoval Unopened(string path) => new(File.Exists(path) ? LeftoverState.InUse : LeftoverState.Absent);
 
@@ -544,7 +580,12 @@ internal static class LeftoverFile
     /// Why a file naming <paramref name="entries"/> is kept: its first live owner (this server's own, or another's pid), else
     /// its first entry that does not read as an owner; null when every entry is an owner that has exited, or there are none.
     /// </summary>
-    public static LeftoverRemoval? KeepReason(IEnumerable<string> entries)
+    public static LeftoverRemoval? KeepReason(IEnumerable<string> entries) => KeepReason(entries, static owner => owner.IsAlive());
+
+    /// <inheritdoc cref="KeepReason(IEnumerable{string})"/>
+    /// <param name="entries">The owners line's entries as written.</param>
+    /// <param name="isAlive">Whether an owner other than this server still runs.</param>
+    public static LeftoverRemoval? KeepReason(IEnumerable<string> entries, Func<OverrideOwner, bool> isAlive)
     {
         string? unreadable = null;
         foreach (string entry in entries)
@@ -557,7 +598,7 @@ internal static class LeftoverFile
             {
                 return new LeftoverRemoval(LeftoverState.OwnedHere);
             }
-            else if (owner.IsAlive())
+            else if (isAlive(owner))
             {
                 return new LeftoverRemoval(LeftoverState.LiveOwner, owner.ProcessId.ToString(CultureInfo.InvariantCulture));
             }

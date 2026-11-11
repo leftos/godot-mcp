@@ -544,7 +544,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
         try
         {
             attach = _harness.Sessions.AttachAsync(new AttachRequest(alpha, "server", RegistryHarness.LongWait, false, false, null), cancel.Token);
-            await Task.Delay(200, cancellation);
+            await RegistryHarness.WaitUntilAsync(() => File.Exists(AttachFile.PathIn(alpha)), attach);
             Assert.False(File.Exists(overrideFile));
         }
         finally

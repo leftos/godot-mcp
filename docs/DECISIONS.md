@@ -16,6 +16,8 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 2. **The bridge is injected and never committed.** A run loads it through `override.cfg` in the project folder, which is hidden from git through `.git/info/exclude`.
    - Verified 2026-09-25 on 4.7.2: an `override.cfg` autoload pointing outside the project loaded, and `project.godot` was untouched.
    - Godot's source: game runs read `override.cfg`; the editor, `--import` and `--export` never do (`main/main.cpp:2107`, `p_ignore_override`).
+   - Who holds a folder's `override.cfg` and `armed.json` is read through `list_sessions {projectPath}` (`holders`, with whether `stop_project {projectPath}` would remove them), chosen over a new tool and over a `dryRun` on the destructive `stop_project`; the view takes no lock, so it is a snapshot. `stop_project`'s results carry `folder {clean, holders}`, read after the stop.
+   - The owners line stays `pid@startTicks`: a version token would make an older server read the entry as unreadable, and so as live forever, so an owner's `serverVersion` comes from its executable's path (the installed `versions\<name>` folder), left out when unknown.
 3. **C# / .NET 10 server, GDScript bridge.**
 4. **Its own repo at `X:\dev\godot-mcp`.**
 5. **First-version must-have: faithful input**, offered as gestures plus raw events. Gamepad input is part of it: buttons, sticks and triggers per device (user, 2026-09-25).
@@ -36,8 +38,7 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       A runtime tool without a name uses the only session, and with several it refuses, listing the names. The refusal and every `session` description tell the agent to pass the session `run_project` or `attach_project` returned on every call from the start, since another agent's game can start at any time; no default session is kept (user, 2026-09-28, #35).
 
-      One server process serves one client, so the agents in it cannot be told apart, and a default one agent set would send another agent's calls, `stop_project` included, to its game. `list_sessions` (read-only) returns each session's name, project, kind (run, attached or process), liveness and process id.
-    - **Several sessions on one project folder** (delve's server and two clients). The marked `override.cfg` is reference-counted and removed when the last session on that folder ends.
+      One server process serves one client, so the agents in it cannot be told apart, and a default one agent set would send another agent's calls, `stop_project` included, to its game. `list_sessions` (read-only) returns each session's name, project, kind (run, attach, process or editor), liveness and process id.    - **Several sessions on one project folder** (delve's server and two clients). The marked `override.cfg` is reference-counted and removed when the last session on that folder ends.
 
       Across servers too: its second line lists the server processes (pid and start time) with live sessions on it, a release takes one off and deletes the file only when none is left, and a file whose owners have all exited is stale, removed by a headless run on the folder and by every server's startup sweep of the folders it has written to (the user chose this over leaving the leftover for the bridge to make harmless).
 

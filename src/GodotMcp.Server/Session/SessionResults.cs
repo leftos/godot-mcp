@@ -268,6 +268,10 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
 
     /// <summary>Whether the stop also stopped the warm headless host on the session's folder.</summary>
     public bool HeadlessHostStopped { get; init; }
+
+    /// <inheritdoc cref="HostStopResult.Folder"/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FolderState? Folder { get; init; }
 }
 
 /// <summary>
@@ -344,6 +348,13 @@ internal sealed record HostStopResult(string ProjectPath, bool HeadlessHostStopp
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<int>? GameStillRunning { get; init; }
+
+    /// <summary>
+    /// How the stop left the folder, read after it (<see cref="FolderHolders.After"/>); left out of a result built by a caller
+    /// that does not read it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FolderState? Folder { get; init; }
 }
 
 /// <summary>A game attach_project reached: its bridge said hello, and whether it was told to park its window.</summary>
@@ -391,7 +402,84 @@ internal sealed record HeadlessHostInfo(string ProjectPath, int Pid, DateTimeOff
 /// What list_sessions returns: the sessions it was asked for, ordered by name, this server's armed folders, and its warm
 /// headless hosts, ordered by folder.
 /// </summary>
-internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<ArmState> Armed, IReadOnlyList<HeadlessHostInfo> HeadlessHosts);
+internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<ArmState> Armed, IReadOnlyList<HeadlessHostInfo> HeadlessHosts)
+{
+    /// <summary>Who holds the folder list_sessions was given as projectPath; left out when it was given none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FolderHoldersView? Holders { get; init; }
+}
+
+/// <summary>
+/// Who holds a folder's override.cfg and armed.json, as list_sessions with projectPath reports it (<see cref="FolderHolders.Inspect"/>):
+/// each file's state, every entry of their owners lines, this server's live sessions on the folder and whether it armed it,
+/// and whether stop_project with this projectPath would remove a file, with the reason when it would keep one. "Would
+/// remove" means the owners judge the file stale; a handle another process holds open at stop time, or a busy owners list,
+/// still keeps it.
+/// </summary>
+internal sealed record FolderHoldersView(
+    string ProjectPath,
+    string OverrideCfg,
+    string ArmedJson,
+    IReadOnlyList<HolderEntry> Owners,
+    IReadOnlyList<string> Sessions,
+    bool Armed,
+    bool StopProjectWouldRemove
+)
+{
+    /// <summary>
+    /// Why stop_project would remove nothing, or which file it would keep and why, the clauses joined with "; "; left out when it
+    /// would remove every file there is.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Reason { get; init; }
+}
+
+/// <summary>
+/// One entry of a file's owners line: the file, the owner's pid and start time (UTC), whether it still runs, whether it is this
+/// server, its server version when its executable runs from an installed version folder, and whether the entry reads as an
+/// owner at all. An entry that does not has no pid or start time, counts as running (stop_project keeps its file), and carries
+/// its text as <see cref="Entry"/>.
+/// </summary>
+internal sealed record HolderEntry(
+    string File,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Pid,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? StartedAt,
+    bool Alive,
+    bool ThisServer,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ServerVersion,
+    bool Readable
+)
+{
+    /// <summary>The entry's text when it does not read as an owner; left out otherwise.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Entry { get; init; }
+}
+
+/// <summary>
+/// How stop_project left the folder: clean when neither override.cfg nor armed.json is left in it, else the live owners of the
+/// file left (none when nothing that reads as a running owner keeps it).
+/// </summary>
+internal sealed record FolderState(bool Clean, IReadOnlyList<FolderHolder> Holders)
+{
+    /// <summary>A folder with neither file left.</summary>
+    public static FolderState NothingLeft { get; } = new(true, []);
+
+    public bool Equals(FolderState? other) => other is not null && Clean == other.Clean && Holders.SequenceEqual(other.Holders);
+
+    public override int GetHashCode() => HashCode.Combine(Clean, Holders.Count);
+}
+
+/// <summary>
+/// A live owner of a file stop_project left: the file, its pid, start time (UTC), server version when known, and whether it is
+/// this server.
+/// </summary>
+internal sealed record FolderHolder(
+    string File,
+    int Pid,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? StartedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ServerVersion,
+    bool ThisServer
+);
 
 /// <summary>
 /// The latest run's state and a page of each stream: its lines, and the number of the first of them (null when there are

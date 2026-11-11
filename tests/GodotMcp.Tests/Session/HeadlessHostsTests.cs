@@ -925,7 +925,7 @@ public sealed class HeadlessHostsTests : IDisposable
 
         object stopped = await _registry.StopFolderAsync(game, null, cancellation);
 
-        Assert.Equal(new HostStopResult(game, HeadlessHostStopped: true), stopped);
+        Assert.Equal(new HostStopResult(game, HeadlessHostStopped: true) { Folder = FolderState.NothingLeft }, stopped);
         Assert.True(host.ShutdownAsked && host.Disposed, "the host was stopped and let go of");
         Assert.Null(Hosts.ProcessIdOf(game));
         Assert.Contains($"Stopped the warm headless host for {game} (pid {host.Id}): stop_project.", _log.Messages);
@@ -944,7 +944,7 @@ public sealed class HeadlessHostsTests : IDisposable
 
         object stopped = await _registry.StopFolderAsync(game, null, cancellation);
 
-        Assert.Equal(new HostStopResult(game, HeadlessHostStopped: true) { OverrideRemoved = true }, stopped);
+        Assert.Equal(new HostStopResult(game, HeadlessHostStopped: true) { OverrideRemoved = true, Folder = FolderState.NothingLeft }, stopped);
         Assert.True(host.ShutdownAsked && host.Disposed, "the host was stopped and let go of");
         Assert.False(File.Exists(leftover));
     }

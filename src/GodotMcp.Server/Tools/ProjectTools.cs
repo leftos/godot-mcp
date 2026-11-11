@@ -301,7 +301,10 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "listed by pid in gameStillRunning, and the warning says the folder stays in use until it is gone. An editor "
             + "session (run_editor) is closed through the editor's own close request and killed if it has not exited after "
             + "10 s; while the editor has unsaved scenes the stop is refused, naming them, unless discard is true, which kills "
-            + "the editor at once with killReason \"discarded\"."
+            + "the editor at once with killReason \"discarded\". Every result but a process session's carries folder, read "
+            + "after the stop: {clean (true when neither override.cfg nor armed.json is left in the folder), holders (the live "
+            + "owners of the file left, each {file, pid, startedAt (UTC), serverVersion (left out when unknown), thisServer}; "
+            + "empty when clean, or when what keeps the file is not a running owner)}."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,
@@ -412,11 +415,38 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "GDScript project folder, ordered by path: each one's projectPath, pid, startedAt (UTC), requests (the headless "
             + "calls it has taken) and idleSeconds since its last reply (0 while it runs one). A host idle for 5 minutes stops, "
             + "at most 4 run at once (a fifth folder stops the least recently used idle one), and stop_project with "
-            + "projectPath stops one."
+            + "projectPath stops one. With projectPath, holders says who holds that folder's override.cfg and armed.json, read "
+            + "as a snapshot that waits on no lock: {projectPath, overrideCfg (absent, project's own, godot-mcp, in use (another "
+            + "process holds it without sharing it, or it is empty while a write is under way) or unreadable (its read failed; "
+            + "reason gives the error)), armedJson (absent, godot-mcp, in use or unreadable), owners (every entry of both files' "
+            + "owners lines, each {file, pid, "
+            + "startedAt (UTC), alive, thisServer, serverVersion (the installed version folder its executable runs from, left "
+            + "out when unknown), readable}, an entry that does not read as an owner having no pid, counting as alive and "
+            + "carrying its text as entry), sessions (this server's live sessions there), armed (whether this server armed it), "
+            + "stopProjectWouldRemove (whether stop_project with that projectPath would remove a file: the owners judge it stale; "
+            + "a handle another process holds open at stop time, or a busy owners list, still keeps it), reason (why it "
+            + "would remove nothing, or which file it would keep and why; left out when it would remove every file there)}."
     )]
     public string ListSessions(
-        [Description("Also list sessions whose run has stopped; they stay until their name is reused.")] bool includeStopped = false
-    ) => JsonSerializer.Serialize(new SessionList(sessions.List(includeStopped), sessions.ListArmed(), sessions.ListHeadlessHosts()), Json);
+        [Description("Also list sessions whose run has stopped; they stay until their name is reused.")] bool includeStopped = false,
+        [Description(
+            "A project folder to report the holders of: who owns its override.cfg and armed.json, and whether stop_project with "
+                + "this projectPath would remove them. Leave it out for no holders."
+        )]
+            string? projectPath = null
+    )
+    {
+        try
+        {
+            FolderHoldersView? holders = projectPath is null ? null : sessions.Holders(projectPath);
+            SessionList listed = new(sessions.List(includeStopped), sessions.ListArmed(), sessions.ListHeadlessHosts()) { Holders = holders };
+            return JsonSerializer.Serialize(listed, Json);
+        }
+        catch (SessionException e)
+        {
+            throw new McpException(e.Message, e);
+        }
+    }
 
     /// <summary>
     /// The project's godot-mcp.json, loaded from the normalised folder. An empty path gets an empty profile, so the launch

@@ -19,7 +19,9 @@ internal sealed record ArmSettings(bool Quiet, bool ShutOutRealGamepads, bool Mu
 /// </summary>
 internal static class ArmFile
 {
-    public static readonly string RelativePath = Path.Combine(".godot", "godot-mcp", "armed.json");
+    public const string FileName = "armed.json";
+
+    public static readonly string RelativePath = Path.Combine(".godot", "godot-mcp", FileName);
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
@@ -109,10 +111,22 @@ internal static class ArmFile
     /// (<see cref="LeftoverFile.RemoveIfStale(string, Func{string, LeftoverRemoval?}, Action)"/>). An owner entry that does
     /// not read as an owner counts as live.
     /// </summary>
-    public static LeftoverRemoval RemoveIfStale(string projectDir) => LeftoverFile.RemoveIfStale(PathIn(projectDir), KeepReason);
+    public static LeftoverRemoval RemoveIfStale(string projectDir) =>
+        LeftoverFile.RemoveIfStale(PathIn(projectDir), text => KeepReason(text, static owner => owner.IsAlive()));
 
-    /// <summary>Why the file's text keeps it: a live owner or an unreadable one; null when it is stale.</summary>
-    private static LeftoverRemoval? KeepReason(string text)
+    /// <summary>
+    /// Why the file's text keeps it: a live owner or an unreadable one; null when it is stale. <paramref name="isAlive"/> says
+    /// whether an owner other than this server still runs.
+    /// </summary>
+    public static LeftoverRemoval? KeepReason(string text, Func<OverrideOwner, bool> isAlive) =>
+        OwnerEntries(text) is { } entries ? LeftoverFile.KeepReason(entries, isAlive) : null;
+
+    /// <summary>
+    /// The entries of the file's <c>owners</c> as written: each string as its value and anything else as its JSON, so it does
+    /// not read as an owner; an <c>owners</c> that is not an array is one such entry. Null when the text is not a JSON object
+    /// or has no <c>owners</c>, which makes the file stale.
+    /// </summary>
+    public static IReadOnlyList<string>? OwnerEntries(string text)
     {
         JsonNode? owners;
         try
@@ -127,8 +141,8 @@ internal static class ArmFile
         return owners switch
         {
             null => null,
-            JsonArray listed => LeftoverFile.KeepReason(listed.Select(EntryText)),
-            _ => new LeftoverRemoval(LeftoverState.UnreadableOwner, owners.ToJsonString()),
+            JsonArray listed => [.. listed.Select(EntryText)],
+            _ => [owners.ToJsonString()],
         };
     }
 

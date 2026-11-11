@@ -100,8 +100,8 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
 
         bool overrideRemoved = overrideFile.State == LeftoverState.Removed;
         string? overrideLeft = LeftReason(OverrideFile.FileName, overrideFile);
-        (LeftoverRemoval? armFile, failure) = TryRemove("armed.json", ArmFile.RemoveIfStale, projectDir);
-        string?[] reasons = [overrideLeft, armFile is null ? null : LeftReason("armed.json", armFile)];
+        (LeftoverRemoval? armFile, failure) = TryRemove(ArmFile.FileName, ArmFile.RemoveIfStale, projectDir);
+        string?[] reasons = [overrideLeft, armFile is null ? null : LeftReason(ArmFile.FileName, armFile)];
         return new LeftoverClear(overrideRemoved, armFile?.State == LeftoverState.Removed, [.. reasons.OfType<string>()], failure);
     }
 
@@ -121,14 +121,21 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
 
     /// <summary>Why <paramref name="file"/> was left in place; null when there was none or it was removed.</summary>
     private static string? LeftReason(string file, LeftoverRemoval removal) =>
+        LeftClause(file, removal) is { } clause ? $"{clause}, left in place" : null;
+
+    /// <summary>
+    /// What kept <paramref name="file"/>, as a clause without saying what became of it ("override.cfg names a live owner (pid
+    /// 12)"); null when there was none or it was removed.
+    /// </summary>
+    internal static string? LeftClause(string file, LeftoverRemoval removal) =>
         removal.State switch
         {
-            LeftoverState.NotOurs => $"{file} is the project's own (no godot-mcp marker), left in place",
-            LeftoverState.InUse => $"{file} is open in another process (a running Godot?), left in place",
-            LeftoverState.LiveOwner => $"{file} names a live owner (pid {removal.Owner}), left in place",
-            LeftoverState.OwnedHere => $"{file} belongs to this server's own session or arm, left in place",
-            LeftoverState.Changed => $"{file} changed while it was judged, left in place",
-            LeftoverState.UnreadableOwner => $"{file} names an owner this server cannot read ({removal.Owner}), left in place",
+            LeftoverState.NotOurs => $"{file} is the project's own (no godot-mcp marker)",
+            LeftoverState.InUse => $"{file} is open in another process (a running Godot?)",
+            LeftoverState.LiveOwner => $"{file} names a live owner (pid {removal.Owner})",
+            LeftoverState.OwnedHere => $"{file} belongs to this server's own session or arm",
+            LeftoverState.Changed => $"{file} changed while it was judged",
+            LeftoverState.UnreadableOwner => $"{file} names an owner this server cannot read ({removal.Owner})",
             LeftoverState.Absent or LeftoverState.Removed => null,
             _ => throw new ArgumentOutOfRangeException(nameof(removal), removal.State, "not a leftover state"),
         };
@@ -168,7 +175,7 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     /// </summary>
     private bool KeepAfterSweep(string projectDir)
     {
-        bool keepArm = SweepOne(projectDir, "armed.json", SweepArmFile);
+        bool keepArm = SweepOne(projectDir, ArmFile.FileName, SweepArmFile);
         bool keepOverride = SweepOne(projectDir, OverrideFile.FileName, SweepOverride);
         return keepArm || keepOverride;
     }
