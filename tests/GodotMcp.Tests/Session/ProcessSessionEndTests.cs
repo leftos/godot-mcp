@@ -14,7 +14,7 @@ namespace GodotMcp.Tests.Session;
 
 /// <summary>
 /// A process session's end: it is live until every process of its job is gone, not merely exited, and its output has drained;
-/// a stop, a ready refusal and a cancelled start wait for that end, and a stop or refusal names in its warning a process still
+/// a stop, a ready refusal and a cancelled start or restart wait for that end, and a stop or refusal names in its warning a process still
 /// held when the end's deadline expires. The job's child is held by the test's own debugger, and the clock is fake and
 /// advances only where a test says so.
 /// </summary>
@@ -25,6 +25,9 @@ public sealed partial class ProcessSessionEndTests
 
     // A ready line the program never prints, on a timeout no passing run reaches.
     private static readonly ReadyProfile NeverReady = new("never printed", 600_000) { Regex = NeverPrinted() };
+
+    // A ready line the program prints only while the test's marker file is missing, on a timeout no passing run reaches.
+    private static readonly ReadyProfile ReadyOnce = new("ready", 600_000) { Regex = ReadyLine() };
 
     [Fact]
     public async Task AProcessThatExitsStaysLiveWhileAJobChildIsUnsignalled()
@@ -225,6 +228,57 @@ public sealed partial class ProcessSessionEndTests
     }
 
     [Fact]
+    public async Task ARestartCancelledDuringItsReadyWaitReturnsOnlyOnceItsTreeIsGone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using LoadClock clock = new(new FakeTimeProvider(), new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        using EventWaitHandle exit = NewExitEvent(out string name);
+        // The first start prints "ready" while this file is missing; writing it keeps the restart's program from ever printing it.
+        string marker = harness.Combine("ready-once");
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        (GodotSession session, Task start) = await BeginAsync(harness, name, ReadyOnce, cancellation, marker);
+        await start.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        (Process firstMain, Process firstChild) = await OpenHeldAsync(session);
+        using (firstMain)
+        using (firstChild)
+        {
+            File.WriteAllText(marker, "");
+            Task restart = harness.Sessions.RestartAsync(Session, prepare: false, cancellationToken: cancel.Token);
+            int? mainPid = null;
+            await RegistryHarness.WaitUntilAsync(() => (mainPid = session.ProcessId) is int pid && pid != firstMain.Id);
+            int? childPid = null;
+            await RegistryHarness.WaitUntilAsync(() => (childPid = ChildPidOtherThan(session, firstChild.Id)) is not null);
+            using var main = Process.GetProcessById(mainPid!.Value);
+            using var child = Process.GetProcessById(childPid!.Value);
+            _ = main.Handle;
+            _ = child.Handle;
+            using ExitHold hold = await ExitHold.AttachAsync(child, RegistryHarness.HangGuard);
+            try
+            {
+                await cancel.CancelAsync();
+                // A restart that returned without ending its tree never kills the child, so the wait ends on whichever comes first.
+                await Task.WhenAny(restart, hold.Killed).WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+                Assert.False(restart.IsCompleted, "the cancelled restart returned while its killed child was held");
+
+                hold.Release();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restart.WaitAsync(RegistryHarness.HangGuard, cancellation));
+                Assert.Contains(harness.Sessions.List(includeStopped: true), listed => listed.Name == Session);
+                Assert.False(IsListedLive(harness));
+                Assert.True(child.WaitForExit(0) && main.WaitForExit(0));
+            }
+            finally
+            {
+                EndHeld(exit, child);
+                EndHeld(exit, firstChild);
+                Abandon(harness, session);
+            }
+        }
+    }
+
+    [Fact]
     public async Task AReadyRefusalNamesAChildHeldPastTheBudgetInAParagraphOfItsOwn()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
@@ -409,20 +463,22 @@ public sealed partial class ProcessSessionEndTests
 
     /// <summary>
     /// Starts the process session's program: pwsh starting ping as its job's child with ping's stdout discarded (so the session's
-    /// stdout carries only the program's own lines), printing the child's pid, then waiting on the event
-    /// <paramref name="eventName"/>, printing "last" and exiting with code 7. Returns the session and its start, which waits for
-    /// <paramref name="ready"/> when one is given.
+    /// stdout carries only the program's own lines), printing the child's pid, printing "ready" unless
+    /// <paramref name="readyUnlessFile"/> exists, then waiting on the event <paramref name="eventName"/>, printing "last" and
+    /// exiting with code 7. Returns the session and its start, which waits for <paramref name="ready"/> when one is given.
     /// </summary>
     private static async Task<(GodotSession Session, Task Start)> BeginAsync(
         RegistryHarness harness,
         string eventName,
         ReadyProfile? ready,
-        CancellationToken cancellation
+        CancellationToken cancellation,
+        string? readyUnlessFile = null
     )
     {
         string script =
             "$p = Start-Process ping -ArgumentList '-n','600','127.0.0.1' -NoNewWindow -RedirectStandardOutput NUL -PassThru; "
             + "\"child=$($p.Id)\"; "
+            + (readyUnlessFile is null ? "" : $"if (-not (Test-Path '{readyUnlessFile}')) {{ 'ready' }}; ")
             + $"$e = [System.Threading.EventWaitHandle]::OpenExisting('{eventName}'); "
             + "$null = $e.WaitOne(); Write-Output 'last'; exit 7";
         string[] command = ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script];
@@ -442,6 +498,27 @@ public sealed partial class ProcessSessionEndTests
         var child = Process.GetProcessById(childPid!.Value);
         _ = child.Handle;
         return (main, child);
+    }
+
+    /// <summary>
+    /// The child's pid the program printed last, once it differs from <paramref name="previous"/>; null until it has. A restart's
+    /// buffer carries the replaced start's line, so the first one is skipped.
+    /// </summary>
+    private static int? ChildPidOtherThan(GodotSession session, int previous)
+    {
+        foreach (string line in session.GetRawOutput().Stdout.Lines)
+        {
+            if (ChildLine().Match(line) is { Success: true } match)
+            {
+                int found = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                if (found != previous)
+                {
+                    return found;
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>The child's pid the program printed; null until it has.</summary>
@@ -537,6 +614,9 @@ public sealed partial class ProcessSessionEndTests
 
     [GeneratedRegex("never printed")]
     private static partial Regex NeverPrinted();
+
+    [GeneratedRegex("^ready$")]
+    private static partial Regex ReadyLine();
 
     [GeneratedRegex(
         @"\AThe ended process(?:es)? \(pids? (?<pids>\d+(?:, \d+)*)\) (?:was|were) still running after 5 s of load-adjusted time "

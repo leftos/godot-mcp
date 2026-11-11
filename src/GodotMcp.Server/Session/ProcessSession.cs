@@ -306,6 +306,8 @@ internal sealed partial class GodotSession
                 ProcessLaunch launch = _launch ?? throw new SessionException(NothingToRestart);
                 int previousProcessId = ProcessId ?? throw new SessionException(NothingToRestart);
                 ToolProcess.Running previous = _process?.Running ?? throw new SessionException(NothingToRestart);
+                // A restart cancelled by now must not stop a healthy program.
+                cancellationToken.ThrowIfCancellationRequested();
                 ProcessStopResult stopped = await StopProcessAsync();
                 previous.CloseLog();
                 try
