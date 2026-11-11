@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.40.0 - 2026-11-11
 
 ### Added
 
@@ -27,6 +27,22 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A `run_scratches` step fails on an error another thread or a timer logs while its `GetStepUntil` is read before the walk, instead of staying green.
 - `crop_screenshot` never follows a link to a network path or reads a network drive, which could hand the user's network credentials to that host.
 - A line or error a game prints just after a `run_scratches` step's pace belongs to the next step whatever the server's load.
+
+### For agents
+
+- `list_sessions` with `projectPath` reports who holds that folder's `override.cfg` and `armed.json`, and whether `stop_project` would remove them.
+- `stop_project` results carry `folder`: whether the folder is clean afterwards, and the running owners of any file left.
+- `run_scratches` takes a ceiling per batch (`options.ceilings`, or `--ceiling <scene>#<batch>=<seconds>` on the CLI), and a profile's `scratch.ceilings` takes one per headless or windowed run.
+- `run_scratches` and `--run-scratches` play up to 100 batches of a scene in one call, not 20.
+- `run_scratches` scene entries carry `peakPrivateMb`, and a failed entry's warnings name the machine's free memory at launch.
+- `run_scratches` with `userData: "scratch"` puts the game's `user://` under the system temp folder, no longer inside the project's `.godot/godot-mcp/`.
+- `run_scratches` keeps only a project's 20 newest shot folders, so an older run's shots are gone.
+- `run_scratches` cuts a step's lines and errors at its pace's end in game time, whatever the server's load: what `GetStatus`, the shot or the next `GetStepUntil` read prints or raises belongs to the next step, or the exit, so a `push_error` in `GetStatus` fails the next step. A game-time margin a scene kept so a late line stayed in its own step is no longer needed.
+- `run_scratches`: a timer that fires in the frame the clock crosses a step's pace belongs to the next step; a paced step's pace starts in its `PlayStep`'s own frame, and a coroutine `PlayStep` is not awaited before it.
+- `run_scratches`: a step that stops the walk lists the errors raised after its window ended as `errorsAfterCut`, shown only; its `error` stays its own.
+- `run_scratches`: an error another thread or a timer logs while a step's `GetStepUntil` is read before the walk fails that step.
+- `crop_screenshot` reads any PNG on a local drive, tracked or outside the checkout, and crops a tracked or outside one into the checkout's `.tmp`; it refuses a network path, a mapped network drive and a link that leads to one, and runs only on Windows.
+- `record_mark`: a real-time clip whose encoder stalled over its stop reports its full length.
 
 ## 0.39.0 - 2026-11-10
 
