@@ -73,11 +73,27 @@ internal static class RealtimeEncode
     /// <summary>
     /// ffmpeg's arguments for the remux of the finished Matroska file to an .mp4 by stream copy, its index at the front so a
     /// player starts at once; an HEVC stream is tagged <c>hvc1</c>, the tag players open. Nothing is piped into the remux, so
-    /// it takes <c>-nostdin</c>.
+    /// it takes <c>-nostdin</c>. Each packet's decode time is set to its presentation time, since the encoders never reorder
+    /// frames and a Matroska H.264 stream of under eight frames would otherwise get guessed decode times that drop any gap
+    /// from the .mp4's length.
     /// </summary>
     public static List<string> RemuxArguments(string mkv, string mp4, bool isHevc)
     {
-        List<string> arguments = ["-hide_banner", "-v", "error", "-nostdin", "-i", mkv, "-c", "copy", "-movflags", "+faststart"];
+        List<string> arguments =
+        [
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-i",
+            mkv,
+            "-c",
+            "copy",
+            "-bsf:v",
+            "setts=pts=PTS:dts=PTS",
+            "-movflags",
+            "+faststart",
+        ];
         if (isHevc)
         {
             arguments.AddRange(["-tag:v", "hvc1"]);

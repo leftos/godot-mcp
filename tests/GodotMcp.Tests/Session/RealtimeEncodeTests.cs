@@ -387,7 +387,22 @@ public sealed class RealtimeEncodeTests
     public void TheRemuxCopiesWithFaststart()
     {
         Assert.Equal(
-            ["-hide_banner", "-v", "error", "-nostdin", "-i", Mkv, "-c", "copy", "-movflags", "+faststart", "-y", Mp4],
+            [
+                "-hide_banner",
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                Mkv,
+                "-c",
+                "copy",
+                "-bsf:v",
+                "setts=pts=PTS:dts=PTS",
+                "-movflags",
+                "+faststart",
+                "-y",
+                Mp4,
+            ],
             RealtimeEncode.RemuxArguments(Mkv, Mp4, isHevc: false)
         );
     }
@@ -396,7 +411,24 @@ public sealed class RealtimeEncodeTests
     public void AHevcRemuxIsTaggedHvcOne()
     {
         Assert.Equal(
-            ["-hide_banner", "-v", "error", "-nostdin", "-i", Mkv, "-c", "copy", "-movflags", "+faststart", "-tag:v", "hvc1", "-y", Mp4],
+            [
+                "-hide_banner",
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                Mkv,
+                "-c",
+                "copy",
+                "-bsf:v",
+                "setts=pts=PTS:dts=PTS",
+                "-movflags",
+                "+faststart",
+                "-tag:v",
+                "hvc1",
+                "-y",
+                Mp4,
+            ],
             RealtimeEncode.RemuxArguments(Mkv, Mp4, isHevc: true)
         );
     }

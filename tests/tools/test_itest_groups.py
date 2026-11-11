@@ -160,7 +160,7 @@ def test_a_change_to_run_ps1_selects_every_group_but_the_visible_ones(repo: Path
     ("changed", "groups"),
     [
         ("src/GodotMcp.Server/Tools/RuntimeTools.Record.cs", ["recording", "capture"]),
-        ("src/GodotMcp.Server/Session/RealtimeRecording.cs", ["capture"]),
+        ("src/GodotMcp.Server/Session/RealtimeRecording.cs", ["recording", "capture"]),
         ("src/GodotMcp.Capture/Program.cs", ["capture"]),
         ("bridge/godot_mcp_window.gd", ALL_GROUPS),
         ("tools/hidden-desktop.ps1", ALL_GROUPS),

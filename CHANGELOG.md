@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A dormant game's leave or re-dormant no longer fails while a server is listing dormant games or reading an attach or join file.
+- A real-time clip of seven frames with a pause in it reports its full length, instead of 0.231 s.
 
 ## 0.40.1 - 2026-11-11
 

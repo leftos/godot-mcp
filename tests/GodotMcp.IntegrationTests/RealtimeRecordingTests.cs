@@ -762,7 +762,7 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     [GeneratedRegex(@"(\d+) frames in (\d+(?:\.\d+)?) s")]
     private static partial Regex FramesLine();
 
-    private static async Task<(byte[] Output, string Errors, int ExitCode)> RunAsync(string program, IReadOnlyList<string> arguments)
+    internal static async Task<(byte[] Output, string Errors, int ExitCode)> RunAsync(string program, IReadOnlyList<string> arguments)
     {
         ProcessStartInfo startInfo = new(program)
         {
@@ -786,12 +786,12 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         return (output.ToArray(), await errors, process.ExitCode);
     }
 
-    private static string FfprobePath()
+    internal static string FfprobePath()
     {
         string ffmpeg = FfmpegPath();
         return Path.Combine(Path.GetDirectoryName(ffmpeg)!, Path.GetFileName(ffmpeg).Replace("ffmpeg", "ffprobe", StringComparison.Ordinal));
     }
 
-    private static string FfmpegPath() =>
+    internal static string FfmpegPath() =>
         Installation.FindFfmpeg(out _) ?? throw new InvalidOperationException("ffmpeg is not on PATH; install it with winget install Gyan.FFmpeg.");
 }

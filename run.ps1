@@ -237,7 +237,7 @@ $itestGroups = [ordered]@{
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests', 'StateTests', 'HeadlessCaptureTests')
     time      = @('TimeTests', 'BatchTests', 'WatchTests', 'StepInputTests', 'WatchAudioTests')
     prep      = @('PrepTests', 'RestartTests')
-    recording = @('RecordingTests')
+    recording = @('RecordingTests', 'RealtimeRemuxTests')
     capture   = @('CaptureHelperTests', 'RealtimeRecordingTests')
     headless  = @('HeadlessTests', 'HeadlessMeshTests', 'WarmHeadlessTests')
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests', 'HeadlessXscnTests', 'HeadlessLoadErrorTests')
@@ -311,7 +311,7 @@ $itestRules = @(
     @('run.ps1', 'all'),
     @('tools/hidden-desktop.ps1', $itestEveryGroup),
     @('src/GodotMcp.Capture/**', @('capture')),
-    @('src/GodotMcp.Server/Session/Realtime*.cs', @('capture')),
+    @('src/GodotMcp.Server/Session/Realtime*.cs', @('recording', 'capture')),
     @('src/GodotMcp.Server/Session/GodotSession.Realtime.cs', @('capture')),
     @('src/GodotMcp.Server/Session/Installation.cs', $itestEveryGroup),
     @('src/GodotMcp.Server/Session/Scratch*.cs', @($itestScratchGroups + 'csharp')),
