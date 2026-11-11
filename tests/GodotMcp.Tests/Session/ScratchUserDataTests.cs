@@ -1,3 +1,4 @@
+using System.Globalization;
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
 
@@ -11,23 +12,36 @@ public sealed class ScratchUserDataTests : IDisposable
     /// <summary>Session names Windows folds into one folder name: a trailing period dropped, and case ignored.</summary>
     private static readonly string[] FoldedNames = ["game", "game.", "Game", "GAME"];
 
+    /// <summary>A server that has exited: this process's id with a start time it never had.</summary>
+    private static readonly OverrideOwner Dead = new(Environment.ProcessId, OverrideOwner.Current.StartTicks - 1);
+
     private readonly TempDirectory _temp = new();
+    private readonly StringWriter _errors = new();
 
-    public void Dispose() => _temp.Dispose();
+    public void Dispose()
+    {
+        _errors.Dispose();
+        _temp.Dispose();
+    }
 
-    private string Root => _temp.Combine("Probe", ".godot", "godot-mcp", "userdata-Probe");
+    /// <summary>
+    /// A scratch folder of the name <see cref="ScratchUserData.RootFor"/> gives, under this test's own stand-in for the temp
+    /// folder's <c>godot-mcp</c>.
+    /// </summary>
+    private string Root => _temp.Combine("temp", "godot-mcp", Path.GetFileName(ScratchUserData.RootFor(_temp.Combine("Probe"), "Probe")));
 
     private string GodotRoot => Root.Replace('\\', '/');
 
     [Fact]
-    public void TheRootIsTheServersAndSessionsFolderUnderTheProjectsGodotMcpFolder()
+    public void TheRootIsTheServersAndSessionsFolderUnderTheTempGodotMcpFolder()
     {
         string project = _temp.Combine("Probe");
+        OverrideOwner owner = OverrideOwner.Current;
 
         string root = ScratchUserData.RootFor(project, "Probe");
 
-        Assert.Equal(Path.Combine(project, ".godot", "godot-mcp"), Path.GetDirectoryName(root));
-        Assert.Matches($"^userdata-{Environment.ProcessId}-Probe-[0-9a-f]{{8}}$", Path.GetFileName(root));
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "godot-mcp"), Path.GetDirectoryName(root));
+        Assert.Matches($"^userdata-{owner.ProcessId}-{owner.StartTicks}-Probe-[0-9a-f]{{8}}$", Path.GetFileName(root));
         Assert.Equal(root, ScratchUserData.RootFor(project, "Probe"));
     }
 
@@ -88,6 +102,7 @@ public sealed class ScratchUserDataTests : IDisposable
         Directory.CreateDirectory(target);
         File.WriteAllText(Path.Combine(target, "keep.txt"), "kept");
         Directory.CreateDirectory(Path.GetDirectoryName(Root)!);
+        ScratchUserData.Delete(Root);
         MakeJunction(Root, target);
 
         string userDir = ScratchUserData.Create(project, Root, seed, NoSettings, recording: false);
@@ -105,6 +120,7 @@ public sealed class ScratchUserDataTests : IDisposable
         Directory.CreateDirectory(target);
         File.WriteAllText(Path.Combine(target, "keep.txt"), "kept");
         Directory.CreateDirectory(Path.GetDirectoryName(Root)!);
+        ScratchUserData.Delete(Root);
         MakeJunction(Root, target);
 
         ScratchUserData.Delete(Root);
@@ -214,6 +230,152 @@ public sealed class ScratchUserDataTests : IDisposable
 
         Assert.False(Directory.Exists(Root));
         Assert.True(Directory.Exists(Path.GetDirectoryName(Root)));
+    }
+
+    [Fact]
+    public void DeleteRefusesARootUnderALinkAndLeavesTheTargetsFolderAlone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The link is a junction, made with mklink /J.");
+        string holder = _temp.Combine("temp");
+        Directory.CreateDirectory(holder);
+        string parent = Path.Combine(holder, "godot-mcp");
+        string target = _temp.Combine("elsewhere");
+        string name = Path.GetFileName(Root);
+        Directory.CreateDirectory(Path.Combine(target, name));
+        File.WriteAllText(Path.Combine(target, name, "keep.txt"), "kept");
+        MakeJunction(parent, target);
+
+        IOException refused = Assert.Throws<IOException>(() => ScratchUserData.Delete(Path.Combine(parent, name)));
+
+        Assert.Equal($"the scratch user data root {parent} is a link; not deleting {Path.Combine(parent, name)} through it", refused.Message);
+        Assert.Equal("kept", File.ReadAllText(Path.Combine(target, name, "keep.txt")));
+    }
+
+    [Fact]
+    public void CreateRefusesARootUnderALink()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The link is a junction, made with mklink /J.");
+        string project = ProjectWith("[application]\n\nconfig/name=\"InputProbe\"\n");
+        string holder = _temp.Combine("temp");
+        Directory.CreateDirectory(holder);
+        string parent = Path.Combine(holder, "godot-mcp");
+        string target = _temp.Combine("elsewhere");
+        Directory.CreateDirectory(target);
+        MakeJunction(parent, target);
+        string root = Path.Combine(parent, "userdata-Probe");
+
+        SessionException refused = Assert.Throws<SessionException>(() =>
+            ScratchUserData.Create(project, root, seed: null, NoSettings, recording: false)
+        );
+
+        Assert.Equal($"the scratch user data root {parent} is a link; remove it", refused.Message);
+        Assert.Empty(Directory.GetFileSystemEntries(target));
+    }
+
+    [Fact]
+    public void SweepDeletesASessionFolderWhoseNamedOwnerHasExited()
+    {
+        string parent = TempScratchRoot();
+        string folder = Path.Combine(parent, FolderOf(Dead, "my-game-2"));
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "save.dat"), "x");
+
+        ScratchUserData.SweepLeftovers(parent, _errors);
+
+        Assert.False(Directory.Exists(folder));
+        Assert.Equal("", _errors.ToString());
+    }
+
+    [Fact]
+    public void SweepKeepsASessionFolderItsNamedLiveOwnerStillUses()
+    {
+        string parent = TempScratchRoot();
+        string folder = Path.Combine(parent, FolderOf(OverrideOwner.Current, "my-game-2"));
+        Directory.CreateDirectory(folder);
+
+        ScratchUserData.SweepLeftovers(parent, _errors);
+
+        Assert.True(Directory.Exists(folder));
+        Assert.Equal("", _errors.ToString());
+    }
+
+    [Fact]
+    public void ASessionNameShapedLikeAnOwnerDoesNotMoveTheParsedOwner()
+    {
+        string parent = TempScratchRoot();
+        string folder = Path.Combine(parent, FolderOf(OverrideOwner.Current, "1-2-x"));
+        Directory.CreateDirectory(folder);
+
+        ScratchUserData.SweepLeftovers(parent, _errors);
+
+        Assert.True(Directory.Exists(folder));
+        Assert.Equal("", _errors.ToString());
+    }
+
+    [Fact]
+    public void SweepKeepsAFolderWhoseNameDoesNotNameItsServer()
+    {
+        string parent = TempScratchRoot();
+        string folder = Path.Combine(parent, "userdata-Probe-00000000");
+        Directory.CreateDirectory(folder);
+
+        ScratchUserData.SweepLeftovers(parent, _errors);
+
+        Assert.True(Directory.Exists(folder));
+        Assert.Equal(
+            $"godot-mcp: the scratch user data folder {folder} has a name that does not name its server; left in place{Environment.NewLine}",
+            _errors.ToString()
+        );
+    }
+
+    [Fact]
+    public void SweepSkipsAParentThatIsALink()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The link is a junction, made with mklink /J.");
+        string holder = _temp.Combine("temp");
+        Directory.CreateDirectory(holder);
+        string parent = Path.Combine(holder, "godot-mcp");
+        string target = _temp.Combine("elsewhere");
+        string leftover = Path.Combine(target, FolderOf(Dead, "Probe"));
+        Directory.CreateDirectory(leftover);
+        MakeJunction(parent, target);
+
+        ScratchUserData.SweepLeftovers(parent, _errors);
+
+        Assert.True(Directory.Exists(leftover));
+        Assert.Equal(
+            $"godot-mcp: the scratch user data root {parent} is a link; leaving the folders in it alone{Environment.NewLine}",
+            _errors.ToString()
+        );
+    }
+
+    /// <summary>The scratch folder name a server <paramref name="owner"/> gives its session <paramref name="session"/>.</summary>
+    private static string FolderOf(OverrideOwner owner, string session) =>
+        string.Create(CultureInfo.InvariantCulture, $"userdata-{owner.ProcessId}-{owner.StartTicks}-{session}-0123abcd");
+
+    [Fact]
+    public void SweepUnlinksASessionFolderThatIsALinkAndLeavesItsTargetAlone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The link is a junction, made with mklink /J.");
+        string parent = TempScratchRoot();
+        string target = _temp.Combine("elsewhere");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "keep.txt"), "kept");
+        string folder = Path.Combine(parent, FolderOf(Dead, "Probe"));
+        MakeJunction(folder, target);
+
+        ScratchUserData.SweepLeftovers(parent, _errors);
+
+        Assert.False(Directory.Exists(folder));
+        Assert.Equal("kept", File.ReadAllText(Path.Combine(target, "keep.txt")));
+    }
+
+    /// <summary>A scratch root of this test's own, standing in for the temp folder's <c>godot-mcp</c>.</summary>
+    private string TempScratchRoot()
+    {
+        string parent = _temp.Combine("temp", "godot-mcp");
+        Directory.CreateDirectory(parent);
+        return parent;
     }
 
     [Fact]

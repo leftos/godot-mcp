@@ -32,7 +32,8 @@ internal sealed record LaunchResult(string Session, string ProjectPath, int Proc
 
     /// <summary>
     /// A scratch run's user data folder, what the game's <c>OS.get_user_data_dir()</c> returns, inside the session's
-    /// <c>.godot/godot-mcp/userdata-&lt;session&gt;</c> folder; left out for a run on the real one.
+    /// <c>&lt;system temp&gt;/godot-mcp/userdata-&lt;server pid&gt;-&lt;start ticks&gt;-&lt;session&gt;-&lt;hash&gt;</c> folder; left
+    /// out for a run on the real one.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? UserDataDir { get; init; }

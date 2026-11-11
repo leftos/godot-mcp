@@ -87,8 +87,11 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.True(result["passed"]!.GetValue<bool>(), result.ToJsonString());
         JsonArray details = scenes[0]!["details"]!.AsArray();
+        string scratchRoot = Path.Combine(Path.GetTempPath(), "godot-mcp").Replace('\\', '/');
         Assert.Contains(
-            $"/.godot/godot-mcp/userdata-{Environment.ProcessId}-InputProbe.scratch-ScratchUserData-",
+            $"{scratchRoot}/userdata-{Environment.ProcessId}-"
+                + OverrideOwner.Current.StartTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + "-InputProbe.scratch-ScratchUserData-",
             Status(details[0]!),
             StringComparison.OrdinalIgnoreCase
         );
@@ -97,6 +100,19 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         if (Directory.Exists(folder))
         {
             Assert.Empty(Directory.GetDirectories(folder, "userdata-*"));
+        }
+
+        string scratchParent = Path.Combine(Path.GetTempPath(), "godot-mcp");
+        if (Directory.Exists(scratchParent))
+        {
+            Assert.Empty(
+                Directory.GetDirectories(
+                    scratchParent,
+                    $"userdata-{Environment.ProcessId}-"
+                        + OverrideOwner.Current.StartTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + "-InputProbe.scratch-ScratchUserData-*"
+                )
+            );
         }
     }
 

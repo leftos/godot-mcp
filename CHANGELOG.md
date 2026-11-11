@@ -13,6 +13,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - `run_scratches` and `--run-scratches` play up to 100 batches of a scene in one call.
+- A scratch `userData` game's throwaway `user://` lives under the system temp folder, outside the project, and the server deletes ones a killed server left behind.
 
 ### Fixed
 

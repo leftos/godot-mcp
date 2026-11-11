@@ -8,8 +8,8 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// run_project's options.userData: a seeded scratch run's game finds its user:// inside the server's and session's folder
-/// under .godot/godot-mcp (<see cref="ScratchUserData.RootFor"/>), with the seed copied in, keeps what it wrote across a restart, and the folder
-/// goes when the session stops, the real user data folder never written.
+/// under the system temp folder's godot-mcp (<see cref="ScratchUserData.RootFor"/>), with the seed copied in, keeps what it
+/// wrote across a restart, and the folder goes when the session stops, the real user data folder never written.
 /// </summary>
 public sealed class ScratchUserDataRunTests : IAsyncDisposable
 {
@@ -50,6 +50,7 @@ public sealed class ScratchUserDataRunTests : IAsyncDisposable
             probeName
         );
         string root = ScratchUserData.RootFor(ProjectPaths.Normalise(_probe.Directory), "InputProbe");
+        string scratchRoot = Path.Combine(Path.GetTempPath(), "godot-mcp").Replace('\\', '/');
 
         string launched = await _project.RunProjectAsync(
             _probe.Directory,
@@ -72,7 +73,15 @@ public sealed class ScratchUserDataRunTests : IAsyncDisposable
 
         Assert.Equal(userDataDir, first[0]!.GetValue<string>());
         Assert.StartsWith(root.Replace('\\', '/') + "/", userDataDir, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains($"/.godot/godot-mcp/userdata-{Environment.ProcessId}-InputProbe-", userDataDir, StringComparison.Ordinal);
+        Assert.StartsWith(scratchRoot + "/", userDataDir, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            $"/godot-mcp/userdata-{Environment.ProcessId}-"
+                + OverrideOwner.Current.StartTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + "-InputProbe-",
+            userDataDir,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(ProjectPaths.Normalise(_probe.Directory).Replace('\\', '/') + "/", userDataDir, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("seeded", first[1]!.GetValue<string>());
         Assert.Equal("kept", restarted.GetValue<string>());
         Assert.True(rootWhileRunning);

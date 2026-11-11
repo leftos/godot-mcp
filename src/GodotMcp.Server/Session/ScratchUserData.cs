@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace GodotMcp.Server.Session;
 
@@ -13,13 +15,16 @@ internal sealed record ScratchUserDataRequest(string? SeedFolder);
 /// The per-session folder a scratch run's game takes as its platform data folder, and the game's own user data folder inside it,
 /// worked out as Godot works it out; made, seeded and deleted here.
 /// </summary>
-internal static class ScratchUserData
+internal static partial class ScratchUserData
 {
-    /// <summary>The prefix of a session's folder under <c>&lt;project&gt;/.godot/godot-mcp/</c>.</summary>
+    /// <summary>The prefix of a session's folder under <c>&lt;system temp&gt;/godot-mcp/</c>.</summary>
     public const string FolderPrefix = "userdata-";
 
     private const string ApplicationSection = "application";
     private const string UnnamedProject = "[unnamed project]";
+
+    /// <summary>The name of the folder under the system temp folder that every session's scratch folder is made in.</summary>
+    private const string ParentFolderName = "godot-mcp";
 
     /// <summary>The characters Godot replaces with '-' in a folder name (4.7.2 <c>core/os/os.cpp</c> L264).</summary>
     private static readonly string[] InvalidCharacters = [":", "*", "?", "\"", "<", ">", "|"];
@@ -34,13 +39,40 @@ internal static class ScratchUserData
     public static string GodotDirName => OperatingSystem.IsWindows() ? "Godot" : "godot";
 
     /// <summary>
-    /// The session's scratch folder: <c>&lt;project&gt;/.godot/godot-mcp/userdata-&lt;server pid&gt;-&lt;session&gt;-&lt;hash&gt;</c>,
-    /// so two servers' sessions of one name on one folder never share it. The hash, the first 8 hex digits of the SHA-256 of the
-    /// session's exact name, keeps names Windows folds into one folder (<c>game</c> and <c>game.</c>, <c>Game</c> and <c>game</c>)
-    /// apart, and keeps the folder's name from ending in a period.
+    /// The folder every session's scratch folder is made under: <c>godot-mcp</c> in the system temp folder (<c>%TEMP%</c> on
+    /// Windows, as <see cref="Path.GetTempPath"/> gives it), made by <see cref="Create"/> when it is missing.
+    /// </summary>
+    public static string ParentFolder => Path.Combine(Path.GetTempPath(), ParentFolderName);
+
+    /// <summary>
+    /// The session's scratch folder:
+    /// <c>&lt;system temp&gt;/godot-mcp/userdata-&lt;server pid&gt;-&lt;start ticks&gt;-&lt;session&gt;-&lt;hash&gt;</c>, so two
+    /// servers' sessions of one name never share it, and a game that shows its own file paths shows them under the temp folder
+    /// rather than inside the project. The server's pid and start time in UTC ticks (<see cref="OverrideOwner.Current"/>) name
+    /// the server that owns it, read back by <see cref="SweepLeftovers(TextWriter)"/> from the name, which the game cannot
+    /// change, rather than from a file in the folder, which the game can write when its <c>user://</c> is the folder itself (a
+    /// <c>custom_user_dir_name</c> of "/"); a later process given the same pid gets another name. The project folder does not
+    /// enter it, since a folder inside the project's <c>res://</c> makes <c>ProjectSettings.LocalizePath</c> name a
+    /// <c>user://</c> file's path <c>res://...</c>, which a scratch folder must not change (<paramref name="projectDir"/> is
+    /// kept so the callers need not change). The hash, the first 8 hex digits of the SHA-256 of the session's exact name, keeps
+    /// names Windows folds into one folder (<c>game</c> and <c>game.</c>, <c>Game</c> and <c>game</c>) apart, and keeps the
+    /// folder's name from ending in a period.
     /// </summary>
     public static string RootFor(string projectDir, string session) =>
-        Path.Combine(ProjectPrep.LogFolder(projectDir), $"{FolderPrefix}{Environment.ProcessId}-{session}-{NameHash(session)}");
+        Path.Combine(
+            ParentFolder,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"{FolderPrefix}{OverrideOwner.Current.ProcessId}-{OverrideOwner.Current.StartTicks}-{session}-{NameHash(session)}"
+            )
+        );
+
+    /// <summary>
+    /// A scratch folder's name: the prefix, the owner's pid and start ticks (ASCII digits), then the session and its 8-digit
+    /// hash, the session itself free to hold '-'.
+    /// </summary>
+    [GeneratedRegex("^" + FolderPrefix + @"(?<pid>[0-9]+)-(?<ticks>[0-9]+)-.*-[0-9a-f]{8}\z", RegexOptions.Singleline)]
+    private static partial Regex FolderName();
 
     /// <summary>The first 8 lowercase hex digits of the SHA-256 of <paramref name="session"/>'s UTF-8 bytes.</summary>
     private static string NameHash(string session) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(session)))[..8];
@@ -92,15 +124,24 @@ internal static class ScratchUserData
     }
 
     /// <summary>
-    /// Makes <paramref name="root"/> afresh and copies <paramref name="seed"/>, when given, into the game's user data folder inside
-    /// it. A folder already there (a killed server's, or a delete that failed) is deleted first with <see cref="Delete"/>, and a
-    /// link at the root only unlinked, so the run starts empty and nothing is written through a link.
+    /// Makes <paramref name="root"/> afresh under its parent folder and copies <paramref name="seed"/>, when given, into the
+    /// game's user data folder inside it; the folder's name (<see cref="RootFor"/>) names the server that owns it, so nothing
+    /// is written there to say so. The parent folder is made when missing, and one that is a link or a junction is refused, so
+    /// nothing is written through it. A folder already there (a killed server's, or a delete that failed) is deleted first with
+    /// <see cref="Delete"/>, and a link at the root only unlinked, so the run starts empty and nothing is written through a link.
     /// </summary>
     /// <returns>The game's user data folder (<see cref="UserDataDir"/>).</returns>
+    /// <exception cref="SessionException">The parent folder is a link or a junction.</exception>
     /// <exception cref="IOException">The folder could not be made or a seed file not copied.</exception>
     /// <exception cref="UnauthorizedAccessException">The same, for want of access.</exception>
     public static string Create(string projectDir, string root, string? seed, string projectSettings, bool recording)
     {
+        if (Path.GetDirectoryName(root) is { } parent)
+        {
+            RefuseLink(parent);
+            Directory.CreateDirectory(parent);
+        }
+
         Delete(root);
         Directory.CreateDirectory(root);
         string userDir = UserDataDir(projectDir, root, projectSettings, recording);
@@ -114,12 +155,20 @@ internal static class ScratchUserData
 
     /// <summary>
     /// Deletes <paramref name="root"/> and everything in it; a missing one is left alone. A root that is itself a link is only
-    /// unlinked, so the delete never follows it out of the project.
+    /// unlinked, so the delete never follows it out of the scratch folder, and a root whose parent folder is a link or a
+    /// junction is refused, so the delete never reaches a same-named folder in the link's target.
     /// </summary>
-    /// <exception cref="IOException">A file in it is held open, or the folder could not be removed.</exception>
+    /// <exception cref="IOException">
+    /// The parent folder is a link or a junction, a file in it is held open, or the folder could not be removed.
+    /// </exception>
     /// <exception cref="UnauthorizedAccessException">The same, for want of access.</exception>
     public static void Delete(string root)
     {
+        if (Path.GetDirectoryName(root) is { } parent && IsLink(parent))
+        {
+            throw new IOException($"the scratch user data root {parent} is a link; not deleting {root} through it");
+        }
+
         DirectoryInfo folder = new(root);
         if (!folder.Exists)
         {
@@ -134,6 +183,102 @@ internal static class ScratchUserData
 
         folder.Delete(recursive: true);
     }
+
+    /// <summary>
+    /// Deletes every scratch folder under <see cref="ParentFolder"/> whose name (<see cref="RootFor"/>) names a server process
+    /// that no longer runs (its pid and start ticks, <see cref="OverrideOwner.IsAlive"/>), left by a server that was killed
+    /// before its shutdown. A folder whose name does not name its server and one that cannot be deleted are left in place and
+    /// reported, one a live process owns is left in place; a folder that is a link is only unlinked, never followed, and a
+    /// parent that is a link is not swept. Run once at startup, before any session starts. Never throws.
+    /// </summary>
+    /// <param name="errors">Where a folder left in place is reported: stderr in the server.</param>
+    public static void SweepLeftovers(TextWriter errors) => SweepLeftovers(ParentFolder, errors);
+
+    /// <inheritdoc cref="SweepLeftovers(TextWriter)"/>
+    /// <param name="parent">The folder the scratch folders are under.</param>
+    internal static void SweepLeftovers(string parent, TextWriter errors)
+    {
+        if (!Directory.Exists(parent))
+        {
+            return;
+        }
+
+        try
+        {
+            if (IsLink(parent))
+            {
+                errors.WriteLine($"godot-mcp: the scratch user data root {parent} is a link; leaving the folders in it alone");
+                return;
+            }
+
+            foreach (string folder in Directory.EnumerateDirectories(parent, $"{FolderPrefix}*"))
+            {
+                SweepFolder(folder, errors);
+            }
+        }
+        catch (Exception e) when (IsFileSystemFailure(e))
+        {
+            errors.WriteLine($"godot-mcp: listing {parent} at startup failed: {Describe(e)}");
+        }
+    }
+
+    /// <summary>Sweeps one scratch folder; a failure is reported with the folder, which is left in place.</summary>
+    private static void SweepFolder(string folder, TextWriter errors)
+    {
+        try
+        {
+            if (OwnerOf(Path.GetFileName(folder)) is not { } owner)
+            {
+                errors.WriteLine($"godot-mcp: the scratch user data folder {folder} has a name that does not name its server; left in place");
+                return;
+            }
+
+            if (!owner.IsAlive())
+            {
+                Delete(folder);
+            }
+        }
+        catch (Exception e) when (IsFileSystemFailure(e))
+        {
+            errors.WriteLine($"godot-mcp: the startup sweep of the scratch user data folder {folder} failed: {Describe(e)}");
+        }
+    }
+
+    /// <summary>
+    /// The server a scratch folder's <paramref name="name"/> names (<see cref="FolderName"/>); null when the name does not
+    /// have that form or its pid or start ticks are out of range.
+    /// </summary>
+    private static OverrideOwner? OwnerOf(string name)
+    {
+        Match match = FolderName().Match(name);
+        return
+            match.Success
+            && int.TryParse(match.Groups["pid"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out int processId)
+            && long.TryParse(match.Groups["ticks"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out long startTicks)
+            ? new OverrideOwner(processId, startTicks)
+            : null;
+    }
+
+    /// <summary>Refuses a parent folder that is a link or a junction, through which the session's folder would be made.</summary>
+    private static void RefuseLink(string parent)
+    {
+        if (IsLink(parent))
+        {
+            throw new SessionException($"the scratch user data root {parent} is a link; remove it");
+        }
+    }
+
+    /// <summary>Whether <paramref name="path"/> is there as a link: a symbolic link or a junction, as <see cref="Delete"/> treats one.</summary>
+    private static bool IsLink(string path)
+    {
+        DirectoryInfo folder = new(path);
+        return folder.Exists && (folder.LinkTarget is not null || folder.Attributes.HasFlag(FileAttributes.ReparsePoint));
+    }
+
+    /// <summary>What a file operation on a scratch folder can throw.</summary>
+    private static bool IsFileSystemFailure(Exception e) => e is IOException or UnauthorizedAccessException;
+
+    private static string Describe(Exception e) => $"{e.GetType().Name}: {e.Message}";
 
     /// <summary>
     /// The folder a scratch run's result names, from the one the server worked out and the one the game's hello reported: the

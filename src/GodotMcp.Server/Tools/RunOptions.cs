@@ -69,13 +69,14 @@ internal sealed record RunOptions(
     )]
         Dictionary<string, JsonElement>? ProjectSettings = null,
     [property: Description(
-        "Where the game's user:// lives. \"real\" (the default): Godot's own folder. \"scratch\": a folder of the session's own, "
-            + "<project>/.godot/godot-mcp/userdata-<session>/, made by pointing the game's APPDATA (Linux: XDG_DATA_HOME) at it, kept "
-            + "across restart_project and deleted when the session ends (stop_project, the game's exit, the server's exit); the "
-            + "result's userDataDir is the game's user:// folder in it. {\"seed\": \"<folder in the project>\"}: scratch, with that "
-            + "folder copied into user:// first. godot-mcp.json's userData and a preset's are used when this is left out. Refused "
-            + "with an env that sets the same variable, and on macOS. run_scratches takes its own options.userData, and its scenes "
-            + "fall back to godot-mcp.json's scratch.userData, then this top-level userData."
+        "Where the game's user:// lives. \"real\" (the default): Godot's own folder. \"scratch\": a folder of the session's own "
+            + "under the system temp folder, <temp>/godot-mcp/userdata-<server pid>-<start ticks>-<session>-<hash>/, made by "
+            + "pointing the game's APPDATA (Linux: XDG_DATA_HOME) at it, kept across restart_project and deleted when the session "
+            + "ends (stop_project, the game's exit, the server's exit); the result's userDataDir is the game's user:// folder in "
+            + "it. {\"seed\": \"<folder in the project>\"}: scratch, with that folder copied into user:// first. godot-mcp.json's "
+            + "userData and a preset's are used when this is left out. Refused with an env that sets the same variable, and on "
+            + "macOS. run_scratches takes its own options.userData, and its scenes fall back to godot-mcp.json's scratch.userData, "
+            + "then this top-level userData."
     )]
         JsonElement? UserData = null
 )

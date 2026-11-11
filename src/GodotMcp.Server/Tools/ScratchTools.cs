@@ -1644,8 +1644,8 @@ internal sealed record ScratchOptions(
         ScratchCaptureOptions? Capture = null,
     [property: Description(
         "Where each scene's game's user:// lives. \"real\" (the default): Godot's own folder, which every game of the project "
-            + "shares. \"scratch\": a folder of each scene's own, "
-            + "<project>/.godot/godot-mcp/userdata-<server pid>-<session>-<hash>/, made by pointing the game's APPDATA (Linux: "
+            + "shares. \"scratch\": a folder of each scene's own under the system temp folder, "
+            + "<temp>/godot-mcp/userdata-<server pid>-<start ticks>-<session>-<hash>/, made by pointing the game's APPDATA (Linux: "
             + "XDG_DATA_HOME) at it and deleted when the scene's game ends. {\"seed\": \"<folder in the project>\"}: scratch, "
             + "with that folder copied into each scene's user:// first. godot-mcp.json's scratch.userData is used when this is "
             + "left out, else its top-level userData. Refused on macOS."
