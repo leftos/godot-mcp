@@ -902,12 +902,26 @@ public sealed class SessionAttachTests : IAsyncDisposable
         string joinFile = DormantGames.JoinPathIn(alpha, 4101);
         using FolderEvents events = new(Path.GetDirectoryName(joinFile)!);
         using FileStream list = HoldFolderList(harness);
+        bool overrideRefused = false;
+        bool joinFileRefused = false;
+        harness.Sessions.OverrideFolders.OpenRefused += purpose =>
+        {
+            Volatile.Write(ref overrideRefused, overrideRefused || purpose.StartsWith("recording ", StringComparison.Ordinal));
+            Volatile.Write(ref joinFileRefused, joinFileRefused || purpose.StartsWith("writing the join file in ", StringComparison.Ordinal));
+        };
 
         // Run off the test's thread: the list's retries block the caller until fake time passes.
         Task<AttachResult> join = Task.Run(
             () => harness.Sessions.AttachAsync(new AttachRequest(alpha, null, TimeSpan.FromSeconds(3), false, false, null), cancellation),
             cancellation
         );
+        // The override's write is already retrying the refused list: fake time stands still, so the 2 s budget whose end this
+        // test is about cannot run out before the advance below starts it.
+        await RegistryHarness.WaitUntilAsync(() => Volatile.Read(ref overrideRefused), join);
+        // Past that budget and short of the 3 s deadline, so the override goes ahead and the join file's hold, retrying for its
+        // own 2 s, starts now: the deadline then ends the join from inside that hold, never before it started.
+        time.Advance(TimeSpan.FromMilliseconds(2100));
+        await RegistryHarness.WaitUntilAsync(() => Volatile.Read(ref joinFileRefused), join);
         await RegistryHarness.AdvanceUntilDoneAsync(time, join, cancellation);
 
         SessionException timedOut = await Assert.ThrowsAsync<SessionException>(() => join);
@@ -935,11 +949,17 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(attachFile)!);
         using FolderEvents events = new(Path.GetDirectoryName(attachFile)!);
         using FileStream list = HoldFolderList(harness);
+        bool attachFileRefused = false;
+        harness.Sessions.OverrideFolders.OpenRefused += purpose =>
+            Volatile.Write(ref attachFileRefused, attachFileRefused || purpose.StartsWith("writing the attach file in ", StringComparison.Ordinal));
 
         Task<AttachResult> attach = Task.Run(
             () => harness.Sessions.AttachAsync(new AttachRequest(alpha, null, TimeSpan.FromSeconds(1), false, false, null), cancellation),
             cancellation
         );
+        // The attach file's hold is already retrying the refused list: fake time stands still, so the 1 s deadline cannot end the
+        // attach before the hold it is meant to cut has started, however slow the machine is.
+        await RegistryHarness.WaitUntilAsync(() => Volatile.Read(ref attachFileRefused), attach);
         await RegistryHarness.AdvanceUntilDoneAsync(time, attach, cancellation);
 
         SessionException timedOut = await Assert.ThrowsAsync<SessionException>(() => attach);
