@@ -53,6 +53,65 @@ public sealed partial class LeftBehindTests
     }
 
     [Fact]
+    public async Task FindProcessesReturnsPidsAndFindDescribesThem()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+        using Process parent = await StartParentWithRunningPingAsync();
+        Process? ping = null;
+        try
+        {
+            LeftBehind.ListedProcess listed = Assert.Single(
+                LeftBehind.FindProcesses(parent, NullLogger.Instance),
+                process => IsPing(LeftBehind.Describe(process))
+            );
+            ping = Process.GetProcessById(listed.Id);
+
+            Assert.Equal(parent.Id, listed.ParentId);
+            Assert.Equal("PING", ping.ProcessName, ignoreCase: true);
+            Assert.Contains(LeftBehind.Describe(listed), LeftBehind.Find(parent, NullLogger.Instance));
+        }
+        finally
+        {
+            await EndAsync(parent, ping);
+            ping?.Dispose();
+        }
+    }
+
+    // A listed child that exited after the listing can have its id taken by another process, started after the listing: Open
+    // never opens that one. The same entry listed after the process started is opened, so the listing's time is what refuses it.
+    [Fact]
+    public async Task OpenRefusesAListedIdWhoseProcessStartedAfterTheListing()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+        using var game = Process.GetCurrentProcess();
+        DateTime listedAt = DateTime.UtcNow;
+        using Process later = Process.Start(
+            new ProcessStartInfo("cmd.exe", "/d /c ping -n 600 127.0.0.1 >nul") { UseShellExecute = false, CreateNoWindow = true }
+        )!;
+        List<Process> refused = [];
+        List<Process> opened = [];
+        try
+        {
+            LeftBehind.ListedProcess entry = new(later.Id, game.Id, "cmd.exe");
+
+            refused = LeftBehind.Open(game, new LeftBehind.ChildListing([entry], listedAt), NullLogger.Instance);
+            opened = LeftBehind.Open(game, new LeftBehind.ChildListing([entry], DateTime.UtcNow), NullLogger.Instance);
+
+            Assert.Empty(refused);
+            Assert.Equal([later.Id], opened.Select(process => process.Id));
+        }
+        finally
+        {
+            foreach (Process process in refused.Concat(opened))
+            {
+                process.Dispose();
+            }
+
+            await EndAsync(later, ping: null);
+        }
+    }
+
+    [Fact]
     public async Task AProcessThatLeftNothingRunningListsNothing()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);

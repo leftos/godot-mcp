@@ -162,7 +162,12 @@ internal sealed partial class GodotSession
     {
         if (game is not null)
         {
-            return await StopGameAsync(attached, game, () => KillAndWaitAsync(wrapper: null, game), () => Task.FromResult<IReadOnlyList<string>>([]));
+            return await StopGameAsync(
+                attached,
+                game,
+                () => KillAndWaitAsync(wrapper: null, game),
+                () => Task.FromResult(new WrapperEnd([], Warning: null))
+            );
         }
 
         await AskToQuitAsync(attached);

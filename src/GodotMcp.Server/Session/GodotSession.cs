@@ -76,7 +76,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private static readonly TimeSpan BridgeCloseGrace = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(5);
 
-    /// <summary>How long a stop waits for the console wrapper to follow a game that quit before ending it.</summary>
+    /// <summary>How long, in load-adjusted time, a stop waits for the console wrapper to follow a game that quit before ending it.</summary>
     private static readonly TimeSpan WrapperExitWait = TimeSpan.FromSeconds(1);
 
     // SilentUnderDebugger's text quotes this.
@@ -657,6 +657,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// running after its kill wait.
     /// </summary>
     private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning, int? QuitMs);
+
+    /// <summary>
+    /// What a game that quit left behind as the stop ended it: the processes it left running, as leftRunning lists them, and the
+    /// warning naming those still running after the kill wait.
+    /// </summary>
+    private readonly record struct WrapperEnd(IReadOnlyList<string> LeftRunning, string? Warning);
 
     /// <summary>
     /// A run <see cref="PrepareAndStartAsync"/> started: the run, its prep, the wait for its bridge's hello (registered before
@@ -1612,13 +1618,14 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// load-adjusted time on the registry's clock with its backstop, and the kill says what the game was doing. A game that
     /// acknowledged the quit and closed its bridge by the end of the exit grace gets the teardown grace past it
     /// (<see cref="WaitOutTeardownAsync"/>). The kill's own warning, when what it killed was still running after its wait, is
-    /// the end's. After a quit, <paramref name="afterQuit"/> ends what the game left behind and returns it, as leftRunning lists it.
+    /// the end's. After a quit, <paramref name="afterQuit"/> ends what the game left behind and returns it, as leftRunning lists it,
+    /// with the warning naming what was still running after its wait, which is then the end's.
     /// </summary>
     private async Task<RunEnd> StopGameAsync(
         BridgeConnection? connection,
         Process watched,
         Func<Task<string?>> kill,
-        Func<Task<IReadOnlyList<string>>> afterQuit
+        Func<Task<WrapperEnd>> afterQuit
     )
     {
         if (await IsSilentAsync(connection))
@@ -1649,7 +1656,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
 
         int quitMs = (int)Math.Round(Stopwatch.GetElapsedTime(askedAt).TotalMilliseconds);
-        return new RunEnd(Killed: false, Warning: null, KillReason: null, await afterQuit(), quitMs);
+        WrapperEnd left = await afterQuit();
+        return new RunEnd(Killed: false, left.Warning, KillReason: null, left.LeftRunning, quitMs);
     }
 
     /// <summary>
@@ -1752,22 +1760,72 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// After the game quit: waits up to <see cref="WrapperExitWait"/> for the console wrapper to follow it, as it does unless
-    /// the game left processes running. A wrapper still running then is ended, which closes its job and ends those processes.
+    /// After the game quit: waits up to <see cref="WrapperExitWait"/> of load-adjusted time on the registry's launch clock
+    /// (<see cref="WrapperExitsAsync"/>) for the console wrapper to follow it, as it does unless the game left processes running.
+    /// A wrapper still running then is killed, which closes its job, kill-on-close, and so ends those processes: each the game
+    /// left running is opened before the wrapper's kill and waited for, not killed, on the wrapper's kill wait, so the folder
+    /// they hold as their current directory is free when the stop returns.
     /// </summary>
-    /// <returns>The processes the game left running, as leftRunning lists them; empty when the wrapper exited by itself.</returns>
-    private async Task<IReadOnlyList<string>> EndWrapperAsync(GodotRun run)
+    /// <returns>
+    /// The processes the game left running, as leftRunning lists them, empty when the wrapper exited by itself; and the warning
+    /// naming those still running after the kill wait, null when all are gone.
+    /// </returns>
+    private async Task<WrapperEnd> EndWrapperAsync(GodotRun run)
     {
-        if (run.Game is not { } game || !run.IsRunning || await ProcessExit.WaitUntilGoneAsync(run.Process, WrapperExitWait))
+        if (run.Game is not { } game || !run.IsRunning || await WrapperExitsAsync(run.Process))
         {
-            return [];
+            return new WrapperEnd([], Warning: null);
         }
 
-        IReadOnlyList<string> leftRunning = LeftBehind.Find(game, _logger);
+        LeftBehind.ChildListing listing = LeftBehind.ListChildren(game, _logger);
+        IReadOnlyList<LeftBehind.ListedProcess> listed = listing.Children;
+        IReadOnlyList<string> leftRunning = [.. listed.Select(LeftBehind.Describe)];
         Log.GameLeftProcessesRunning(_logger, run.ProjectDir, leftRunning.Count == 0 ? "no process it could list" : string.Join(", ", leftRunning));
-        // The game quit, so the wrapper still running is no kill the stop reports: its wait is only logged.
-        _ = await KillAndWaitAsync(run.Process, game: null);
-        return leftRunning;
+        List<Process> children = LeftBehind.Open(game, listing, _logger);
+        try
+        {
+            // The game quit, so the wrapper still running is no kill the stop reports: its wait is only logged. Only the game's
+            // children still running after it are.
+            KilledGamesWait waited = await RunKill.KillAndWaitWithAsync(run.Process, children, registry.LaunchClock, _logger, ProjectDir);
+            return new WrapperEnd(leftRunning, DescribeLeftStillRunning(listed, waited));
+        }
+        finally
+        {
+            foreach (Process child in children)
+            {
+                child.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The warning naming the processes of <paramref name="listed"/> still running when <paramref name="waited"/> ended; null
+    /// when none is.
+    /// </summary>
+    private static string? DescribeLeftStillRunning(IReadOnlyList<LeftBehind.ListedProcess> listed, KilledGamesWait waited)
+    {
+        string[] still = [.. listed.Where(process => waited.StillRunning.Contains(process.Id)).Select(LeftBehind.Describe)];
+        return still.Length switch
+        {
+            0 => null,
+            1 => $"The game left {still[0]} running, and it was still running after {waited.After}; "
+                + "its project folder stays in use until it is gone.",
+            _ => $"The game left {string.Join(", ", still)} running, and they were still running after {waited.After}; "
+                + "its project folder stays in use until they are gone.",
+        };
+    }
+
+    /// <summary>
+    /// Whether the console wrapper is gone within <see cref="WrapperExitWait"/> of load-adjusted time on the registry's launch
+    /// clock, the kill wait's, so a wrapper slow to end on a busy machine is waited for; the deadline's backstop is
+    /// <see cref="LoadClock.BackstopFactor"/> times it in wall time. The wait is a registered wait on the wrapper's handle, so
+    /// only the deadline ends it.
+    /// </summary>
+    private async Task<bool> WrapperExitsAsync(Process wrapper)
+    {
+        using LoadDeadline wait = registry.LaunchClock.Start(WrapperExitWait);
+        IReadOnlyList<int> stillRunning = await ProcessExit.WaitUntilGoneAsync([(wrapper.Id, wrapper.SafeHandle)], wait);
+        return stillRunning.Count == 0;
     }
 
     /// <summary>
@@ -1776,7 +1834,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </summary>
     /// <returns>
     /// Whether the game had to be killed and why, the processes it left running when it quit, and the warnings when a debugger
-    /// was attached to it as it was ended and when what the stop killed was still running after its kill wait, in that order.
+    /// was attached to it as it was ended, when what the stop killed or the game left running was still running after its kill
+    /// wait, and when the stop killed a run that had no handle on the game's process to wait for, in that order.
     /// </returns>
     private async Task<RunEnd> EndRunAsync(GodotRun run, bool discard)
     {
@@ -1797,9 +1856,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         return ended with
         {
-            Warning = JoinWarnings(warning, ended.Warning),
+            Warning = JoinWarnings(warning, ended.Warning, WarnIfNoGameHandle(run, ended.Killed)),
         };
     }
+
+    /// <summary>
+    /// The warning when the stop killed a run whose game's hello named its pid but whose process the run could not open, so the
+    /// kill waited only for the console wrapper; null otherwise. A game that quit needs none: the wrapper exits by itself only
+    /// once its job has no process left, so the game is gone. The pid is not probed, since another process may have taken it.
+    /// </summary>
+    private string? WarnIfNoGameHandle(GodotRun run, bool killed) =>
+        killed && run.Game is null && GameProcessId is int pid
+            ? $"The game's process (pid {pid}) could not be opened when the run started, so the stop could not wait for it; "
+                + "it may still be running and holding the project folder."
+            : null;
 
     /// <summary>
     /// Stops reading a replaced run's output, so a game the kill could not end, or output still in flight, never lands in the

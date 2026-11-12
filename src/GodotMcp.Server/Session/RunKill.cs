@@ -78,6 +78,41 @@ internal static class RunKill
     }
 
     /// <summary>
+    /// Kills <paramref name="killed"/> with its tree, as <see cref="KillAndWaitAsync"/> kills a console wrapper, then waits for it
+    /// and for each of <paramref name="awaited"/>, which are not killed, together on one deadline of <see cref="Budget"/> started
+    /// on <paramref name="clock"/> after the kill. The awaited processes are waited for through registered waits on their handles,
+    /// which the caller keeps open through the wait; a killed process disposed under the wait counts as gone.
+    /// </summary>
+    /// <returns>
+    /// The pids of <paramref name="awaited"/> still running as the deadline ends, and the time the wait took as a warning words it
+    /// (<see cref="KilledGamesWait.After"/>); no warning, since the caller words its own.
+    /// </returns>
+    public static async Task<KilledGamesWait> KillAndWaitWithAsync(
+        Process killed,
+        IReadOnlyList<Process> awaited,
+        LoadClock clock,
+        ILogger logger,
+        string projectDir
+    )
+    {
+        Kill(killed, logger, projectDir);
+        using LoadDeadline deadline = clock.Start(Budget);
+        Task<bool> killedGone = GoneAsync(killed, deadline);
+        // A registered wait per handle, so no pool thread is held per process past the deadline, or past the handles' disposal.
+        IReadOnlyList<int> stillRunning = await ProcessExit.WaitUntilGoneAsync(
+            [.. awaited.Select(process => (process.Id, process.SafeHandle))],
+            deadline
+        );
+        if (await killedGone && stillRunning.Count == 0)
+        {
+            return new KilledGamesWait([], Warning: null);
+        }
+
+        Log.StillRunningAfterKill(logger, projectDir, Budget.TotalSeconds);
+        return new KilledGamesWait(stillRunning, Warning: null) { After = GraceSpent.Of(deadline).TextFor("kill wait") };
+    }
+
+    /// <summary>
     /// Opens the game a stopped session recorded when it still runs: the process with <paramref name="pid"/> whose creation time
     /// is <paramref name="started"/> and that is not gone. The caller disposes the process returned.
     /// </summary>
@@ -199,4 +234,11 @@ internal static class RunKill
 }
 
 /// <summary>What a wait for killed games ended with: the pids still running at its deadline, and the warning naming them.</summary>
-internal sealed record KilledGamesWait(IReadOnlyList<int> StillRunning, string? Warning);
+internal sealed record KilledGamesWait(IReadOnlyList<int> StillRunning, string? Warning)
+{
+    /// <summary>
+    /// The time the wait took as its warning words it (<see cref="GraceSpent.TextFor"/> of "kill wait"), for a caller that words
+    /// its own; null when all were gone.
+    /// </summary>
+    public string? After { get; init; }
+}
