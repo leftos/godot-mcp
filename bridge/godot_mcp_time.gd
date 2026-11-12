@@ -86,6 +86,7 @@ func _init() -> void:
 	signal_wait.name = "SignalWait"
 	signal_wait.time = self
 	add_child(signal_wait)
+	add_child((load(script_dir.path_join("godot_mcp_hold.gd")) as GDScript).new())
 
 
 ## Runs params.action: pause, resume, step {count, unit, screenshot, previewMaxWidth} or
@@ -163,10 +164,11 @@ func _end(deadline: SceneTreeTimer) -> void:
 	_running_params = null
 
 
-## Ends the running step or capture as its deadline would, when params is the very Dictionary its
-## request holds (a step leaves the tree paused and answers STEP_STALLED; a capture answers the
-## frames taken, stopped and missed). Returns whether it ended one.
+## Drops an exit hold that rode on params (the Hold child) and ends the running step or capture as
+## its deadline would, when params is the very Dictionary its request holds (a step leaves the tree
+## paused, STEP_STALLED; a capture answers the frames taken). Returns whether it ended one.
 func cancel(params: Dictionary) -> bool:
+	$Hold.drop_for(params)
 	if _running.is_empty() or not is_same(params, _running_params):
 		return false
 	_on_deadline()
@@ -464,16 +466,16 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 
 ## Waits for params.kind (exists, property, signal, expression, uiChanged, gameMs or frames) with
 ## params {node, exists, property, equals, signal, expression, gameMs, frames, timeoutMs,
-## screenshot, previewMaxWidth, call, then, edge}. Returns {result: {met, elapsedMs, frames, value
-## | args[, call, then, screenshot | warning]}}, with last instead of value on a timeout, or
-## {error}. A timeoutMs of 0 checks the condition once, now, paused or not; with call, once right
-## after the call (_start_probe_wait). With screenshot, a met wait captures the frame it was met
-## on; a met wait runs then, once, in that frame (see _poll_capturing). Calls
-## _on_godot_mcp_wait_started(kind) on every node in the godot_mcp_wait_started group as the wait
-## starts, before any check: a scene that must time something from the wait's start (a scratch test
-## fixture) joins the group. _tree() is the tree it reads and tells. Scratch's own params, which
-## the MCP tool never sends: endMarker ends the step's window as the wait ends, endMarkerAtGameMs
-## holds a met one's end to that game time (_end_window), keepRaised keeps a call's error.
+## screenshot, previewMaxWidth, call, then, edge}. Returns {result: {met, elapsedMs, frames, value |
+## args[, call, then, screenshot | warning]}}, with last instead of value on a timeout, or {error}.
+## A timeoutMs of 0 checks the condition once, now, paused or not; with call, once right after
+## the call (_start_probe_wait). With screenshot, a met wait captures its met frame; a met wait
+## runs then, once, in that frame (_poll_capturing). Calls _on_godot_mcp_wait_started(kind) on
+## every node in the godot_mcp_wait_started group as the wait starts, before any check: a scene
+## (a scratch fixture) that must time something from the wait's start joins the group. _tree() is
+## the tree it reads and tells. Scratch's own params, which the MCP tool never sends: endMarker
+## ends the step's window as the wait ends, endMarkerAtGameMs holds a met one's end to that game
+## time (_end_window), holdGameMs/holdEndMarker run the exit hold (Hold), keepRaised keeps errors.
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var tree: Object = _tree()
@@ -665,10 +667,10 @@ func _poll_and_capture(probe: Callable, timeout_ms: int, params: Dictionary) -> 
 	return await _hold_to_window_end(captured, params, bound_ms, began)
 
 
-## With params.endMarker, ends a scratch step's window as its poll ends, met or not: prints the
-## marker to stdout and stderr, marks the logger (godot_mcp_logger.gd mark) and adds endMarked:
-## true, which so always means the feed holds the mark; no logger (dormant) or a window already
-## marked, no end. A met poll short of params.endMarkerAtGameMs ends it later; a failed one never.
+## With params.endMarker, ends a scratch step's window as its poll ends, met or not: prints it to
+## stdout and stderr, marks the logger, adds endMarked: true (so the feed holds the mark) and starts
+## the exit hold params.holdGameMs carries (Hold); no logger or a window already marked, no end. A
+## met poll short of params.endMarkerAtGameMs ends it later; a failed one never.
 func _end_window(outcome: Dictionary, params: Dictionary) -> Dictionary:
 	if not params.has("endMarker") or not outcome.has("result"):
 		return outcome
@@ -684,6 +686,7 @@ func _end_window(outcome: Dictionary, params: Dictionary) -> Dictionary:
 	printerr(marker)
 	logger.mark(marker)
 	outcome["result"]["endMarked"] = true
+	$Hold.start(params)
 	return outcome
 
 

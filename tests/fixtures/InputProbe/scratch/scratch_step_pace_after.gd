@@ -1,17 +1,13 @@
 extends "res://scratch/scratch_probe.gd"
-## A scene paced at 0.1 s whose last step, "arm", godot-mcp.json paces at 2 s: that step only arms a
-## flag, the server's GetStatus after it sets a second one, and the wait after the last step starts
-## a 1.5 s game-time timer through the hook on that wait's start. The step's window ends where its
-## pace wait ended in game time, so the error is the exit's whatever the server's latency; this
-## pins that the wait after the last step is that step's own 2 s pace. Red with no failed step and
-## the error in its exit; were the wait after the scene's 0.1 s instead, the game would be stopped
-## long before the timer fires.
+## A scene paced at 0.1 s whose last step, "arm", godot-mcp.json paces at 2 s: that step starts a
+## 3.5 s game-time timer as it plays, which fires 1.5 s after its 2 s pace ends, its cut. The exit
+## hold after the last step is measured in game time from that cut, and the bridge prints its end
+## marker itself, so the error is the exit's whatever the server's latency; this pins that the
+## wait after the last step is that step's own 2 s pace. Red with no failed step and the error in
+## its exit; were the wait after the scene's 0.1 s instead, the game would be stopped long before
+## the timer fires.
 
-const FIRE_S := 1.5
-const WAIT_STARTED_GROUP := "godot_mcp_wait_started"
-
-var _armed: bool = false
-var _wait_armed: bool = false
+const FIRE_S := 3.5
 
 
 func _init() -> void:
@@ -19,26 +15,8 @@ func _init() -> void:
 	add_step("arm", _arm)
 
 
-func _ready() -> void:
-	add_to_group(WAIT_STARTED_GROUP)
-
-
 func _arm() -> void:
 	set_note("armed")
-	_armed = true
-
-
-func GetStatus() -> String:
-	if _armed:
-		_armed = false
-		_wait_armed = true
-	return super()
-
-
-func _on_godot_mcp_wait_started(_kind: String) -> void:
-	if not _wait_armed:
-		return
-	_wait_armed = false
 	get_tree().create_timer(FIRE_S).timeout.connect(_fire)
 
 

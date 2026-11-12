@@ -112,6 +112,123 @@ func test_a_shot_wait_met_before_its_limit_prints_no_marker() -> void:
 	_free_then_rig(rig)
 
 
+## The last step's wait carries the exit hold (holdGameMs, holdEndMarker): it replies at its cut as
+## any wait does, and the hold's own marker is printed and marked in the frame the clock counted
+## from the cut reaches holdGameMs, not before. The hold's clock is moved by hand, since a gdtest
+## node's frame delta is 0.
+# gdlint: ignore=max-line-length
+func test_a_wait_with_a_hold_replies_at_its_cut_and_ends_the_hold_once_its_clock_reaches_it(
+) -> void:
+	var rig: Dictionary = _hold_rig()
+	var params: Dictionary = _hold_params("[test] hold cut", "[test] hold end")
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, params
+	)
+	var at_cut: Array = recorder.of("[test] hold end")
+	var cut_entries: Array = rig["bridge"]._logger.take_pending()[0]
+	var hold: Node = rig["time"].get_node("Hold")
+	_time_script.advance_game_clock(hold.clock(), false, 0.06)
+	rig["tree"].process_frame.emit()
+	var short: Array = recorder.of("[test] hold end")
+	_time_script.advance_game_clock(hold.clock(), false, 0.06)
+	rig["tree"].process_frame.emit()
+	OS.remove_logger(recorder)
+	assert_eq(outcome["result"].get("endMarked"), true, "the wait replies at its cut, endMarked")
+	assert_eq(cut_entries, [{"type": "mark", "message": "[test] hold cut"}], "the cut's mark only")
+	assert_eq(at_cut, [], "no hold marker at the cut")
+	assert_eq(short, [], "60 ms of 100 from the cut: no hold marker")
+	assert_eq(
+		recorder.of("[test] hold end"),
+		[["[test] hold end", false], ["[test] hold end", true]],
+		"120 ms: the hold marker, stdout then stderr"
+	)
+	assert_eq(
+		rig["bridge"]._logger.take_pending()[0],
+		[{"type": "mark", "message": "[test] hold end"}],
+		"and the logger holds its mark"
+	)
+	assert_true(not hold.running(), "the hold is over")
+	_free_then_rig(rig)
+
+
+## A paused frame adds nothing to the hold's clock, as it adds nothing to a wait's.
+func test_a_paused_frame_adds_nothing_to_the_holds_clock() -> void:
+	var rig: Dictionary = _hold_rig()
+	var params: Dictionary = _hold_params("[test] hold paused cut", "[test] hold paused end")
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	var hold: Node = rig["time"].get_node("Hold")
+	var clock: Dictionary = hold.clock()
+	var paused: bool = hold.reached(clock, 100, true, 0.5)
+	rig["tree"].paused = true
+	_time_script.advance_game_clock(clock, true, 0.5)
+	rig["tree"].process_frame.emit()
+	OS.remove_logger(recorder)
+	assert_true(not paused, "a paused frame does not reach the hold")
+	assert_approx(clock["seconds"], 0.0, "and adds no game time")
+	assert_eq(clock["frames"], 0, "and no frame")
+	assert_eq(recorder.of("[test] hold paused end"), [], "nothing printed")
+	assert_true(hold.running(), "the hold goes on")
+	_free_then_rig(rig)
+
+
+## A hold whose clock reaches its end with no logger (a dormant bridge) prints and marks nothing; a
+## wait whose cut found no logger starts no hold, and neither does a failed wait.
+func test_a_hold_with_no_logger_prints_nothing_and_a_failed_wait_starts_none() -> void:
+	var rig: Dictionary = _hold_rig()
+	var params: Dictionary = _hold_params("[test] hold dormant cut", "[test] hold dormant end")
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	var hold: Node = rig["time"].get_node("Hold")
+	var logger: Logger = rig["bridge"]._logger
+	logger.take_pending()
+	rig["bridge"]._logger = null
+	_time_script.advance_game_clock(hold.clock(), false, 0.12)
+	rig["tree"].process_frame.emit()
+	var dormant: Dictionary = _hold_params("[test] hold no cut", "[test] hold never")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, dormant)
+	var after_dormant_cut: bool = hold.running()
+	rig["bridge"]._logger = logger
+	rig["time"]._end_window({"error": "refused"}, _hold_params("[test] failed", "[test] none"))
+	OS.remove_logger(recorder)
+	assert_eq(recorder.of("[test] hold dormant end"), [], "no logger: no hold marker")
+	assert_eq(logger.take_pending()[0], [], "and no mark")
+	assert_true(not after_dormant_cut, "a cut with no logger starts no hold")
+	assert_true(not hold.running(), "a failed wait starts none")
+	_free_then_rig(rig)
+
+
+## A hold is dropped, printing nothing, by a cancel of the request it rode on (time.cancel with its
+## very params; another request's leaves it) and by the connection's end (drop).
+func test_a_dropped_hold_prints_nothing() -> void:
+	var rig: Dictionary = _hold_rig()
+	var hold: Node = rig["time"].get_node("Hold")
+	var recorder := LineRecorder.new()
+	OS.add_logger(recorder)
+	var params: Dictionary = _hold_params("[test] hold cancel cut", "[test] hold dropped")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	rig["time"].cancel(params.duplicate())
+	var kept: bool = hold.running()
+	rig["time"].cancel(params)
+	var cancelled: bool = not hold.running()
+	var lost: Dictionary = _hold_params("[test] hold lost cut", "[test] hold dropped")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, lost)
+	hold.drop()
+	var dropped: bool = not hold.running()
+	rig["tree"].process_frame.emit()
+	OS.remove_logger(recorder)
+	assert_true(kept, "another request's cancel leaves the hold")
+	assert_true(cancelled, "its own request's cancel drops it")
+	assert_true(dropped, "the connection's end drops it")
+	assert_eq(recorder.of("[test] hold dropped"), [], "nothing printed")
+	assert_eq(rig["tree"].process_frame.get_connections().size(), 0, "no tick left connected")
+	_free_then_rig(rig)
+
+
 func test_a_wait_without_an_end_marker_prints_nothing() -> void:
 	var rig: Dictionary = _then_rig()
 	var recorder := LineRecorder.new()
@@ -1064,6 +1181,22 @@ func _run_signal_start(rig: Dictionary, fields: Dictionary, request: Dictionary)
 	if outcomes.is_empty():
 		test_frame.emit()
 	return {"outcomes": outcomes, "start": start}
+
+
+## The then rig with a stand-in tree (process_frame and paused) its waits and its Hold read.
+func _hold_rig() -> Dictionary:
+	var rig: Dictionary = _then_rig()
+	var tree: RefCounted = _compile(
+		"extends RefCounted\n\nsignal process_frame\n\nvar paused: bool = false\n"
+	)
+	rig["time"].wait_tree = tree
+	rig["tree"] = tree
+	return rig
+
+
+## A wait's params that end its window at cut and carry a 100 ms exit hold ending at hold_end.
+func _hold_params(cut: String, hold_end: String) -> Dictionary:
+	return {"endMarker": cut, "holdGameMs": 100, "holdEndMarker": hold_end}
 
 
 func _free_then_rig(rig: Dictionary) -> void:

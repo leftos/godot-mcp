@@ -15,6 +15,11 @@
           }
         }
       },
+      "ScratchHoldFromCut": {
+        "seconds": 0.1,
+        "reason": "its first step only leaves a note; its last arms a timer 2.5 s past its cut",
+        "exitHold": 2
+      },
       "ScratchLateError": 2,
       "ScratchMarker": 2,
       "ScratchQuitInHold": { "seconds": 0.1, "reason": "its steps only leave a note and arm the quit", "exitHold": 3 },

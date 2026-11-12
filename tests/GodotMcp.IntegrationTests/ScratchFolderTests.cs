@@ -24,6 +24,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         "ScratchFlood",
         "ScratchGreen",
         "ScratchHidden",
+        "ScratchHoldFromCut",
         "ScratchLateError",
         "ScratchLateLine",
         "ScratchLaunchNoise",
@@ -52,6 +53,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         "green",
         "green",
         "red",
+        "green",
         "green",
         "green",
         "red",
@@ -109,7 +111,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
         Assert.Equal(
-            [1, 0.5, 0.1, 0.1, 0.5, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.5, 0.1, 0.25, 0.1, 0.5, 0.5, 0.5, 0.5],
+            [1, 0.5, 0.1, 0.1, 0.5, 0.5, 0.5, 0.5, 0.1, 2, 0.5, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.5, 0.1, 0.25, 0.1, 0.5, 0.5, 0.5, 0.5],
             scenes.Select(scene => scene!["pace"]!.GetValue<double>())
         );
         Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
@@ -151,7 +153,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
 
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((10, 13, 1, 1, 1), Counts(result));
+        Assert.Equal((11, 13, 1, 1, 1), Counts(result));
     }
 
     internal static (int Green, int Red, int Known, int NoSteps, int Killed) Counts(JsonObject result) =>

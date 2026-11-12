@@ -462,6 +462,7 @@ func _end_connection() -> void:
 	for request: int in _running_requests.keys():
 		_cancel(request)
 	_running_requests.clear()
+	_time.get_node("Hold").drop()
 	_read_in.clear()
 	_dormant_if_armed()
 	_owns_pointer = false

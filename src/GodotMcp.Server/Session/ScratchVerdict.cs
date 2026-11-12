@@ -891,9 +891,10 @@ internal static partial class ScratchVerdict
     internal const int FinalizerIllegalInstruction = unchecked((int)0xC000001D);
 
     /// <summary>
-    /// Whether the game's exit was the .NET finalizer race Godot 4.7.2 has at quit after the scene's work was known done: the wait
-    /// after the last step ended clean with both pace-end markers seen, the stop did not kill the game, and the code is one of the
-    /// race's. Every other non-zero code stays a failure, and so does a crash with no marker that proves the work finished.
+    /// Whether the game's exit was the .NET finalizer race Godot 4.7.2 has at quit after the scene's work was known done: the exit
+    /// hold, measured in game time from the last step's cut, ended clean with both pace-end markers the bridge printed at its end
+    /// seen, the stop did not kill the game, and the code is one of the race's. Every other non-zero code stays a failure, and so
+    /// does a crash with no marker that proves the work finished.
     /// </summary>
     internal static bool LateFinalizerCrash(ScratchObservation seen) =>
         seen.AfterError is null && seen.StopKillReason is null && seen.ExitCode is FinalizerAccessViolation or FinalizerIllegalInstruction;
@@ -919,8 +920,8 @@ internal static partial class ScratchVerdict
         || missing is not null;
 
     /// <summary>
-    /// Whether the game closed the connection in the wait after the last step and exited with code 0: a clean exit, not an
-    /// error of the wait.
+    /// Whether the game closed the connection inside the exit hold after the last step's cut, before the bridge printed the hold's
+    /// end marker, and exited with code 0: a clean exit, not an error of the hold.
     /// </summary>
     private static bool ClosedCleanly(ScratchObservation seen) => seen.AfterClosed && seen.ExitCode == 0;
 

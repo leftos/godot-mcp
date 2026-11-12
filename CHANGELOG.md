@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A second `restart_project` or a same-name `run_process` is refused until a process restart has returned.
 - A process `restart_project` reports the old program's stop warning in its `warning`.
 - A process session's `process-<session>.log` is released once the session has ended, so it can be deleted or moved.
+- A `run_scratches` exit hold is measured in game time from the last step's cut, so a slow server no longer stretches the window that judges late errors.
 
 ## 0.40.2 - 2026-11-11
 

@@ -111,9 +111,10 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Contains("error in the last step's pace after it", scene["exit"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
-    // ScratchExitHold's last step is an until step met at once, its 30 s pace only its default wait, then the 3 s exit hold: the
-    // fixture starts its timers as that hold's wait starts, so its line at 1 s of game time falls inside the hold, which the
-    // profile expects, and its error at 25 s falls past it, inside the 30 s the step's pace would have waited.
+    // ScratchExitHold's last step is an until step met at once, its 30 s pace only its default wait, then the 3 s exit hold
+    // measured from that step's cut: the step starts its timers as it plays, in its cut's frame, so its line at 1 s of game time
+    // falls inside the hold, which the profile expects, and its error at 25 s falls past it, inside the 30 s the step's pace
+    // would have waited.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnExitHoldIsTheWaitAfterTheLastStepInPlaceOfItsPace()
     {
@@ -130,9 +131,10 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Null(scene["exit"]!["missing"]);
     }
 
-    // ScratchQuitInHold's last step arms a flag, and the hold's wait starts a timer that quits the game with code 0 after 1 s of
-    // game time, inside its 3 s exit hold: the game closes the bridge connection in the wait after its last step, a clean exit,
-    // not an error of that wait.
+    // ScratchQuitInHold's last step arms a flag, and the server's GetStatus after it, its last call to the game for that step,
+    // starts a timer that quits the game with code 0 after 0.5 s of game time, past its 0.1 s pace and inside the 3 s exit hold
+    // measured from that pace's end: the game closes the bridge connection in the hold after its last step, before the bridge
+    // prints the hold's end marker, a clean exit, not an error of the hold.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ASceneThatQuitsWithCodeZeroInsideItsExitHoldIsGreen()
     {
@@ -142,6 +144,39 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
 
         Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
         Assert.Equal(0, scene["exit"]!["code"]!.GetValue<int>());
+        Assert.Null(scene["exit"]!["error"]);
+    }
+
+    // ScratchHoldFromCut's last step starts a timer that pushes a warning 2.5 s after its 0.1 s pace ends, its cut, past the 2 s
+    // exit hold; its GetStatus after that step awaits 1.5 s of game time, a starved host's round trip. Measured from the cut, the
+    // hold ends before the warning; measured from after the round trips, it would hold it, and this profile's warnings are red.
+    // Past the hold no feed take and none of the stop's default line patterns judge a warning, so a slow stop cannot turn it red.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task TheExitHoldIsMeasuredFromTheLastStepsCut()
+    {
+        string profile = """
+            {
+              "scratch": {
+                "folder": "scratch",
+                "warnings": "red",
+                "pace": {
+                  "ScratchHoldFromCut": {
+                    "seconds": 0.1,
+                    "reason": "its first step only leaves a note; its last arms a timer 2.5 s past its cut",
+                    "exitHold": 2
+                  }
+                }
+              }
+            }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), profile, TestContext.Current.CancellationToken);
+
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchHoldFromCut"], new ScratchOptions(Details: FullDetails), TestContext.Current.CancellationToken)
+        );
+
+        Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
+        Assert.Equal(2, scene["exitHold"]!.GetValue<double>());
         Assert.Null(scene["exit"]!["error"]);
     }
 
