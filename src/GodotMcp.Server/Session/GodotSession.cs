@@ -287,9 +287,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             registry.Captures.End(Name, CaptureStore.EndedByStop);
             RecordingResult? recording = await FinishRecordingAsync(run) ?? await TakeRealtimeResultAsync();
             bool removed;
+            string? releaseWarning;
             try
             {
-                removed = registry.ReleaseFolder(this);
+                releaseWarning = ReleaseFolderOrWarn(out removed);
             }
             finally
             {
@@ -305,7 +306,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 LeftRunning = ended.LeftRunning.Count == 0 ? null : ended.LeftRunning,
                 QuitMs = ended.QuitMs,
                 Recording = recording,
-                Warning = ended.Warning,
+                Warning = JoinWarnings(ended.Warning, releaseWarning),
             };
         }
         finally
@@ -703,6 +704,29 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>Whether the live run's bridge connection still awaits the reply to request <paramref name="id"/>; false with no live run.</summary>
     internal bool IsRequestPending(long id) => _run is { IsRunning: true, Connection: { IsOpen: true } live } && live.IsPending(id);
+
+    /// <summary>
+    /// Releases the session's folder (<see cref="SessionRegistry.ReleaseFolder"/>) once its game has been stopped or let go. A
+    /// failed removal of its override.cfg is logged and returned as a warning, so the stop or detach still succeeds; the registry
+    /// keeps the folder for <c>stop_project {projectPath}</c> or the server's exit to release again.
+    /// </summary>
+    /// <param name="removed">Whether the release deleted the file.</param>
+    /// <returns>The warning; null when the release did not fail.</returns>
+    private string? ReleaseFolderOrWarn(out bool removed)
+    {
+        try
+        {
+            removed = registry.ReleaseFolder(this);
+            return null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.OverrideRemovalFailed(_logger, e, ProjectDir);
+            removed = false;
+            return $"{OverrideFile.FileName} in {ProjectDir} could not be removed ({e.GetType().Name}: {e.Message.TrimEnd('.')}); this server's "
+                + "owner entry stays on it until stop_project {projectPath} on the folder or the server's exit.";
+        }
+    }
 
     /// <summary>Releases the override file after a failed start and, when nothing started, drops the session from the registry.</summary>
     /// <returns>Whether the override file was removed; a failed removal is logged, so the start's own error reaches the caller.</returns>

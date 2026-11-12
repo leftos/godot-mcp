@@ -93,7 +93,8 @@ internal sealed partial class GodotSession
 
     /// <summary>
     /// Warnings as a stop's or a restart's warning reports them: in the order given (the debugger's, the kill wait's, then the
-    /// relaunched window's size), separated by one space, each null one skipped; null when every one is.
+    /// relaunched window's size for a restart, or the failed release of override.cfg for a stop), separated by one space, each
+    /// null one skipped; null when every one is.
     /// </summary>
     internal static string? JoinWarnings(params string?[] warnings)
     {

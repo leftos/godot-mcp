@@ -112,9 +112,9 @@ internal sealed partial class GodotSession
         {
             BridgeConnection attached = _attached ?? throw new SessionException(DescribeNothingToDetach());
             RecordingResult? recording = await EndAttachmentAsync(attached);
-            bool removed = registry.ReleaseFolder(this);
+            string? warning = ReleaseFolderOrWarn(out bool removed);
             Log.Detached(_logger, ProjectDir);
-            return new DetachResult(Name, ProjectDir, removed) { Recording = recording };
+            return new DetachResult(Name, ProjectDir, removed) { Recording = recording, Warning = warning };
         }
         finally
         {
@@ -142,7 +142,7 @@ internal sealed partial class GodotSession
         // Read before the handle goes with the session; the code read after a kill is not the game's own.
         int? gameExitCode = ended.Killed ? null : ExitCodeOf(game);
         RecordingResult? recording = await EndAttachmentAsync(attached);
-        bool removed = registry.ReleaseFolder(this);
+        string? releaseWarning = ReleaseFolderOrWarn(out bool removed);
         return new StopResult(Name, ProjectDir, ExitCode: null, ended.Killed, removed)
         {
             AlreadyExited = alreadyExited,
@@ -150,7 +150,7 @@ internal sealed partial class GodotSession
             KillReason = ended.KillReason,
             QuitMs = ended.QuitMs,
             Recording = recording,
-            Warning = JoinWarnings(debugged, ended.Warning),
+            Warning = JoinWarnings(debugged, ended.Warning, releaseWarning),
         };
     }
 

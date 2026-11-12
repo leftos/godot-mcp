@@ -251,7 +251,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "is ended at the detach and its clip finished before it returns, reported as recording {mode: realtime, clips: "
             + "[path], startedSeconds, warning?, error?} as stop_project reports it; one that ended on its own (maxSeconds) and "
             + "was not yet returned is reported the same way. recording is left out when no real-time recording ran, its clip "
-            + "was already returned, or its start was still in flight."
+            + "was already returned, or its start was still in flight. warning says when the override.cfg could not be removed "
+            + "(another process holding it open), which does not fail the detach; stop_project with projectPath on the folder, "
+            + "or the server's exit, removes it later. warning is left out when there is none."
     )]
     public async Task<string> DetachProjectAsync(
         [Description(SessionDescription)] string? session = null,

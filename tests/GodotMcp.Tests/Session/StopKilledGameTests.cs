@@ -247,6 +247,36 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.True(session.ExitHandled.IsCompletedSuccessfully);
     }
 
+    // The test holds override.cfg open without delete sharing, as a peer reading it does, so the stop's release fails after the
+    // game was killed: the stop still succeeds, says so in its warning, and deletes the run's scratch user data.
+    [Fact]
+    public async Task AStopWhoseOverrideDeleteIsRefusedSucceedsWithAWarning()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        LaunchRequest request = Request(project) with { ScratchUserData = new ScratchUserDataRequest(null) };
+        Task<LaunchResult> launch = _sessions.LaunchAsync(request, "server", cancellation);
+        await RegistryHarness.WaitUntilAsync(() => !_launched.IsEmpty, launch);
+        FakeRunProcess run = _launched.First();
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, run.Token, project, new FakeHello(), cancellation);
+        _ = await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        string userData = ScratchUserData.RootFor(project, "server");
+        Assert.True(Directory.Exists(userData));
+
+        StopResult stopped;
+        using (StopFolderReleaseFailureTests.HoldOverrideOpen(project))
+        {
+            Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
+            await RegistryHarness.AdvanceUntilDoneAsync(_time, stop, cancellation);
+            stopped = await stop;
+        }
+
+        Assert.False(stopped.OverrideRemoved);
+        Assert.Contains(StopFolderReleaseFailureTests.CouldNotBeRemoved(project), stopped.Warning, StringComparison.Ordinal);
+        Assert.False(_sessions.Resolve("server").IsLive);
+        Assert.False(Directory.Exists(userData));
+    }
+
     /// <summary>The product's own open of a stopped game, which lets the game's held exit go on once the game is opened.</summary>
     private static Process? ReleasedOnceOpened(int pid, DateTime started, ExitHold hold)
     {

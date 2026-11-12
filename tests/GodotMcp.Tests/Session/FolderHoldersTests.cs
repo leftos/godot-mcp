@@ -26,7 +26,7 @@ public sealed class FolderHoldersTests : IDisposable
     {
         string project = Project();
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.Equal(("absent", "absent"), (view.OverrideCfg, view.ArmedJson));
         Assert.Empty(view.Owners);
@@ -43,7 +43,7 @@ public sealed class FolderHoldersTests : IDisposable
         File.WriteAllText(path, "[application]\nconfig/name=\"Mine\"\n");
         byte[] before = File.ReadAllBytes(path);
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.Equal("project's own", view.OverrideCfg);
         Assert.Empty(view.Owners);
@@ -59,7 +59,7 @@ public sealed class FolderHoldersTests : IDisposable
         string path = WriteMarked(project, $"{Dead}");
         byte[] before = File.ReadAllBytes(path);
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.Equal("godot-mcp", view.OverrideCfg);
         Assert.Equal([DeadEntry()], view.Owners);
@@ -75,7 +75,7 @@ public sealed class FolderHoldersTests : IDisposable
         string path = WriteMarked(project, $"{Foreign},{Dead}");
         byte[] before = File.ReadAllBytes(path);
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         HolderEntry foreign = new(
             OverrideFile.FileName,
@@ -99,7 +99,7 @@ public sealed class FolderHoldersTests : IDisposable
         string path = WriteMarked(project, $"{Dead},12@ab@cd");
         byte[] before = File.ReadAllBytes(path);
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         HolderEntry unreadable = new(OverrideFile.FileName, null, null, Alive: true, ThisServer: false, null, Readable: false) { Entry = "12@ab@cd" };
         Assert.Equal([DeadEntry(), unreadable], view.Owners);
@@ -115,7 +115,7 @@ public sealed class FolderHoldersTests : IDisposable
         string path = WriteMarked(project, $"{OverrideOwner.Current}");
         byte[] before = File.ReadAllBytes(path);
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         HolderEntry here = new(
             OverrideFile.FileName,
@@ -139,7 +139,7 @@ public sealed class FolderHoldersTests : IDisposable
         string path = WriteArm(project, $"\"{Foreign}\",\"{Dead}\"");
         byte[] before = File.ReadAllBytes(path);
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.Equal(("absent", "godot-mcp"), (view.OverrideCfg, view.ArmedJson));
         HolderEntry foreign = new(
@@ -164,7 +164,7 @@ public sealed class FolderHoldersTests : IDisposable
         string project = Project();
         WriteMarked(project, $"{Dead}");
 
-        FolderHoldersView view = FolderHolders.Inspect(project, ["game"], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, ["game"], false, Probe, owed: false);
 
         Assert.Equal(["game"], view.Sessions);
         Assert.False(view.StopProjectWouldRemove);
@@ -179,7 +179,7 @@ public sealed class FolderHoldersTests : IDisposable
     {
         string project = Project();
 
-        FolderHoldersView view = FolderHolders.Inspect(project, ["alpha", "beta"], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, ["alpha", "beta"], false, Probe, owed: false);
 
         Assert.False(view.StopProjectWouldRemove);
         Assert.Equal("stop_project would refuse: several of this server's sessions run on the folder (alpha, beta); stop one by name", view.Reason);
@@ -194,7 +194,7 @@ public sealed class FolderHoldersTests : IDisposable
         FolderHoldersView view;
         using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
         {
-            view = FolderHolders.Inspect(project, [], false, Probe);
+            view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
         }
 
         Assert.Equal("in use", view.OverrideCfg);
@@ -210,7 +210,7 @@ public sealed class FolderHoldersTests : IDisposable
         string path = OverrideFile.PathIn(project);
         File.WriteAllText(path, "");
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.Equal("in use", view.OverrideCfg);
         Assert.False(view.StopProjectWouldRemove);
@@ -224,7 +224,7 @@ public sealed class FolderHoldersTests : IDisposable
         string project = Project();
         Directory.CreateDirectory(OverrideFile.PathIn(project));
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.Equal("unreadable", view.OverrideCfg);
         Assert.Empty(view.Owners);
@@ -240,7 +240,7 @@ public sealed class FolderHoldersTests : IDisposable
         WriteMarked(project, $"{Dead}");
         WriteArm(project, $"\"{Foreign}\"");
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.True(view.StopProjectWouldRemove);
         Assert.Equal($"armed.json names a live owner (pid {Foreign.ProcessId}), so stop_project would keep it", view.Reason);
@@ -253,7 +253,7 @@ public sealed class FolderHoldersTests : IDisposable
         WriteMarked(project, $"{Foreign}");
         WriteArm(project, "\"x\"");
 
-        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe);
+        FolderHoldersView view = FolderHolders.Inspect(project, [], false, Probe, owed: false);
 
         Assert.False(view.StopProjectWouldRemove);
         Assert.Equal(

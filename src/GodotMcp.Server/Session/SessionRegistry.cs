@@ -63,6 +63,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal
     );
 
+    // The folders whose release of override.cfg failed, by normalised path, under _lock: this server's owner entry may still be
+    // on their file. stop_project on the folder, once no session or arm of this server holds it, and the shutdown release them
+    // again; a later successful release, override write, arm or disarm on the folder drops it.
+    private readonly HashSet<string> _unreleased = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     internal BridgeListener Listener => listener;
 
     /// <summary>The clock every ceiling the sessions enforce runs on: the listener's.</summary>
@@ -341,6 +346,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
                     ArmFile.Release(projectDir);
                     bool removed = !HasLiveSessionOn(projectDir, except: null) && OverrideFile.Release(projectDir);
+                    _unreleased.Remove(projectDir);
                     return new DisarmResult(projectDir, removed);
                 }
             }
@@ -561,7 +567,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>
     /// stop_project on a folder no session runs: first waits once more for a killed game of a stopped session there that still
     /// runs (<see cref="WaitForStoppedGamesAsync"/>), then, under the folder's prep lock, stops its warm headless host if one
-    /// runs and clears a dead server's leftover override.cfg and armed.json (<see cref="OverrideFolders.ClearStale"/>).
+    /// runs, releases this server's own override.cfg again when an earlier release failed, and clears a dead server's leftover
+    /// override.cfg and armed.json (<see cref="ClearIdleFolder"/>).
     /// </summary>
     /// <exception cref="SessionException">Nothing was waited for, stopped or removed; names why a file was left in place.</exception>
     private async Task<HostStopResult> StopIdleFolderAsync(string projectDir, CancellationToken cancellationToken)
@@ -571,10 +578,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         await folderLock.WaitAsync(cancellationToken);
         bool hostStopped;
         LeftoverClear cleared;
+        bool released;
         try
         {
             hostStopped = Volatile.Read(ref _headlessHosts) is { } hosts && hosts.StopFolder(projectDir, "stop_project");
-            cleared = OverrideFolders.ClearStale(projectDir);
+            (cleared, released) = ClearIdleFolder(projectDir);
         }
         finally
         {
@@ -586,18 +594,94 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             throw new SessionException(DescribeFailedClear(projectDir, hostStopped, cleared), failure.Error);
         }
 
-        return IdleStopResult(projectDir, hostStopped, cleared, waited);
+        return IdleStopResult(projectDir, hostStopped, cleared, waited, released);
     }
+
+    /// <summary>
+    /// Clears a folder no session runs in for stop_project: this server's own release of its override.cfg, when an earlier one
+    /// failed and no session or arm of this server holds the folder (<see cref="RetryRelease"/>), else a dead server's leftovers
+    /// (<see cref="OverrideFolders.ClearStale"/>). A retry's outcome, released or failed, is the clear's whole outcome: the
+    /// strict clear would find nothing of this server's left, and a busy owners list it waited past would only refuse. The
+    /// caller holds the folder's prep lock.
+    /// </summary>
+    /// <returns>The clear, and whether a retry took this server off the file.</returns>
+    private (LeftoverClear Cleared, bool Released) ClearIdleFolder(string projectDir) =>
+        RetryRelease(projectDir) is { } retried ? (retried, retried.Failure is null) : (OverrideFolders.ClearStale(projectDir), false);
+
+    /// <summary>
+    /// Releases the folder's override.cfg again when an earlier release of it failed (<see cref="ReleaseFolder"/>), unless a live
+    /// session or the arm of this server holds the folder, under the list's hold as that release runs.
+    /// </summary>
+    /// <returns>
+    /// Null when the folder was owed no release, is held, or the file was already gone; else the file's removal, this server's
+    /// entry taken off a file a live owner keeps (<see cref="EntryTakenOff"/>), or the retry's failure, which keeps the folder owed.
+    /// </returns>
+    private LeftoverClear? RetryRelease(string projectDir)
+    {
+        string folder = ProjectPaths.Normalise(projectDir);
+        lock (_lock)
+        {
+            if (!_unreleased.Contains(folder))
+            {
+                return null;
+            }
+        }
+
+        try
+        {
+            return OverrideFolders.Hold(
+                $"releasing {projectDir}",
+                () =>
+                {
+                    lock (_lock)
+                    {
+                        if (!_unreleased.Contains(folder) || IsFolderHeld(projectDir, except: null))
+                        {
+                            return null;
+                        }
+
+                        bool removed = OverrideFile.Release(projectDir);
+                        _unreleased.Remove(folder);
+                        return removed ? new LeftoverClear(OverrideRemoved: true, ArmedRemoved: false, [], Failure: null) : EntryTakenOff(projectDir);
+                    }
+                }
+            );
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.OverrideRemovalFailed(logger, e, projectDir);
+            return new LeftoverClear(OverrideRemoved: false, ArmedRemoved: false, [], new LeftoverFailure(OverrideFile.FileName, e));
+        }
+    }
+
+    /// <summary>
+    /// A retry's outcome when its release kept the file: this server's entry taken off, the file left to the live owners it still
+    /// names, as the clause the stop's warning says; null when the file is gone or names none.
+    /// </summary>
+    private static LeftoverClear? EntryTakenOff(string projectDir)
+    {
+        int[] pids = [.. OverrideFile.LiveOwners(projectDir).Where(owner => owner != OverrideOwner.Current).Select(owner => owner.ProcessId)];
+        if (pids.Length == 0)
+        {
+            return null;
+        }
+
+        string owners = pids.Length == 1 ? $"the live owner it names (pid {pids[0]})" : $"the live owners it names (pids {string.Join(", ", pids)})";
+        return new LeftoverClear(false, false, [$"this server's owner entry was taken off {OverrideFile.FileName}, which stays for {owners}"], null);
+    }
+
+    private static bool RemovedAny(LeftoverClear cleared) => cleared.OverrideRemoved || cleared.ArmedRemoved;
 
     /// <summary>
     /// What an idle folder stop that cleared without failing reports: what it waited for, stopped and removed, and why each file
     /// left stayed.
     /// </summary>
-    /// <exception cref="SessionException">Nothing was waited for, stopped or removed; names why a file was left in place.</exception>
-    private static HostStopResult IdleStopResult(string projectDir, bool hostStopped, LeftoverClear cleared, KilledGamesWait? waited)
+    /// <param name="released">Whether the stop took this server off the folder's override.cfg, which it reports even when the file stays.</param>
+    /// <exception cref="SessionException">Nothing was waited for, stopped, released or removed; names why a file was left in place.</exception>
+    private static HostStopResult IdleStopResult(string projectDir, bool hostStopped, LeftoverClear cleared, KilledGamesWait? waited, bool released)
     {
         string? left = cleared.Left.Count > 0 ? string.Join("; ", cleared.Left) : null;
-        if (waited is null && !hostStopped && !cleared.OverrideRemoved && !cleared.ArmedRemoved)
+        if (waited is null && !hostStopped && !released && !RemovedAny(cleared))
         {
             string refusal = $"No Godot session or warm headless host runs in {projectDir}.";
             throw new SessionException(left is null ? refusal : $"{refusal} {AsSentence(left)}");
@@ -743,9 +827,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>
     /// The cleanup for the server's own exit: every launch and restart in flight waited for, then every session's own shutdown
     /// at once (<see cref="GodotSession.ShutdownAsync"/>: the games it launched asked to quit, sharing one grace), every game
-    /// still running at <see cref="ShutdownCap"/> (which the wait for the starts shares) killed,
-    /// then every warm headless host stopped and waited for, every armed folder disarmed, then this server's release of the
-    /// override file of every folder a session used or was armed, since none of them outlives the server. It runs from the
+    /// still running at <see cref="ShutdownCap"/> (which the wait for the starts shares) killed, then every warm headless host
+    /// stopped and waited for, every armed folder disarmed, then this server's release of the override file of every folder a
+    /// session used, was armed or is owed an earlier failed release, since none of them outlives the server. It runs from the
     /// host's stop, the process's exit and <see cref="Dispose"/>: the first call stops the games, and a later one waits for
     /// that and stops only the sessions no earlier pass has covered. Once it has begun, no run starts
     /// (<see cref="RefuseStartAtShutdown"/>). Every background scratch run is interrupted first, waited for only until
@@ -757,12 +841,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         Task[] scratchRuns = ScratchRuns.Interrupt();
         GodotSession[] sessions;
         string[] armed;
+        string[] unreleased;
         Task gamesStopped;
         lock (_lock)
         {
             _shuttingDown = true;
             sessions = [.. _sessions.Values];
             armed = [.. _armed.Keys];
+            unreleased = [.. _unreleased];
             _armed.Clear();
             GodotSession[] uncovered = [.. sessions.Where(_shutDown.Add)];
 
@@ -790,7 +876,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             }
             finally
             {
-                OverrideFolders.Hold("the shutdown cleanup", () => ReleaseAtShutdown(sessions, armed));
+                OverrideFolders.Hold("the shutdown cleanup", () => ReleaseAtShutdown(sessions, armed, unreleased));
             }
         }
     }
@@ -952,15 +1038,19 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
-    /// <summary>Takes this server off the armed.json of every armed folder, then off the override.cfg of every folder it used.</summary>
-    private static void ReleaseAtShutdown(GodotSession[] sessions, string[] armed)
+    /// <summary>
+    /// Takes this server off the armed.json of every armed folder, then off the override.cfg of every folder it used, its
+    /// <paramref name="unreleased"/> ones, whose earlier release failed, included.
+    /// </summary>
+    private static void ReleaseAtShutdown(GodotSession[] sessions, string[] armed, string[] unreleased)
     {
         foreach (string projectDir in armed)
         {
             AtShutdown(projectDir, () => ArmFile.Release(projectDir));
         }
 
-        foreach (string projectDir in sessions.Select(session => session.ProjectDir).Concat(armed).Distinct(StringComparer.OrdinalIgnoreCase))
+        IEnumerable<string> used = sessions.Select(session => session.ProjectDir).Concat(armed).Concat(unreleased);
+        foreach (string projectDir in used.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             AtShutdown(projectDir, () => OverrideFile.Release(projectDir));
         }
@@ -1177,7 +1267,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <exception cref="SessionException">
     /// The project has its own override.cfg, or another live server's marked one injects another bridge or holds other settings.
     /// </exception>
-    internal void WriteOverride(GodotSession session, string bridgeScript) =>
+    internal void WriteOverride(GodotSession session, string bridgeScript)
+    {
         WriteOverrideUnlessHeld(
             session.ProjectDir,
             bridgeScript,
@@ -1186,23 +1277,74 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             () => IsWriteHeldByOther(session)
         );
 
+        // The file's entry for this server is now the session's, so no failed release is owed on the folder any more.
+        ForgetUnreleased(session.ProjectDir);
+    }
+
     /// <summary>
     /// Takes this server off the owners of the session's override.cfg unless the folder is held: another of its live sessions
-    /// uses it, or it is armed. The file is deleted once no live server owns it. Returns whether it deleted the file.
+    /// uses it, or it is armed. The file is deleted once no live server owns it. Returns whether it deleted the file. A release
+    /// that fails leaves the folder owed one, which stop_project on the folder and the shutdown retry.
     /// </summary>
     /// <remarks>An editor session wrote no override.cfg, so it releases nothing and leaves the folder's file to the sessions that use it.</remarks>
-    internal bool ReleaseFolder(GodotSession session) =>
-        session.Kind != SessionKind.Editor
-        && OverrideFolders.Hold(
+    internal bool ReleaseFolder(GodotSession session)
+    {
+        if (session.Kind == SessionKind.Editor)
+        {
+            return false;
+        }
+
+        string folder = ProjectPaths.Normalise(session.ProjectDir);
+        return OverrideFolders.Hold(
             $"releasing {session.ProjectDir}",
             () =>
             {
                 lock (_lock)
                 {
-                    return !IsReleaseHeldByOther(session) && OverrideFile.Release(session.ProjectDir);
+                    if (IsReleaseHeldByOther(session))
+                    {
+                        return false;
+                    }
+
+                    bool removed;
+                    try
+                    {
+                        removed = OverrideFile.Release(session.ProjectDir);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        // Under the same lock as the hold test, so no session can register on the folder in between.
+                        _unreleased.Add(folder);
+                        throw;
+                    }
+
+                    _unreleased.Remove(folder);
+                    return removed;
                 }
             }
         );
+    }
+
+    /// <summary>
+    /// Test seam: marks the folder owed a release, as <see cref="ReleaseFolder"/> does when its release fails, so a test can enter
+    /// a state only a race reaches, such as a live session of this server on a folder still owed one. No product code calls it.
+    /// </summary>
+    internal void MarkReleaseOwedForTest(string projectDir)
+    {
+        lock (_lock)
+        {
+            _unreleased.Add(ProjectPaths.Normalise(projectDir));
+        }
+    }
+
+    /// <summary>Drops the folder from those owed a release, once this server's entry on its override.cfg is rightful or gone.</summary>
+    private void ForgetUnreleased(string projectDir)
+    {
+        lock (_lock)
+        {
+            _unreleased.Remove(ProjectPaths.Normalise(projectDir));
+        }
+    }
 
     /// <summary>The lock that lets one prep at a time build or import in a project folder.</summary>
     internal SemaphoreSlim PrepLock(string projectDir)
@@ -1353,13 +1495,16 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         string projectDir = NormaliseProjectDir(projectPath);
         string[] sessions;
         bool armed;
+        bool owed;
         lock (_lock)
         {
             sessions = [.. LiveSessionsIn(projectDir).Select(session => session.Name)];
             armed = _armed.ContainsKey(projectDir);
+            // As stop_project's retry judges it (RetryRelease): owed a failed release, and held by no session or arm of this server.
+            owed = _unreleased.Contains(projectDir) && !IsFolderHeld(projectDir, except: null);
         }
 
-        return FolderHolders.Inspect(projectDir, sessions, armed, OwnerProbe.Machine);
+        return FolderHolders.Inspect(projectDir, sessions, armed, OwnerProbe.Machine, owed);
     }
 
     /// <summary>
@@ -1770,6 +1915,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             );
             GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
             OverrideFolders.Hold($"arming {projectDir}", () => ArmFile.Write(projectDir, settings));
+            ForgetUnreleased(projectDir);
         }
         catch
         {
@@ -1995,8 +2141,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// The release test: whether the session's folder is held by something else of this server, so its override.cfg must stay:
     /// another live session, scratch ones included, or its arm. The caller holds the lock.
     /// </summary>
-    private bool IsReleaseHeldByOther(GodotSession session) =>
-        HasLiveSessionOn(session.ProjectDir, session) || _armed.ContainsKey(session.ProjectDir);
+    private bool IsReleaseHeldByOther(GodotSession session) => IsFolderHeld(session.ProjectDir, session);
+
+    /// <summary>
+    /// Whether a live session but <paramref name="except"/>, scratch ones included, or this server's arm holds the folder, so its
+    /// override.cfg must stay. The caller holds the lock.
+    /// </summary>
+    private bool IsFolderHeld(string projectDir, GodotSession? except) => HasLiveSessionOn(projectDir, except) || _armed.ContainsKey(projectDir);
 
     /// <summary>
     /// The write test: whether the session's folder is held by something else of this server whose override.cfg it must not

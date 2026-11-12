@@ -61,6 +61,26 @@ public sealed class StopFolderLeftoverTests : IAsyncDisposable
         Assert.Empty(folder.Holders);
     }
 
+    // The attached session's stop failed to release the file, which still names this server: stop_project with the folder
+    // releases it again, now that no session of this server holds the folder.
+    [Fact]
+    public async Task AFailedReleaseIsRetriedByStopProjectOnTheFolder()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        await _harness.EndAttachedGameAsync(alpha, "server");
+        using (StopFolderReleaseFailureTests.HoldOverrideOpen(alpha))
+        {
+            StopResult failed = await _harness.Sessions.StopAsync("server", cancellation);
+            Assert.False(failed.OverrideRemoved);
+        }
+
+        object stopped = await _harness.Sessions.StopFolderAsync(alpha, null, cancellation);
+
+        Assert.Equal(new HostStopResult(alpha, HeadlessHostStopped: false) { OverrideRemoved = true, Folder = FolderState.NothingLeft }, stopped);
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
     [Fact]
     public async Task StopRemovesALeftoverArmFile()
     {

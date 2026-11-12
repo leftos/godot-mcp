@@ -258,7 +258,8 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
 
     /// <summary>
     /// Set when a debugger was attached to the game, whose debug session ended with it, or when the server held no handle on an
-    /// attached game's process, so it could not have killed a game that did not quit.
+    /// attached game's process, so it could not have killed a game that did not quit, or when the server's override.cfg could
+    /// not be removed.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
@@ -393,6 +394,10 @@ internal sealed record DetachResult(string Session, string ProjectPath, bool Ove
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
+
+    /// <summary>Set when the server's override.cfg could not be removed, naming why; left out otherwise.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Warning { get; init; }
 }
 
 /// <summary>An armed folder, as arm_project and list_sessions report it: its settings and the dormant games waiting on it.</summary>

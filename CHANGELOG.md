@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - Load-adjusted timeouts no longer run at wall speed when the server itself is starved on a busy machine.
+- `stop_project` and `detach_project` succeed with a warning when `override.cfg` cannot be removed, and the server removes its entry later.
 
 ## 0.40.3 - 2026-11-11
 
