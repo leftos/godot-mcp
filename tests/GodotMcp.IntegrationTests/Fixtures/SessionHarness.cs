@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
+using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -28,6 +29,9 @@ internal sealed class SessionHarness : IAsyncDisposable
     private readonly ILoggerFactory _logging = LoggerFactory.Create(builder =>
         builder.SetMinimumLevel(LogLevel.Information).AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace)
     );
+
+    // The machine-wide override-folders list is the harness's own, never the shared one a user's servers also use.
+    private readonly TempDirectory _temp = new();
     private readonly BridgeListener _listener;
     private readonly CancellationTokenSource _stopRestoring = new();
     private readonly Task _restoring = Task.CompletedTask;
@@ -84,6 +88,8 @@ internal sealed class SessionHarness : IAsyncDisposable
             ExitGrace = productionGraces ? SessionRegistry.DefaultExitGrace : TimeSpan.FromMinutes(1),
             TeardownGrace = productionGraces ? SessionRegistry.DefaultTeardownGrace : TimeSpan.FromMinutes(1),
             LaunchesUnfocused = launchesUnfocused,
+            // A test run records its folders in the harness's own list, leaving the user's list untouched.
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), Console.Error),
         };
         if (launchesUnfocused)
         {
@@ -117,7 +123,15 @@ internal sealed class SessionHarness : IAsyncDisposable
         finally
         {
             _stopRestoring.Dispose();
-            await StopAllAsync();
+            try
+            {
+                await StopAllAsync();
+            }
+            finally
+            {
+                // The list is deleted only once the registry and every game that holds it are done.
+                _temp.Dispose();
+            }
         }
     }
 

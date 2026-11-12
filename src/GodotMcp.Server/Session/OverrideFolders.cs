@@ -17,9 +17,30 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     private const int RetryBudgetMs = 2000;
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    /// <summary>The servers' shared list: <c>%LOCALAPPDATA%\godot-mcp-cache\override-folders.txt</c>.</summary>
-    public static string DefaultPath { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "godot-mcp-cache", "override-folders.txt");
+    /// <summary>The environment variable naming the servers' shared list, as a full file path, when it is set.</summary>
+    public const string PathVariable = "GODOT_MCP_OVERRIDE_FOLDERS";
+
+    /// <summary>
+    /// The servers' shared list: the file <see cref="PathVariable"/> names when it is set, else
+    /// <c>%LOCALAPPDATA%\godot-mcp-cache\override-folders.txt</c>.
+    /// </summary>
+    public static string DefaultPath { get; } = ResolvePath(Environment.GetEnvironmentVariable);
+
+    /// <summary>
+    /// The file the servers' shared list is kept in: the variable's value when it is set and not blank, else
+    /// <c>%LOCALAPPDATA%\godot-mcp-cache\override-folders.txt</c>.
+    /// </summary>
+    /// <param name="environment">A variable's value by its name.</param>
+    internal static string ResolvePath(Func<string, string?> environment)
+    {
+        string? configured = environment(PathVariable);
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "godot-mcp-cache", "override-folders.txt");
+    }
 
     /// <summary>The servers' shared list, reporting to stderr.</summary>
     public static OverrideFolders Default { get; } = new(DefaultPath, Console.Error);

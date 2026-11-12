@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
+using GodotMcp.TestSupport;
 
 namespace GodotMcp.IntegrationTests;
 
@@ -13,6 +15,21 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class ScratchCommandRunTests : ScratchRunBase
 {
+    // The server's override-folders list is the test's own file, never the machine's shared one.
+    private readonly TempDirectory _temp = new();
+
+    public override async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await base.DisposeAsync();
+        }
+        finally
+        {
+            _temp.Dispose();
+        }
+    }
+
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGreenSceneExitsZeroAndPrintsItsVerdictLine()
     {
@@ -181,6 +198,7 @@ public sealed class ScratchCommandRunTests : ScratchRunBase
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        start.Environment[OverrideFolders.PathVariable] = _temp.Combine("override-folders.txt");
         start.ArgumentList.Add("--run-scratches");
         start.ArgumentList.Add(_probe.Directory);
         foreach (string argument in arguments)

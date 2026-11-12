@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
+using GodotMcp.TestSupport;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -30,7 +31,16 @@ public sealed class McpServerSmokeTests : IDisposable
     private static readonly TimeSpan GameQuitWait = TimeSpan.FromSeconds(10);
     private readonly ProbeProject _probe = new();
 
-    public void Dispose() => _probe.Dispose();
+    // The server's override-folders list is the test's own file, never the machine's shared one.
+    private readonly TempDirectory _temp = new();
+
+    private string OverrideList => _temp.Combine("override-folders.txt");
+
+    public void Dispose()
+    {
+        _probe.Dispose();
+        _temp.Dispose();
+    }
 
     // xUnit's timeouts are wall time: the headroom lets a run on a busy machine reach the server's own load-adjusted
     // deadlines, which end at 5 x their budget in wall time, before xUnit kills it.
@@ -442,7 +452,7 @@ public sealed class McpServerSmokeTests : IDisposable
     private static McpClientOptions ClientOptions() =>
         new() { InitializationTimeout = TimeSpan.FromMilliseconds(TestTimeouts.ServerHandshakeMs), DiscoverProbeTimeout = Timeout.InfiniteTimeSpan };
 
-    private static Task<McpClient> ConnectAsync()
+    private Task<McpClient> ConnectAsync()
     {
         StdioClientTransport transport = new(
             new StdioClientTransportOptions
@@ -452,7 +462,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 ShutdownTimeout = TimeSpan.FromSeconds(10),
 
                 // An empty value, not an unset one: the front is off here even when the developer's own shell has it on.
-                EnvironmentVariables = new Dictionary<string, string?> { ["MCP_FRONT"] = "" },
+                EnvironmentVariables = new Dictionary<string, string?> { ["MCP_FRONT"] = "", [OverrideFolders.PathVariable] = OverrideList },
             }
         );
         return McpClient.CreateAsync(transport, clientOptions: ClientOptions(), cancellationToken: TestContext.Current.CancellationToken);
@@ -460,7 +470,7 @@ public sealed class McpServerSmokeTests : IDisposable
 
     /// <summary>Starts the built server over redirected stdio, as a host does, with its stderr read and dropped so it never blocks.</summary>
     /// <param name="frontBusy">Whether a front is told about the server, which turns its busy notifications on.</param>
-    private static Process StartServer(bool frontBusy = false)
+    private Process StartServer(bool frontBusy = false)
     {
         ProcessStartInfo start = new(ServerPath)
         {
@@ -472,6 +482,7 @@ public sealed class McpServerSmokeTests : IDisposable
 
         // An empty value, not an unset one: the front is off unless the case asks for it.
         start.Environment["MCP_FRONT"] = frontBusy ? "1" : "";
+        start.Environment[OverrideFolders.PathVariable] = OverrideList;
         Process server = Process.Start(start) ?? throw new InvalidOperationException($"the server {ServerPath} did not start");
         server.ErrorDataReceived += (_, _) => { };
         server.BeginErrorReadLine();
