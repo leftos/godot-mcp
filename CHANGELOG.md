@@ -8,6 +8,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `run_scratches` `options.capture.steps` takes a per-scene map, `{"<Scene>": steps}`, so each scene shoots its own steps.
 
+### Fixed
+
+- Load-adjusted timeouts no longer run at wall speed when the server itself is starved on a busy machine.
+
 ## 0.40.3 - 2026-11-11
 
 ### Fixed

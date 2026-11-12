@@ -68,7 +68,8 @@ internal enum DeadlineReason
 /// A clock that runs slower while other work loads the machine: each second of wall time counts as the share of the
 /// machine that work other than the server's own left free. One timer samples the machine every
 /// <see cref="SamplePeriod"/> and publishes the free share and the running adjusted total; every
-/// <see cref="LoadDeadline"/> reads them.
+/// <see cref="LoadDeadline"/> reads them. A reader that finds the last sample older than two periods takes one itself, and
+/// the part of a gap past two periods is credited at the lower of the last share and the one measured over it.
 /// </summary>
 internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDisposable
 {
@@ -76,6 +77,9 @@ internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDispos
     public const int BackstopFactor = 5;
 
     public static readonly TimeSpan SamplePeriod = TimeSpan.FromSeconds(1);
+
+    /// <summary>The part of a gap since the last sample past this is credited at no more than the share measured over it.</summary>
+    private static readonly TimeSpan StaleGap = SamplePeriod * 2;
 
     private readonly Lock _lock = new();
     private ITimer? _sampler;
@@ -102,7 +106,10 @@ internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDispos
         }
     }
 
-    /// <summary>The load-adjusted time since sampling started: the published total, plus the time since at the published share.</summary>
+    /// <summary>
+    /// The load-adjusted time since sampling started: the published total plus the time since at the published share, with a
+    /// sample taken first when the last one is older than <see cref="StaleGap"/>.
+    /// </summary>
     internal TimeSpan AdjustedNow => Reading().Adjusted;
 
     /// <summary>Starts a deadline of <paramref name="budget"/> in load-adjusted time, and the sampler if it is not running.</summary>
@@ -129,12 +136,21 @@ internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDispos
         return new LoadDeadline(this, budget, wallCap, linked);
     }
 
-    /// <summary>The adjusted total and the free share, read together.</summary>
+    /// <summary>
+    /// The adjusted total and the free share, read together; a last sample older than <see cref="StaleGap"/> is taken again
+    /// first, so a reader that wakes before a starved sampler still sees the corrected share.
+    /// </summary>
     internal (TimeSpan Adjusted, double Free) Reading()
     {
         lock (_lock)
         {
-            return (_integral + (Time.GetElapsedTime(_sampledAt) * _free), _free);
+            long at = Time.GetTimestamp();
+            if (!_disposed && _sampler is not null && Time.GetElapsedTime(_sampledAt, at) > StaleGap)
+            {
+                Credit(at, source.Read());
+            }
+
+            return (_integral + (Time.GetElapsedTime(_sampledAt, at) * _free), _free);
         }
     }
 
@@ -164,12 +180,11 @@ internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDispos
     }
 
     /// <summary>
-    /// Adds the time since the last sample at the share published then, so the adjusted total never jumps, and publishes
-    /// the share measured over it.
+    /// Credits the interval since the last sample and publishes the share measured over it; an interval shorter than half a
+    /// period is skipped, since it follows an inline sample that already credited it.
     /// </summary>
     private void Sample()
     {
-        LoadCounters? now = source.Read();
         lock (_lock)
         {
             if (_disposed)
@@ -178,12 +193,30 @@ internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDispos
             }
 
             long at = Time.GetTimestamp();
-            TimeSpan interval = Time.GetElapsedTime(_sampledAt, at);
-            _integral += interval * _free;
-            _free = (_counters, now) is ({ } before, { } after) ? LoadMath.FreeShare(before, after, source.Processors, interval) : 1;
-            _counters = now;
-            _sampledAt = at;
+            if (Time.GetElapsedTime(_sampledAt, at) < SamplePeriod / 2)
+            {
+                return;
+            }
+
+            Credit(at, source.Read());
         }
+    }
+
+    /// <summary>
+    /// Adds the interval since the last sample at the share published over it, except the part past <see cref="StaleGap"/>,
+    /// which is added at the lower of that share and the one measured over it: a gap a starved sampler left is never
+    /// credited at a share no sample measured it to have, and a reading never drops below one already taken. Publishes the
+    /// measured share. Runs under the clock's lock, and only while the clock is not disposed.
+    /// </summary>
+    private void Credit(long at, LoadCounters? now)
+    {
+        TimeSpan interval = Time.GetElapsedTime(_sampledAt, at);
+        double measured = (_counters, now) is ({ } before, { } after) ? LoadMath.FreeShare(before, after, source.Processors, interval) : 1;
+        TimeSpan stale = interval > StaleGap ? interval - StaleGap : TimeSpan.Zero;
+        _integral += ((interval - stale) * _free) + (stale * Math.Min(_free, measured));
+        _free = measured;
+        _counters = now;
+        _sampledAt = at;
     }
 }
 

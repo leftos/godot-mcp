@@ -8,15 +8,19 @@ namespace GodotMcp.Tests.Session;
 public sealed class LoadClockTests : IDisposable
 {
     private static readonly TimeSpan Step = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan SixSeconds = TimeSpan.FromSeconds(6);
+    private static readonly TimeSpan StaleGap = LoadClock.SamplePeriod * 2;
     private static readonly TimeSpan TenSeconds = TimeSpan.FromSeconds(10);
     private readonly FakeTimeProvider _time = new();
+    private readonly HeldTimerProvider _held;
     private readonly FakeLoadSource _machine;
     private readonly LoadClock _clock;
 
     public LoadClockTests()
     {
+        _held = new HeldTimerProvider(_time);
         _machine = new FakeLoadSource(_time, processors: 4);
-        _clock = new LoadClock(_time, _machine);
+        _clock = new LoadClock(_held, _machine);
     }
 
     public void Dispose() => _clock.Dispose();
@@ -213,6 +217,115 @@ public sealed class LoadClockTests : IDisposable
 
         // One read when sampling starts, then one a second.
         Assert.Equal(6, _machine.Reads);
+    }
+
+    [Fact]
+    public void AStarvedSamplerCreditsItsGapAtTheShareMeasuredOverIt()
+    {
+        using LoadDeadline deadline = Start(SixSeconds);
+        Run(TimeSpan.FromSeconds(2));
+
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        _held.Hold();
+        _time.Advance(TimeSpan.FromSeconds(7));
+        _held.Release();
+
+        Assert.False(deadline.Expired, $"expired after {deadline.Wall} at adjusted {deadline.Adjusted}");
+        Assert.True(deadline.Adjusted < SixSeconds, $"adjusted {deadline.Adjusted} after {deadline.Wall}");
+    }
+
+    [Fact]
+    public void AReadingAfterAStarvedGapTakesAFreshSample()
+    {
+        using LoadDeadline deadline = Start(SixSeconds);
+        Run(TimeSpan.FromSeconds(2));
+
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        _held.Hold();
+        _time.Advance(TimeSpan.FromSeconds(7));
+
+        Assert.False(deadline.Expired);
+        Assert.True(deadline.Adjusted < SixSeconds, $"adjusted {deadline.Adjusted} after {deadline.Wall}");
+    }
+
+    [Fact]
+    public void AShortGapIsCreditedAtTheLastShareAsBefore()
+    {
+        using LoadDeadline deadline = Start(TenSeconds);
+
+        _time.Advance(TimeSpan.FromSeconds(1));
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        _time.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(2, _clock.AdjustedNow.TotalSeconds, precision: 6);
+        Assert.Equal(LoadMath.MinimumFree, _clock.Free, precision: 6);
+        Assert.False(deadline.Expired);
+    }
+
+    [Fact]
+    public void TheAdjustedTotalNeverDecreasesAcrossAStarvedGap()
+    {
+        using LoadDeadline deadline = Start(TenSeconds);
+        Run(TimeSpan.FromSeconds(2));
+
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        _held.Hold();
+        _time.Advance(StaleGap);
+        TimeSpan before = deadline.Adjusted;
+
+        _time.Advance(TimeSpan.FromSeconds(5));
+
+        Assert.True(deadline.Adjusted >= before, $"adjusted {deadline.Adjusted} after {before}");
+        Assert.True(_clock.AdjustedNow >= before, $"adjusted {_clock.AdjustedNow} after {before}");
+    }
+
+    [Fact]
+    public void ASamplerTickRightAfterAnInlineSampleDoesNotPublishAFreeMachine()
+    {
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        using LoadDeadline deadline = Start(TenSeconds);
+
+        _held.Hold();
+        _time.Advance(TimeSpan.FromSeconds(7));
+        TimeSpan before = _clock.AdjustedNow;
+        _held.Release();
+
+        Assert.Equal(LoadMath.MinimumFree, _clock.Free, precision: 6);
+
+        _time.Advance(TimeSpan.FromSeconds(1));
+        TimeSpan after = _clock.AdjustedNow;
+
+        Assert.True(after - before < TimeSpan.FromSeconds(0.5), $"grew {after - before} in the second after release");
+        Assert.False(deadline.Expired);
+    }
+
+    [Fact]
+    public void AReadingAtTheStaleBoundaryDoesNotTakeAnInlineSample()
+    {
+        using LoadDeadline deadline = Start(TenSeconds);
+        _held.Hold();
+        _time.Advance(StaleGap);
+        int reads = _machine.Reads;
+
+        _ = _clock.AdjustedNow;
+
+        Assert.Equal(reads, _machine.Reads);
+        Assert.False(deadline.Expired);
+    }
+
+    [Fact]
+    public void AReadingJustPastTheStaleBoundaryTakesAnInlineSample()
+    {
+        using LoadDeadline deadline = Start(TenSeconds);
+        _held.Hold();
+        _time.Advance(StaleGap);
+        _time.Advance(TimeSpan.FromMilliseconds(1));
+        int reads = _machine.Reads;
+
+        _ = _clock.AdjustedNow;
+
+        Assert.Equal(reads + 1, _machine.Reads);
+        Assert.False(deadline.Expired);
     }
 
     private LoadDeadline Start(TimeSpan budget) => _clock.Start(budget, TestContext.Current.CancellationToken);
