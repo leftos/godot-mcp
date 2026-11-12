@@ -280,6 +280,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A join whose dormant game another attach took, or which quit, times out saying "The dormant game (pid <pid>) on <dir> did not answer within <n> s and is no longer dormant: another attach_project took it, or it quit. The join is abandoned and its join file is removed; call attach_project again."
 
+  An attach or join whose wait ends while another session holds the folder list (`override-folders.txt`) writes no attach or join file, and its timeout says so: "…another session held the folder list (override-folders.txt) for the whole wait, so the join file was never written and the game is still dormant. Call attach_project again." (a join), or "…so neither the attach file nor override.cfg was written. Call attach_project again." (an attach).
+
   Joins of different dormant games wait at once, beside each other and beside a plain attach; a second join of the same pid is refused naming the session that waits for it. A game started before `arm_project`, or on a folder not armed, has no bridge and never attaches: relaunch it while the folder is armed.
 
   `quiet: true` creates the window unfocused, then parks it off-screen and caps it at 60 fps, but only a launcher can put a game on the hidden desktop, so it shows on the primary screen for a moment at start (longer when a breakpoint holds it before the bridge's `_ready`); a joined dormant game is parked at the join. A quiet attach shares a folder only with quiet sessions.

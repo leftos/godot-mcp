@@ -30,6 +30,12 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     public LoadClock Clock { get; init; } = LoadClock.Shared;
 
     /// <summary>
+    /// Raised with the hold's purpose each time the list's open is refused and the hold is about to wait for its retry; tests
+    /// wait on it to know a hold is retrying.
+    /// </summary>
+    internal event Action<string>? OpenRefused;
+
+    /// <summary>
     /// Adds the folder to the list, then runs <paramref name="write"/> while the list is still held, so a sweep never finds
     /// the folder listed before its file is written. A list that cannot be opened or written is reported and
     /// <paramref name="write"/> runs all the same: a missing entry loses only the cleanup after a kill.
@@ -53,23 +59,39 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     /// </summary>
     /// <param name="purpose">What the hold is for, as a failure to open the list reports it.</param>
     /// <param name="action">The work done under the hold.</param>
-    public T Hold<T>(string purpose, Func<T> action)
+    public T Hold<T>(string purpose, Func<T> action) => Hold(purpose, action, CancellationToken.None);
+
+    /// <summary>
+    /// Runs <paramref name="action"/> while the list is held alone, as <see cref="Hold{T}(string, Func{T})"/> does, unless
+    /// <paramref name="cancellationToken"/> is cancelled first: a cancel ends the retry of a refused open at once, and one that
+    /// comes after the open but before <paramref name="action"/> still stops it, so a cancelled hold never runs its work.
+    /// </summary>
+    /// <param name="purpose">What the hold is for, as a failure to open the list reports it.</param>
+    /// <param name="action">The work done under the hold.</param>
+    /// <param name="cancellationToken">Ends the hold before its work runs.</param>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled before the work ran.</exception>
+    public T Hold<T>(string purpose, Func<T> action, CancellationToken cancellationToken)
     {
-        using (TryOpen(purpose))
+        using (TryOpen(purpose, cancellationToken))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return action();
         }
     }
 
     /// <inheritdoc cref="Hold{T}(string, Func{T})"/>
-    public void Hold(string purpose, Action action) =>
+    public void Hold(string purpose, Action action) => Hold(purpose, action, CancellationToken.None);
+
+    /// <inheritdoc cref="Hold{T}(string, Func{T}, CancellationToken)"/>
+    public void Hold(string purpose, Action action, CancellationToken cancellationToken) =>
         Hold(
             purpose,
             () =>
             {
                 action();
                 return true;
-            }
+            },
+            cancellationToken
         );
 
     /// <summary>
@@ -264,11 +286,19 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     /// The list opened alone, created when missing; null, reported, when it stays refused past the retry budget, counted in
     /// <see cref="Clock"/>'s load-adjusted time.
     /// </summary>
-    private FileStream? TryOpen(string purpose)
+    private FileStream? TryOpen(string purpose) => TryOpen(purpose, CancellationToken.None);
+
+    /// <inheritdoc cref="TryOpen(string)"/>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the open, or while a refused open waited for its retry.
+    /// </exception>
+    private FileStream? TryOpen(string purpose, CancellationToken cancellationToken)
     {
-        using LoadDeadline budget = Clock.Start(TimeSpan.FromMilliseconds(RetryBudgetMs));
+        // The budget runs on its own: a cancel is thrown as one below, never read as the budget running out.
+        using LoadDeadline budget = Clock.Start(TimeSpan.FromMilliseconds(RetryBudgetMs), CancellationToken.None);
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(listPath)!);
@@ -276,7 +306,9 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
             }
             catch (IOException) when (!budget.Expired)
             {
-                Thread.Sleep(RetryIntervalMs);
+                OpenRefused?.Invoke(purpose);
+                // The token's handle is never set without a cancel, so a token-less wait is the plain pause between retries.
+                cancellationToken.WaitHandle.WaitOne(RetryIntervalMs);
             }
             catch (Exception e) when (IsFileSystemFailure(e))
             {

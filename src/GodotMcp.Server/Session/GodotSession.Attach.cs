@@ -34,6 +34,12 @@ internal sealed partial class GodotSession
     private bool _joinFileWritten;
 
     /// <summary>
+    /// Whether this attach's attach or join file was never written because the folder list stayed held by another session
+    /// until the accept ended; the timeout text then blames the list, not a prep, and names no removed file.
+    /// </summary>
+    private bool _handoffHeldByList;
+
+    /// <summary>
     /// The dormant game this attach joins, by its process id, chosen when the session was reserved; null for an attach that
     /// waits for a launch, and for a run.
     /// </summary>
@@ -272,6 +278,7 @@ internal sealed partial class GodotSession
         BridgeEndpoint endpoint = new(registry.Listener.Port, CreateToken());
         _handoffToken = endpoint.Token;
         _joinFileWritten = false;
+        _handoffHeldByList = false;
         BridgeConnection connection;
         try
         {
@@ -318,21 +325,106 @@ internal sealed partial class GodotSession
         // read of the file's token and its delete.
         using var abandon = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task<BridgeConnection> accepted = AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, abandon.Token);
+        if (
+            !await WriteHandoffWhileAcceptingAsync(
+                $"writing the attach file in {ProjectDir}",
+                () => AttachFile.Write(ProjectDir, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute)),
+                abandon,
+                accepted
+            )
+        )
+        {
+            return await accepted;
+        }
+
+        await WriteOverrideWhileAwaitingAsync(bridgeScript, abandon, accepted);
+        return await accepted;
+    }
+
+    /// <summary>
+    /// Writes the attach or join file under the folder list's hold while the accept still waits: the file is never written once
+    /// the accept has ended, by its deadline, a cancel or a failure, since a game reading it then would dial a wait that is gone.
+    /// An accept that ends while the hold retries a busy list stops the retry, and the caller returns the accept's own outcome.
+    /// </summary>
+    /// <returns>False when the accept ended, or was abandoned, before the file was written; true once it is written.</returns>
+    private async Task<bool> WriteHandoffWhileAcceptingAsync(
+        string purpose,
+        Action write,
+        CancellationTokenSource abandon,
+        Task<BridgeConnection> accepted
+    )
+    {
+        if (accepted.IsCompleted)
+        {
+            return false;
+        }
+
+        using AcceptEnd end = new(accepted, abandon.Token);
         try
         {
-            registry.OverrideFolders.Hold(
-                $"writing the attach file in {ProjectDir}",
-                () => AttachFile.Write(ProjectDir, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute))
-            );
+            registry.OverrideFolders.Hold(purpose, write, end.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (end.Token.IsCancellationRequested)
+        {
+            // Nothing was written. The accept has ended, or is ending since the caller's cancel reached it through abandon, so
+            // awaiting it surfaces its deadline, its failure or that cancel, never a bare cancel of the hold. Only the timeout text
+            // reads the flag, so an accept ended some other way meanwhile is not misdescribed by it.
+            _handoffHeldByList = !abandon.IsCancellationRequested;
+            return false;
         }
         catch
         {
             await AbandonAcceptAsync(abandon, accepted);
             throw;
         }
+    }
 
-        await WriteOverrideWhileAwaitingAsync(bridgeScript, abandon, accepted);
-        return await accepted;
+    /// <summary>
+    /// A token cancelled when the accept ends, however it ends, or when the attach abandons it: the accept's own deadline lives
+    /// inside the accept, so the abandon token alone never sees it. The accept's continuation cancels the token only while this
+    /// is not disposed, under a lock, so a continuation that runs after the hold is done never touches a disposed source.
+    /// </summary>
+    private sealed class AcceptEnd : IDisposable
+    {
+        private readonly CancellationTokenSource _ended;
+        private readonly Lock _lock = new();
+        private bool _disposed;
+
+        public AcceptEnd(Task accepted, CancellationToken abandon)
+        {
+            _ended = CancellationTokenSource.CreateLinkedTokenSource(abandon);
+            _ = accepted.ContinueWith(
+                static (_, state) => ((AcceptEnd)state!).End(),
+                this,
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
+            );
+        }
+
+        public CancellationToken Token => _ended.Token;
+
+        public void Dispose()
+        {
+            lock (_lock)
+            {
+                _disposed = true;
+            }
+
+            _ended.Dispose();
+        }
+
+        private void End()
+        {
+            lock (_lock)
+            {
+                if (!_disposed)
+                {
+                    _ended.Cancel();
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -400,24 +492,18 @@ internal sealed partial class GodotSession
             return await accepted;
         }
 
-        // The accept may have ended between the override's write and the join file: one written then would wake a game that no
-        // session awaits, so nothing is published once the accept has ended.
-        if (accepted.IsCompleted)
+        // The accept may have ended between the override's write and the join file, or end while the folder list is busy: one
+        // written then would wake a game that no session awaits, so nothing is published once the accept has ended.
+        if (
+            !await WriteHandoffWhileAcceptingAsync(
+                $"writing the join file in {ProjectDir}",
+                () => DormantGames.WriteJoinFile(ProjectDir, pid, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute)),
+                abandon,
+                accepted
+            )
+        )
         {
             return await accepted;
-        }
-
-        try
-        {
-            registry.OverrideFolders.Hold(
-                $"writing the join file in {ProjectDir}",
-                () => DormantGames.WriteJoinFile(ProjectDir, pid, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute))
-            );
-        }
-        catch
-        {
-            await AbandonAcceptAsync(abandon, accepted);
-            throw;
         }
 
         _joinFileWritten = true;
@@ -497,6 +583,13 @@ internal sealed partial class GodotSession
 
     private string DescribeJoinTimeout(int pid, TimeSpan wait, string backstop)
     {
+        if (_handoffHeldByList)
+        {
+            return $"The dormant game (pid {pid}) on {ProjectDir} was not joined within {wait.TotalSeconds:0} s{backstop}: another "
+                + "session held the folder list (override-folders.txt) for the whole wait, so the join file was never written and "
+                + "the game is still dormant. Call attach_project again.";
+        }
+
         if (!_joinFileWritten)
         {
             // The deadline ended while a prep held the lock the override is written under, so the game was never woken.
@@ -524,6 +617,13 @@ internal sealed partial class GodotSession
         if (JoinPid is int pid)
         {
             return DescribeJoinTimeout(pid, wait, backstop);
+        }
+
+        if (_handoffHeldByList)
+        {
+            return $"No game on {ProjectDir} connected within {wait.TotalSeconds:0} s{backstop}, so the attach is abandoned: another "
+                + "session held the folder list (override-folders.txt) for the whole wait, so neither the attach file nor "
+                + "override.cfg was written. Call attach_project again.";
         }
 
         string removed = DescribeRemovedFiles(overrideRemoved);

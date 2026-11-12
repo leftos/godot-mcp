@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -884,6 +885,154 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
         Assert.True(File.Exists(DormantGames.EntryPathIn(alpha, 4101)));
         Assert.Empty(harness.Sessions.List(includeStopped: true));
+    }
+
+    // Another server holds the folder list for the whole call. The override's write retries the list for its 2 s budget and
+    // then goes ahead without it, so the join file's hold starts at about 2 s and retries until about 4 s: the 3 s deadline ends
+    // the join inside that retry, which must stop it with nothing written, not give up at 4 s and write the file then.
+    [Fact]
+    public async Task AJoinWhoseDeadlineEndsWhileTheFolderListIsHeldWritesNoJoinFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+        string joinFile = DormantGames.JoinPathIn(alpha, 4101);
+        using FolderEvents events = new(Path.GetDirectoryName(joinFile)!);
+        using FileStream list = HoldFolderList(harness);
+
+        // Run off the test's thread: the list's retries block the caller until fake time passes.
+        Task<AttachResult> join = Task.Run(
+            () => harness.Sessions.AttachAsync(new AttachRequest(alpha, null, TimeSpan.FromSeconds(3), false, false, null), cancellation),
+            cancellation
+        );
+        await RegistryHarness.AdvanceUntilDoneAsync(time, join, cancellation);
+
+        SessionException timedOut = await Assert.ThrowsAsync<SessionException>(() => join);
+        Assert.Equal(
+            $"The dormant game (pid 4101) on {alpha} was not joined within 3 s: another session held the folder list "
+                + "(override-folders.txt) for the whole wait, so the join file was never written and the game is still dormant. "
+                + "Call attach_project again.",
+            timedOut.Message
+        );
+        AssertNeverWritten(await events.SeenAsync(), joinFile);
+        Assert.True(File.Exists(DormantGames.EntryPathIn(alpha, 4101)));
+    }
+
+    // The attach file is written under the folder list's hold before the override: a list another server holds past the 1 s
+    // deadline must end the attach at its deadline with no attach file, not write one once the list's 2 s retry gives up.
+    [Fact]
+    public async Task AnAttachWhoseDeadlineEndsWhileTheFolderListIsHeldWritesNoAttachFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        string attachFile = AttachFile.PathIn(alpha);
+        Directory.CreateDirectory(Path.GetDirectoryName(attachFile)!);
+        using FolderEvents events = new(Path.GetDirectoryName(attachFile)!);
+        using FileStream list = HoldFolderList(harness);
+
+        Task<AttachResult> attach = Task.Run(
+            () => harness.Sessions.AttachAsync(new AttachRequest(alpha, null, TimeSpan.FromSeconds(1), false, false, null), cancellation),
+            cancellation
+        );
+        await RegistryHarness.AdvanceUntilDoneAsync(time, attach, cancellation);
+
+        SessionException timedOut = await Assert.ThrowsAsync<SessionException>(() => attach);
+        Assert.Equal(
+            $"No game on {alpha} connected within 1 s, so the attach is abandoned: another session held the folder list "
+                + "(override-folders.txt) for the whole wait, so neither the attach file nor override.cfg was written. Call "
+                + "attach_project again.",
+            timedOut.Message
+        );
+        AssertNeverWritten(await events.SeenAsync(), attachFile);
+        Assert.Empty(harness.Sessions.List(includeStopped: true));
+    }
+
+    // The caller's cancel reaches an attach whose attach file waits on the folder list another server holds: the retry stops at
+    // once and nothing is written.
+    [Fact]
+    public async Task ACancelledAttachWhileTheFolderListIsHeldWritesNothing()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        string attachFile = AttachFile.PathIn(alpha);
+        Directory.CreateDirectory(Path.GetDirectoryName(attachFile)!);
+        using FolderEvents events = new(Path.GetDirectoryName(attachFile)!);
+        using FileStream list = HoldFolderList(harness);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        bool retrying = false;
+        harness.Sessions.OverrideFolders.OpenRefused += purpose =>
+            Volatile.Write(ref retrying, retrying || purpose.StartsWith("writing the attach file in ", StringComparison.Ordinal));
+
+        Task<AttachResult> attach = Task.Run(
+            () => harness.Sessions.AttachAsync(new AttachRequest(alpha, null, RegistryHarness.LongWait, false, false, null), cancel.Token),
+            cancellation
+        );
+        // The attach file's hold is retrying the refused list; fake time stands still, so the retry cannot give up meanwhile.
+        await RegistryHarness.WaitUntilAsync(() => Volatile.Read(ref retrying), attach);
+        await cancel.CancelAsync();
+        // The failed attach's cleanup retries the held list too; fake time lets that retry give up.
+        await RegistryHarness.AdvanceUntilDoneAsync(time, attach, cancellation);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attach);
+        AssertNeverWritten(await events.SeenAsync(), attachFile);
+        Assert.Empty(harness.Sessions.List(includeStopped: true));
+    }
+
+    /// <summary>Opens the harness's folder list alone, as another server's read-modify-write of it does.</summary>
+    private static FileStream HoldFolderList(RegistryHarness harness) =>
+        new(harness.Sessions.OverrideFolders.ListPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+    /// <summary>Asserts that neither <paramref name="file"/> nor the temporary file it is written through ever appeared.</summary>
+    private static void AssertNeverWritten(IReadOnlyCollection<string> seen, string file)
+    {
+        string name = Path.GetFileName(file);
+        Assert.DoesNotContain(name, seen);
+        Assert.DoesNotContain(name + ".tmp", seen);
+    }
+
+    /// <summary>
+    /// The names of the files created, changed or renamed into place in one folder from its start, so a file written and removed
+    /// again before the test looks is still seen.
+    /// </summary>
+    private sealed class FolderEvents : IDisposable
+    {
+        private readonly FileSystemWatcher _watcher;
+        private readonly ConcurrentQueue<string> _names = new();
+        private volatile string? _error;
+
+        public FolderEvents(string folder)
+        {
+            _watcher = new FileSystemWatcher(folder) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite };
+            _watcher.Created += (_, e) => _names.Enqueue(e.Name!);
+            _watcher.Changed += (_, e) => _names.Enqueue(e.Name!);
+            _watcher.Renamed += (_, e) => _names.Enqueue(e.Name!);
+            _watcher.Error += (_, e) => _error = e.GetException().Message;
+            _watcher.EnableRaisingEvents = true;
+        }
+
+        /// <summary>
+        /// Every name seen so far: a marker file is written and awaited, and the watcher reports a folder's events in order, so
+        /// every event before the marker's has been delivered.
+        /// </summary>
+        public async Task<IReadOnlyCollection<string>> SeenAsync()
+        {
+            string marker = $"marker-{Guid.NewGuid():N}";
+            await File.WriteAllTextAsync(Path.Combine(_watcher.Path, marker), "", TestContext.Current.CancellationToken);
+            await RegistryHarness.WaitUntilAsync(() => _names.Contains(marker) || _error is not null);
+            Assert.Null(_error);
+            return [.. _names];
+        }
+
+        public void Dispose() => _watcher.Dispose();
     }
 
     // The wait's budget covers the time a prep holds the folder: 1.5 s of it are spent on the lock, and the join ends at 2 s
