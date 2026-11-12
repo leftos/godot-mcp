@@ -170,6 +170,180 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.Equal($"No Godot session or warm headless host runs in {project}.", refused.Message);
     }
 
+    [Fact]
+    public async Task ASecondStopWaitsForALeftoverStillRunningWithoutKillingIt()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe and ping.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        (_, Process child) = await StopWithAChildLeftRunningAsync(project);
+        int opened = 0;
+        // The child ends, through the handle the test holds on it, once the call has found a leftover still running, so only a
+        // wait for it sees it gone.
+        _sessions.OpenStoppedLeftover = (pid, started) =>
+        {
+            Process? leftover = RunKill.OpenIfStillRunning(pid, started);
+            if (leftover is not null && Interlocked.Increment(ref opened) == 1)
+            {
+                child.Kill();
+            }
+
+            return leftover;
+        };
+
+        object stopped = await _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        HostStopResult result = Assert.IsType<HostStopResult>(stopped);
+        Assert.Null(result.GameStillRunning);
+        Assert.Null(result.Warning);
+        Assert.True(child.WaitForExit(0), "the call returned before the leftover was gone");
+    }
+
+    [Fact]
+    public async Task ASecondStopReportsALeftoverThatOutlivesItsWaitAndLeavesItRunning()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe and ping.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        (Process game, Process child) = await StopWithAChildLeftRunningAsync(project);
+
+        Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
+        await RegistryHarness.AdvanceUntilDoneAsync(_time, stop, cancellation);
+        StopResult result = await stop;
+
+        Assert.False(child.HasExited, "the second stop killed the game's child");
+        Assert.Contains(child.Id, result.GameStillRunning ?? []);
+        // The game's console host stays too while the ping is attached to it, as at the first stop.
+        IReadOnlyList<string> children = LeftBehind.Find(game, NullLogger.Instance);
+        Assert.StartsWith(
+            $"The game left {string.Join(", ", children)} running, and they were still running after 5 s of load-adjusted time (wall ",
+            result.Warning,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith("; its project folder stays in use until they are gone.", result.Warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AStoppedLeftoversPidReusedByAnotherProcessCountsAsGone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe and ping.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        (_, Process child) = await StopWithAChildLeftRunningAsync(project);
+        child.Kill();
+        Assert.True(await ProcessExit.WaitUntilGoneAsync(child, RegistryHarness.HangGuard), "the leftover was not gone");
+        Process bystander = StartGame();
+        // The pid now names the bystander, a process with another creation time.
+        _sessions.OpenStoppedLeftover = (_, started) => RunKill.OpenIfStillRunning(bystander.Id, started);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation)
+        );
+
+        Assert.Equal($"No Godot session or warm headless host runs in {project}.", refused.Message);
+        Assert.False(bystander.WaitForExit(0), "the bystander that took the pid was killed");
+    }
+
+    [Fact]
+    public async Task ASecondStopKillsAnUnopenedGameStartedInsideItsWindow()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+        await RegistryHarness.WaitUntilAsync(() => !_launched.IsEmpty, launch);
+        FakeRunProcess run = _launched.First();
+        // The game starts after its console wrapper and before its hello, inside the span the stop accepts it in.
+        Process game = StartGame();
+        using FakeBridge bridge = await FakeBridge.DialAsync(
+            _listener.Port,
+            run.Token,
+            project,
+            new FakeHello { ProcessId = NoProcessId },
+            cancellation
+        );
+        _ = await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        await StopTheSilentGameAsync(game);
+        _sessions.OpenUnprovenGame = (_, window) => RunKill.OpenIfStartedWithin(game.Id, window, NullLogger.Instance);
+
+        object stopped = await _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        HostStopResult result = Assert.IsType<HostStopResult>(stopped);
+        Assert.Null(result.GameStillRunning);
+        Assert.Null(result.Warning);
+        Assert.True(game.WaitForExit(0), "the call returned before the unopened game was gone");
+    }
+
+    [Fact]
+    public async Task AnUnopenedGameStartedOutsideItsWindowCountsAsGone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        // Started before the launch, so before the console wrapper: not the run's game.
+        Process game = StartGame();
+        using FakeBridge bridge = await LaunchAsync(project, NoProcessId);
+        await StopTheSilentGameAsync(game);
+        _sessions.OpenUnprovenGame = (_, window) => RunKill.OpenIfStartedWithin(game.Id, window, NullLogger.Instance);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation)
+        );
+
+        Assert.Equal($"No Godot session or warm headless host runs in {project}.", refused.Message);
+        Assert.False(game.WaitForExit(0), "the process outside the game's window was killed");
+    }
+
+    [Fact]
+    public async Task AnUnopenedGameThatStillCannotBeOpenedIsReportedNotWaitedFor()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        using FakeBridge bridge = await LaunchAsync(project, NoProcessId);
+        await StopTheSilentGameAsync(game: null);
+        _sessions.OpenUnprovenGame = (_, _) => new UnprovenOpen(null, Unopenable: true);
+
+        object stopped = await _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        HostStopResult result = Assert.IsType<HostStopResult>(stopped);
+        Assert.Equal([NoProcessId], result.GameStillRunning);
+        Assert.Equal(
+            $"The game's process (pid {NoProcessId}) could not be opened, so the stop could not wait for it; "
+                + "it may still be running and holding the project folder.",
+            result.Warning
+        );
+    }
+
+    // One re-stop that found a killed game still running, a game it could not open and a leftover still running lists their
+    // pids in that order, and words its warning with one sentence per kind in the same order.
+    [Fact]
+    public void AReStopListsKilledGamesThenUnopenedThenLeftovers()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in is cmd.exe running ping -n, Windows' syntax.");
+        const int killedPid = 4244;
+        const string after = "5 s of load-adjusted time";
+        // Held by the test, and ended with it, so the found processes are not disposed here.
+        Process leftover = StartGame();
+        SessionRegistry.StoppedProcesses found = new();
+        found.Awaited.Add((leftover, leftover.Id, $"ping.exe (pid {leftover.Id})"));
+        found.Unopenable.Add(NoProcessId);
+        string killedWarning =
+            $"The killed game (pid {killedPid}) was still running after {after}; its project folder stays in use until it is gone.";
+        KilledGamesWait waited = new([killedPid], killedWarning) { After = after, AwaitedStillRunning = [leftover.Id] };
+
+        KilledGamesWait composed = SessionRegistry.Compose(found, waited);
+
+        Assert.Equal([killedPid, NoProcessId, leftover.Id], composed.StillRunning);
+        Assert.Equal(
+            $"{killedWarning} "
+                + $"The game's process (pid {NoProcessId}) could not be opened, so the stop could not wait for it; "
+                + "it may still be running and holding the project folder. "
+                + $"The game left ping.exe (pid {leftover.Id}) running, and it was still running after {after}; "
+                + "its project folder stays in use until it is gone.",
+            composed.Warning
+        );
+    }
+
     // The run's process ends on its own, as a game that quits does. ExitHandled completes only after the exit's handler has
     // released the folder, so the override is already gone when the completion's continuation looks.
     [Fact]
@@ -536,6 +710,8 @@ public sealed class StopKilledGameTests : IAsyncDisposable
             process => process.Name.Equals("PING.EXE", StringComparison.OrdinalIgnoreCase)
         );
         var child = Process.GetProcessById(listed.Id);
+        // Reading Handle keeps the handle on the object, so every later kill and wait of the child is of this process, not its pid.
+        _ = child.Handle;
         _games.Add(child);
         return (game, child, LeftBehind.Describe(listed));
     }
@@ -697,6 +873,47 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.EndsWith(StillUsesTheFolder, stopped.Warning, StringComparison.Ordinal);
         Assert.False(game.WaitForExit(0));
         return (game, hold);
+    }
+
+    /// <summary>
+    /// Launches a run named server whose game quits leaving a child running, then stops it, as
+    /// <see cref="AQuitGameWhoseChildStaysPastTheKillWaitIsNamedInTheWarning"/> does: the child is still running when the stop's
+    /// kill wait ends, as the stop's warning says.
+    /// </summary>
+    private async Task<(Process Game, Process Child)> StopWithAChildLeftRunningAsync(string project)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        (Process game, Process child, _) = await StartGameWithRunningChildAsync();
+        using FakeBridge bridge = await LaunchAsync(project, game.Id);
+        FakeRunProcess run = _launched.First();
+
+        Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
+        await QuitAsync(bridge, game, withItsChildren: false);
+        await AdvanceUntilAsync(() => run.Process.HasExited, stop);
+        Assert.True(await ProcessExit.WaitUntilGoneAsync(run.Process, RegistryHarness.HangGuard), "the killed wrapper was not gone");
+        await RegistryHarness.AdvanceUntilDoneAsync(_time, stop, cancellation);
+        StopResult stopped = await stop;
+
+        Assert.False(child.HasExited, "the stop killed the game's child");
+        Assert.StartsWith("The game left ", stopped.Warning, StringComparison.Ordinal);
+        return (game, child);
+    }
+
+    /// <summary>
+    /// Stops the run named server, whose game is silent and has no handle: the stop kills the wrapper alone, and
+    /// <paramref name="game"/>, the stand-in no run started, keeps running.
+    /// </summary>
+    private async Task StopTheSilentGameAsync(Process? game)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeRunProcess run = _launched.First();
+        // The bridge never answers the stop's ping, so the game counts as silent and is killed at once.
+        Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
+        await AdvanceUntilAsync(() => run.Process.HasExited, stop);
+        StopResult stopped = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        Assert.True(stopped.Killed);
+        Assert.False(game?.WaitForExit(0) ?? false, "the first stop ended the stand-in game");
     }
 
     private Process StartGame()

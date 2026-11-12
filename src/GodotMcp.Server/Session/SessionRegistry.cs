@@ -151,6 +151,19 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     internal Func<int, DateTime, Process?> OpenStoppedGame { get; set; } = RunKill.OpenIfStillRunning;
 
     /// <summary>
+    /// Opens a process a stopped session's quit game left running, from its pid and creation time, when it still runs:
+    /// <see cref="RunKill.OpenLeftoverIfStillRunning"/> unless set, as a unit test sets it to stand in for the process boundary.
+    /// </summary>
+    internal Func<int, DateTime, Process?> OpenStoppedLeftover { get; set; } =
+        (pid, started) => RunKill.OpenLeftoverIfStillRunning(pid, started, logger);
+
+    /// <summary>
+    /// Opens the game a stopped session could not open when its run started, from its pid and the span it must have started in:
+    /// <see cref="RunKill.OpenIfStartedWithin"/> unless set, as a unit test sets it to stand in for the process boundary.
+    /// </summary>
+    internal Func<int, StartWindow?, UnprovenOpen> OpenUnprovenGame { get; set; } = (pid, window) => RunKill.OpenIfStartedWithin(pid, window, logger);
+
+    /// <summary>
     /// How a run's process is created, from the start info the launch built and whether the run is quiet:
     /// <see cref="GodotSession"/>'s own creation, suspended on the hidden desktop for a quiet run on Windows, unless set, as a
     /// test sets a fake process whose output it feeds, so a launch is tested without Godot.
@@ -515,32 +528,138 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Waits once more for the games of <paramref name="stopped"/> that still run, the process each recorded with its creation
-    /// time (<see cref="OpenStoppedGame"/>): a stop killed them and they outlived its kill wait. Each is killed again and all are
-    /// waited for on one kill wait (<see cref="RunKill.KillAndWaitAllAsync"/>); the handles opened are released whatever the
-    /// wait ends with.
+    /// Waits once more for what a stop of <paramref name="stopped"/> left running. A game a stop killed that outlived its kill
+    /// wait, the process it recorded with its creation time (<see cref="OpenStoppedGame"/>), or, for a game the run could not
+    /// open, the process with its pid created between the launch and its hello (<see cref="OpenUnprovenGame"/>), is killed
+    /// again. A process a quit game left that outlived the stop's kill wait, by its pid and creation time
+    /// (<see cref="OpenStoppedLeftover"/>), is never killed. All are waited for on one kill wait
+    /// (<see cref="RunKill.KillAndWaitAllAsync"/>); a game that still cannot be opened is reported, not waited for. The handles
+    /// opened are released whatever the wait ends with.
     /// </summary>
-    /// <returns>What the wait ended with; null when no game of theirs still ran, so there was nothing to wait for.</returns>
+    /// <returns>
+    /// What the wait ended with: the pids still running (killed games, then games that could not be opened, then leftovers) and
+    /// the warning naming them; null when nothing of theirs was found still running or could not be opened, so there was
+    /// nothing to wait for or report.
+    /// </returns>
     private async Task<KilledGamesWait?> WaitForStoppedGamesAsync(IEnumerable<GodotSession> stopped, string projectDir)
     {
-        List<Process> games = [];
+        StoppedProcesses found = new();
         try
         {
             foreach (GodotSession session in stopped)
             {
-                if (session.GameProcessId is int pid && session.GameStartTime is DateTime started && OpenStoppedGame(pid, started) is { } game)
-                {
-                    games.Add(game);
-                }
+                Collect(session, found);
             }
 
-            return games.Count == 0 ? null : await RunKill.KillAndWaitAllAsync(games, LaunchClock, logger, projectDir);
+            if (found.Killed.Count == 0 && found.Awaited.Count == 0)
+            {
+                return found.Unopenable.Count == 0 ? null : Compose(found, new KilledGamesWait([], Warning: null));
+            }
+
+            KilledGamesWait waited = await RunKill.KillAndWaitAllAsync(
+                found.Killed,
+                [.. found.Awaited.Select(leftover => leftover.Process)],
+                LaunchClock,
+                logger,
+                projectDir
+            );
+            return Compose(found, waited);
         }
         finally
         {
-            foreach (Process game in games)
+            found.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="found"/> what a stop of <paramref name="session"/> left running: its killed game, opened by its
+    /// creation time or else by its start window, or its pid when a process holds it that cannot be opened; and each process its
+    /// quit game left, opened by its creation time. One gone is left out.
+    /// </summary>
+    private void Collect(GodotSession session, StoppedProcesses found)
+    {
+        if (session.GameProcessId is int pid)
+        {
+            if (session.GameStartTime is DateTime started)
             {
-                game.Dispose();
+                found.AddKilled(OpenStoppedGame(pid, started));
+            }
+            else
+            {
+                UnprovenOpen game = OpenUnprovenGame(pid, session.GameStartWindow);
+                found.AddKilled(game.Game);
+                if (game.Unopenable)
+                {
+                    found.Unopenable.Add(pid);
+                }
+            }
+        }
+
+        foreach (LeftBehind.Remembered leftover in session.LeftStillRunning)
+        {
+            if (OpenStoppedLeftover(leftover.Id, leftover.StartTime) is { } process)
+            {
+                found.Awaited.Add((process, leftover.Id, $"{leftover.Name} (pid {leftover.Id})"));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The one result of a re-stop's wait: the killed games still running, then the games that could not be opened, then the
+    /// leftovers still running, and the sentences naming each kind in that order; <paramref name="waited"/> is empty when only
+    /// games that could not be opened were found.
+    /// </summary>
+    internal static KilledGamesWait Compose(StoppedProcesses found, KilledGamesWait waited)
+    {
+        IReadOnlyList<int> leftoversStill = waited.AwaitedStillRunning;
+        string? leftovers = LeftBehind.DescribeStillRunning(
+            [.. found.Awaited.Where(leftover => leftoversStill.Contains(leftover.Id)).Select(leftover => leftover.Described)],
+            waited.After
+        );
+        string? warning = GodotSession.JoinWarnings(waited.Warning, DescribeUnopenable(found.Unopenable), leftovers);
+        return new KilledGamesWait([.. waited.StillRunning, .. found.Unopenable, .. leftoversStill], warning) { After = waited.After };
+    }
+
+    /// <summary>The sentence naming the stopped games that still could not be opened to wait for; null when there are none.</summary>
+    private static string? DescribeUnopenable(List<int> pids)
+    {
+        string joined = string.Join(", ", pids.Select(pid => pid.ToString(CultureInfo.InvariantCulture)));
+        return pids.Count switch
+        {
+            0 => null,
+            1 => $"The game's process (pid {joined}) could not be opened, so the stop could not wait for it; "
+                + "it may still be running and holding the project folder.",
+            _ => $"The games' processes (pids {joined}) could not be opened, so the stop could not wait for them; "
+                + "they may still be running and holding the project folder.",
+        };
+    }
+
+    /// <summary>
+    /// What a re-stop found left running by stopped sessions: the killed games to kill and wait for again, the leftovers to wait
+    /// for only, each with its pid and its name as the warning writes it, and the pids of games that could not be opened.
+    /// Disposing it releases every process opened.
+    /// </summary>
+    internal sealed class StoppedProcesses : IDisposable
+    {
+        public List<Process> Killed { get; } = [];
+
+        public List<(Process Process, int Id, string Described)> Awaited { get; } = [];
+
+        public List<int> Unopenable { get; } = [];
+
+        public void AddKilled(Process? game)
+        {
+            if (game is not null)
+            {
+                Killed.Add(game);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (Process process in Killed.Concat(Awaited.Select(leftover => leftover.Process)))
+            {
+                process.Dispose();
             }
         }
     }
@@ -565,10 +684,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     private static IReadOnlyList<int>? StillRunningOrNull(KilledGamesWait waited) => waited.StillRunning.Count == 0 ? null : waited.StillRunning;
 
     /// <summary>
-    /// stop_project on a folder no session runs: first waits once more for a killed game of a stopped session there that still
-    /// runs (<see cref="WaitForStoppedGamesAsync"/>), then, under the folder's prep lock, stops its warm headless host if one
-    /// runs, releases this server's own override.cfg again when an earlier release failed, and clears a dead server's leftover
-    /// override.cfg and armed.json (<see cref="ClearIdleFolder"/>).
+    /// stop_project on a folder no session runs: first waits once more for what a stop of a stopped session there left running,
+    /// a killed game or a process its quit game left (<see cref="WaitForStoppedGamesAsync"/>), then, under the folder's prep
+    /// lock, stops its warm headless host if one runs, releases this server's own override.cfg again when an earlier release
+    /// failed, and clears a dead server's leftover override.cfg and armed.json (<see cref="ClearIdleFolder"/>).
     /// </summary>
     /// <exception cref="SessionException">Nothing was waited for, stopped or removed; names why a file was left in place.</exception>
     private async Task<HostStopResult> StopIdleFolderAsync(string projectDir, CancellationToken cancellationToken)

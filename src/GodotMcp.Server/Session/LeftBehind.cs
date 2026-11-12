@@ -98,6 +98,20 @@ internal static partial class LeftBehind
     /// <summary>How leftRunning names a process: its image name and its id, as "ping.exe (pid 1234)".</summary>
     internal static string Describe(ListedProcess process) => $"{process.Name} (pid {process.Id})";
 
+    /// <summary>
+    /// The warning naming the processes a quit game left that were still running after a wait of <paramref name="after"/>, each
+    /// of <paramref name="described"/> as <see cref="Describe"/> writes it; null when none is.
+    /// </summary>
+    internal static string? DescribeStillRunning(IReadOnlyList<string> described, string? after) =>
+        described.Count switch
+        {
+            0 => null,
+            1 => $"The game left {described[0]} running, and it was still running after {after}; "
+                + "its project folder stays in use until it is gone.",
+            _ => $"The game left {string.Join(", ", described)} running, and they were still running after {after}; "
+                + "its project folder stays in use until they are gone.",
+        };
+
     /// <summary>The game's creation time, in UTC; null, logged at Debug, when it cannot be read.</summary>
     private static DateTime? StartTimeOf(Process game, ILogger logger)
     {
@@ -211,6 +225,13 @@ internal static partial class LeftBehind
 
     /// <summary>One process in a snapshot: its id, its parent's id and its image name.</summary>
     internal readonly record struct ListedProcess(int Id, int ParentId, string Name);
+
+    /// <summary>
+    /// A process a quit game left that was still running after the stop's kill wait, kept for a later stop to wait for again:
+    /// its id, its creation time as <see cref="Process.StartTime"/> read it through the stop's handle (local time, so it compares
+    /// with a later read of the same process), and its image name.
+    /// </summary>
+    internal readonly record struct Remembered(int Id, DateTime StartTime, string Name);
 
     /// <summary>
     /// The game's children a listing found, and the time, in UTC, read just before it was taken: every start time it is compared

@@ -214,4 +214,85 @@ public sealed class KillAndWaitTests
             exited.Dispose();
         }
     }
+
+    [Fact]
+    public void OpenIfStartedWithinTakesAProcessCreatedInsideTheWindow()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in is cmd.exe running ping -n, Windows' syntax.");
+        DateTime before = DateTime.UtcNow.AddSeconds(-1);
+        Process standIn = RegistryHarness.StartStandInGame();
+        DateTime after = DateTime.UtcNow.AddSeconds(1);
+        try
+        {
+            UnprovenOpen opened = RunKill.OpenIfStartedWithin(standIn.Id, new StartWindow(before, after), NullLogger.Instance);
+            using Process? game = opened.Game;
+
+            Assert.NotNull(game);
+            Assert.Equal(standIn.Id, game.Id);
+            Assert.False(opened.Unopenable);
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(standIn);
+        }
+    }
+
+    [Fact]
+    public void OpenIfStartedWithinCountsAProcessCreatedOutsideTheWindowAsGone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in is cmd.exe running ping -n, Windows' syntax.");
+        DateTime ended = DateTime.UtcNow.AddSeconds(-1);
+        Process standIn = RegistryHarness.StartStandInGame();
+        try
+        {
+            UnprovenOpen opened = RunKill.OpenIfStartedWithin(standIn.Id, new StartWindow(ended.AddMinutes(-1), ended), NullLogger.Instance);
+
+            Assert.Equal(UnprovenOpen.Gone, opened);
+            Assert.False(standIn.WaitForExit(0), "the process outside the window was ended");
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(standIn);
+        }
+    }
+
+    [Fact]
+    public void OpenIfStartedWithinCountsAPidNoProcessHoldsAsGone()
+    {
+        // Windows hands out multiples of four far below it.
+        const int noProcessId = int.MaxValue & ~3;
+        DateTime now = DateTime.UtcNow;
+
+        UnprovenOpen opened = RunKill.OpenIfStartedWithin(noProcessId, new StartWindow(now.AddMinutes(-1), now), NullLogger.Instance);
+
+        Assert.Equal(UnprovenOpen.Gone, opened);
+    }
+
+    // An awaited process is only waited for: held past the wait's deadline on the fake clock, it is reported still running, the
+    // warning left to the caller, and it is still running afterwards.
+    [Fact]
+    public async Task KillAndWaitAllWaitsForAnAwaitedProcessWithoutKillingIt()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in is cmd.exe running ping -n, Windows' syntax.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        Process standIn = RegistryHarness.StartStandInGame();
+        try
+        {
+            Task<KilledGamesWait> wait = RunKill.KillAndWaitAllAsync([], [standIn], clock, NullLogger.Instance, Project);
+            await RegistryHarness.AdvanceUntilDoneAsync(time, wait, cancellation);
+            KilledGamesWait waited = await wait;
+
+            Assert.Equal([standIn.Id], waited.AwaitedStillRunning);
+            Assert.Empty(waited.StillRunning);
+            Assert.NotNull(waited.After);
+            Assert.Null(waited.Warning);
+            Assert.False(standIn.WaitForExit(0), "the awaited process was killed");
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(standIn);
+        }
+    }
 }

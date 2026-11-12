@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A second `stop_project` on a folder also waits for processes a quit game left and a game it could not open, listing any still running.
+
+### For agents
+
+- `stop_project` called again on a folder waits once more for the processes the first stop's warning named as left running (never killing them) and for a killed game the run could not open; any still running are listed by pid in `gameStillRunning`, so reading pids from the first warning and waiting by hand is no longer needed.
+
 ## 0.41.0 - 2026-11-12
 
 ### Added

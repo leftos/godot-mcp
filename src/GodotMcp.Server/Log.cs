@@ -172,6 +172,42 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Debug, Message = "Reading the start time of process {Pid} failed; it is not listed as left running.")]
     public static partial void LeftRunningUnreadable(ILogger logger, Exception exception, int pid);
 
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Reading the start time of process {Pid}, left running by the game, failed; a later stop will not wait for it."
+    )]
+    public static partial void LeftRunningNotRemembered(ILogger logger, Exception exception, int pid);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Reading the console wrapper's start time for {Project} failed; a later stop cannot tell game {Pid} from another process."
+    )]
+    public static partial void GameStartWindowUnreadable(ILogger logger, Exception exception, string project, int pid);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Listing processes to find process {Pid}, which a stopped session left, failed; it counts as gone."
+    )]
+    public static partial void StoppedProcessUnlisted(ILogger logger, Exception exception, int pid);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Opening a full-access handle on process {Pid}, which a stopped session left, failed; the stop holds no handle on it."
+    )]
+    public static partial void StoppedProcessHandleFailed(ILogger logger, Exception exception, int pid);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Reading process {Pid}, which a stopped session left, failed; it is not taken for the process the session recorded."
+    )]
+    public static partial void StoppedProcessUnreadable(ILogger logger, Exception exception, int pid);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Opening process {Pid}, which a stopped session's game left, to wait for it failed; it is reported still running."
+    )]
+    public static partial void StoppedProcessUnwaitable(ILogger logger, Exception exception, int pid);
+
     [LoggerMessage(Level = LogLevel.Debug, Message = "Listing processes with {Call} failed with Win32 error {Error}; leftRunning may be incomplete.")]
     public static partial void ProcessListFailed(ILogger logger, string call, int error);
 

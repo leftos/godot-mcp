@@ -141,6 +141,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public DateTime? GameStartTime { get; private set; }
 
     /// <summary>
+    /// When the game's creation time is unknown, the span it must have started in: from the console wrapper's creation to the
+    /// moment the game is taken in after the hello's handshake, in UTC; so a later stop can tell the game from a process that
+    /// took its pid. Null otherwise, or when the wrapper's creation time could not be read.
+    /// </summary>
+    public StartWindow? GameStartWindow { get; private set; }
+
+    /// <summary>
+    /// The processes the last run's quit game left that were still running after the stop's kill wait, for a later stop to wait
+    /// for again; empty from each new run's hello. Replaced as a whole, never changed in place, as a later stop reads it unlocked.
+    /// </summary>
+    public IReadOnlyList<LeftBehind.Remembered> LeftStillRunning { get; private set; } = [];
+
+    /// <summary>
     /// The game's main window handle, as its bridge's hello reported it; null before the handshake, from an older bridge, and
     /// for a headless game.
     /// </summary>
@@ -1167,15 +1180,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         connection.OnReplyFrames((read, replied) => ReceiveReplyFrames(runRecording, read, replied));
         connection.OnEndedWithCallsInFlight(() => KeepRecordingToEnd(runRecording));
         run.Connection = connection;
-        GameProcessId = connection.GameProcessId;
-        GameStartTime = null;
         WindowHandle = connection.WindowHandle;
-        if (GameProcessId is int gameProcessId)
-        {
-            run.KeepGameHandle(gameProcessId, _logger);
-            GameStartTime = StartTimeOf(run.Game);
-        }
-
+        KeepGame(run, connection.GameProcessId);
         await WelcomeAsync(connection);
 
         Log.RunStarted(_logger, processId, run.ProjectDir);
@@ -1204,6 +1210,49 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>Two warnings joined with a space, either alone when the other is null; null when both are.</summary>
     private static string? JoinWarnings(string? first, string? second) => first is null || second is null ? first ?? second : $"{first} {second}";
+
+    /// <summary>
+    /// Takes in a new run's game at its hello, from the pid the hello named: keeps a handle on it and its creation time, or, when
+    /// that time is unknown, the span it must have started in (<see cref="GameStartWindow"/>). What an earlier run's stop left
+    /// for a later stop is dropped.
+    /// </summary>
+    private void KeepGame(GodotRun run, int? gameProcessId)
+    {
+        GameProcessId = gameProcessId;
+        GameStartTime = null;
+        GameStartWindow = null;
+        LeftStillRunning = [];
+        if (gameProcessId is not int pid)
+        {
+            return;
+        }
+
+        run.KeepGameHandle(pid, _logger);
+        GameStartTime = StartTimeOf(run.Game);
+        if (GameStartTime is null)
+        {
+            GameStartWindow = StartWindowOf(run, pid);
+        }
+    }
+
+    /// <summary>
+    /// The span the run's game started in, in UTC: from its console wrapper's creation to now, as the game is taken in after the
+    /// hello's handshake; null, logged
+    /// at Debug, when the wrapper's creation time cannot be read.
+    /// </summary>
+    private StartWindow? StartWindowOf(GodotRun run, int pid)
+    {
+        try
+        {
+            DateTime wrapperStarted = run.Process.StartTime.ToUniversalTime();
+            return new StartWindow(wrapperStarted, DateTime.UtcNow);
+        }
+        catch (Exception e) when (e is InvalidOperationException or Win32Exception)
+        {
+            Log.GameStartWindowUnreadable(_logger, e, ProjectDir, pid);
+            return null;
+        }
+    }
 
     /// <summary>The creation time of a game the server holds a handle on; null without one, or when it cannot be read.</summary>
     private static DateTime? StartTimeOf(Process? game)
@@ -1787,6 +1836,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             // The game quit, so the wrapper still running is no kill the stop reports: its wait is only logged. Only the game's
             // children still running after it are.
             KilledGamesWait waited = await RunKill.KillAndWaitWithAsync(run.Process, children, registry.LaunchClock, _logger, ProjectDir);
+            LeftStillRunning = Remember(children, listed, waited.StillRunning);
             return new WrapperEnd(leftRunning, DescribeLeftStillRunning(listed, waited));
         }
         finally
@@ -1802,17 +1852,38 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// The warning naming the processes of <paramref name="listed"/> still running when <paramref name="waited"/> ended; null
     /// when none is.
     /// </summary>
-    private static string? DescribeLeftStillRunning(IReadOnlyList<LeftBehind.ListedProcess> listed, KilledGamesWait waited)
+    private static string? DescribeLeftStillRunning(IReadOnlyList<LeftBehind.ListedProcess> listed, KilledGamesWait waited) =>
+        LeftBehind.DescribeStillRunning(
+            [.. listed.Where(process => waited.StillRunning.Contains(process.Id)).Select(LeftBehind.Describe)],
+            waited.After
+        );
+
+    /// <summary>
+    /// The processes of <paramref name="children"/>, opened and still holding their handles, whose pids are in
+    /// <paramref name="stillRunning"/>, each with its creation time and its image name as <paramref name="listed"/> names it, for
+    /// a later stop to wait for again; one whose creation time cannot be read is logged at Debug and left out.
+    /// </summary>
+    private IReadOnlyList<LeftBehind.Remembered> Remember(
+        List<Process> children,
+        IReadOnlyList<LeftBehind.ListedProcess> listed,
+        IReadOnlyList<int> stillRunning
+    )
     {
-        string[] still = [.. listed.Where(process => waited.StillRunning.Contains(process.Id)).Select(LeftBehind.Describe)];
-        return still.Length switch
+        List<LeftBehind.Remembered> remembered = [];
+        foreach (Process child in children.Where(child => stillRunning.Contains(child.Id)))
         {
-            0 => null,
-            1 => $"The game left {still[0]} running, and it was still running after {waited.After}; "
-                + "its project folder stays in use until it is gone.",
-            _ => $"The game left {string.Join(", ", still)} running, and they were still running after {waited.After}; "
-                + "its project folder stays in use until they are gone.",
-        };
+            string name = listed.First(process => process.Id == child.Id).Name;
+            try
+            {
+                remembered.Add(new LeftBehind.Remembered(child.Id, child.StartTime, name));
+            }
+            catch (Exception e) when (e is InvalidOperationException or Win32Exception)
+            {
+                Log.LeftRunningNotRemembered(_logger, e, child.Id);
+            }
+        }
+
+        return [.. remembered];
     }
 
     /// <summary>
