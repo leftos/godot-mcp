@@ -5,6 +5,7 @@ build-diagnostics.json
 import-fingerprints.json
 remote.json
 runtimeconfig.json
+scratch-result-*.json
 # A file the docs name as absent by design
 pyproject.toml
 # A game repo's own script that run_scratches replaces
