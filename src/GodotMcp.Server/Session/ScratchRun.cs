@@ -1013,8 +1013,52 @@ internal sealed class ScratchRun
         }
     }
 
+    /// <summary>
+    /// The shot condition a step with an until carries in its until's wait as shotWhen, for step <paramref name="index"/>'s
+    /// GetStepShotUntil answer when options.capture shoots it: its condition built as wait_for builds one, without a timeout, a
+    /// preview or a call of its own, which the bridge checks at each frame drawn while the until polls and whose first holding
+    /// frame is the step's shot. Neither a condition nor a refusal for null or an empty dictionary, a step shot on its until's
+    /// met frame; the refusal, the shot's failure, for any other answer, a condition wait_for refuses, or a signal, gameMs or
+    /// frames condition, which a drawn frame cannot check.
+    /// </summary>
+    internal static (JsonObject? ShotWhen, string? Refusal) UntilShotWhen(JsonNode? answer, int index, int paceMs)
+    {
+        if (answer is null || answer is JsonObject { Count: 0 })
+        {
+            return (null, null);
+        }
+
+        if (answer is not JsonObject condition)
+        {
+            return (null, NotACondition(ShotUntilMethod, index, answer));
+        }
+
+        try
+        {
+            WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
+            JsonObject shotWhen = RuntimeTools.BuildWaitParameters(until, paceMs, new WaitOptions());
+            shotWhen.Remove(PreviewMaxWidthField);
+            shotWhen.Remove("timeoutMs");
+            string kind = shotWhen["kind"]!.GetValue<string>();
+            return kind is "signal" or "gameMs" or "frames"
+                ? (
+                    null,
+                    $"{ShotUntilMethod}({index}) returned a {kind} condition; a step with an until is shot on a condition checked at a "
+                        + "drawn frame, not signal, gameMs or frames"
+                )
+                : (shotWhen, null);
+        }
+        catch (Exception e) when (e is McpException or JsonException)
+        {
+            return (null, $"{ShotUntilMethod}({index}) was refused: {e.Message}");
+        }
+    }
+
     /// <summary>Why a step's shot failed when its shot condition did not hold before its pace had run.</summary>
     internal const string ShotNotHeld = "its shot condition did not hold within its pace";
+
+    /// <summary>Why a step's shot failed when its shot condition did not hold before its until was met.</summary>
+    internal const string ShotNotHeldBeforeUntil = "its shot condition did not hold before its until was met";
 
     /// <summary>A step method's refusal of an answer that is not a wait_for condition.</summary>
     private static string NotACondition(string method, int index, JsonNode answer) =>
@@ -1972,9 +2016,10 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Plays one step: paced (PlayStep, then a wait of its pace in game time; for a shot step with a shot condition, inside one
-    /// wait_for on it), or for a step whose GetStepUntil gives a condition, inside one wait_for on it; then GetStatus and the
-    /// window. The bridge's refusal of either wait is judged once the step's feed entries are in (<see cref="UntilFailure"/>,
-    /// <see cref="ShotWaitFailure"/>); a connection or session failure is the step's error at once.
+    /// wait_for on it), or for a step whose GetStepUntil gives a condition, inside one wait_for on it, which for a shot step
+    /// whose GetStepShotUntil gives a condition carries it as shotWhen, so the step is shot at it (<see cref="PlayUntilStepAsync"/>);
+    /// then GetStatus and the window. The bridge's refusal of either wait is judged once the step's feed entries are in
+    /// (<see cref="UntilFailure"/>, <see cref="ShotWaitFailure"/>); a connection or session failure is the step's error at once.
     /// </summary>
     private async Task<ScratchStep> PlayStepAsync(GodotSession session, int index, CancellationToken limit)
     {
@@ -1983,7 +2028,7 @@ internal sealed class ScratchRun
         StepPlay played =
             untilError is not null ? new StepPlay(untilError, null, null)
             : wait is null ? await PlayPacedStepAsync(session, index, gameMs, limit)
-            : await PlayInsideUntilAsync(session, index, wait, limit);
+            : await PlayUntilStepAsync(session, index, gameMs, wait, limit);
         StepShot shot = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError, IReadOnlyList<ErrorEntry> window) = await EndWindowAsync(
@@ -2079,8 +2124,9 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// A shot step's capture and the reply that holds it, or why there is none: the failure its play already gave its shot (a
-    /// shot condition refused or not held within the pace); the met frame its until's or its shot condition's wait_for captured;
-    /// else, for a paced step, the frame after its pace (<see cref="PacedShotAsync"/>).
+    /// shot condition refused, or not held within the pace or before the until was met); the frame its until's or its shot
+    /// condition's wait_for captured, for a step with an until the frame its shot condition first held on when GetStepShotUntil
+    /// gave one, else its until's met frame; else, for a paced step, the frame after its pace (<see cref="PacedShotAsync"/>).
     /// </summary>
     private async Task<(string? Capture, JsonNode? Shot, string? Reason)> CaptureAsync(GodotSession session, StepPlay played, CancellationToken limit)
     {
@@ -2206,6 +2252,47 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
+    /// A step with an until's play: for a step options.capture shoots whose root's GetStepShotUntil gives a condition, its until's
+    /// wait carries it as shotWhen (<see cref="ReadUntilShotAsync"/>), so the bridge shoots the first drawn frame that holds it;
+    /// a shot condition the runner refused, or a failed read of it, is the shot's failure while the until still plays
+    /// (<see cref="PlayInsideUntilAsync"/>).
+    /// </summary>
+    private async Task<StepPlay> PlayUntilStepAsync(GodotSession session, int index, int gameMs, JsonObject wait, CancellationToken limit)
+    {
+        (JsonObject? shotWhen, string? refusal) =
+            _hasShotUntil && _shots.Contains(index) ? await ReadUntilShotAsync(session, index, gameMs, limit) : (null, null);
+        if (shotWhen is not null)
+        {
+            wait["shotWhen"] = shotWhen;
+        }
+
+        return await PlayInsideUntilAsync(session, index, wait, refusal, limit);
+    }
+
+    /// <summary>
+    /// GetStepShotUntil(index) as the shot condition a step with an until carries as shotWhen (<see cref="UntilShotWhen"/>), with
+    /// the C# helper a state condition reads a C# node's state with, as wait_for adds it; none for a step shot on its until's met
+    /// frame; or why the read failed or the answer was refused.
+    /// </summary>
+    private async Task<(JsonObject? ShotWhen, string? Refusal)> ReadUntilShotAsync(
+        GodotSession session,
+        int index,
+        int gameMs,
+        CancellationToken limit
+    )
+    {
+        (JsonNode? answer, string? error) = await CallAsync(session, ShotUntilMethod, [index], limit);
+        if (error is not null)
+        {
+            return (null, error);
+        }
+
+        (JsonObject? shotWhen, string? refusal) = UntilShotWhen(answer, index, gameMs);
+        RuntimeTools.AddConditionStateHelper(shotWhen, _csharp, session.ProjectDir);
+        return (shotWhen, refusal);
+    }
+
+    /// <summary>
     /// GetStepUntil(index) as the until's wait parameters (none for a paced step), with the C# helper a state condition reads a
     /// C# node's state with, as wait_for adds it; or why the step fails.
     /// </summary>
@@ -2315,9 +2402,12 @@ internal sealed class ScratchRun
     /// One wait_for on the step's until, PlayStep its call, ended when its condition holds, however long past the step's pace,
     /// and released only at the step's own hang guard in load-adjusted time (<see cref="ScratchBounds.UntilReleaseOf"/>): its
     /// figures and, when not met, why the step fails (<see cref="UntilMissed"/>); the bridge's refusal, judged by the caller; or
-    /// why the wait failed on the connection.
+    /// why the wait failed on the connection. A wait carrying shotWhen has the frame its shot condition first held on as its
+    /// screenshot, and the shot fails when the bridge refused the condition or it never held before the until was met
+    /// (<see cref="UntilShotFailure"/>); without one, <paramref name="shotRefusal"/>, why the step's shot condition was not
+    /// sent, is the shot's failure, the met frame then going unused.
     /// </summary>
-    private async Task<StepPlay> PlayInsideUntilAsync(GodotSession session, int index, JsonObject wait, CancellationToken limit)
+    private async Task<StepPlay> PlayInsideUntilAsync(GodotSession session, int index, JsonObject wait, string? shotRefusal, CancellationToken limit)
     {
         TimeSpan guard = _walk.GuardOf(index);
         TimeSpan release = _bounds.UntilReleaseOf(guard);
@@ -2327,7 +2417,13 @@ internal sealed class ScratchRun
             JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
             ScratchUntil until = UntilFigures(reply);
             string? notMet = until.Met ? null : UntilMissed(index, _names[index], until, guard.TotalSeconds, _scene.TimeScale);
-            return new StepPlay(notMet, null, until) { Reply = reply, EndMarked = EndMarked(reply) };
+            string? shotFailure = wait.ContainsKey("shotWhen") ? UntilShotFailure(reply, index) : shotRefusal;
+            return new StepPlay(notMet, null, until)
+            {
+                Reply = reply,
+                ShotFailure = shotFailure,
+                EndMarked = EndMarked(reply),
+            };
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
         {
@@ -2337,9 +2433,25 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
+    /// Why the shot of step <paramref name="index"/>, whose until's wait carried shotWhen, failed, from the wait's
+    /// <paramref name="reply"/>: the bridge's refusal of the shot condition (shotError), else that it did not hold before the
+    /// until was met (<see cref="ShotNotHeldBeforeUntil"/>); null once it held.
+    /// </summary>
+    internal static string? UntilShotFailure(JsonNode? reply, int index)
+    {
+        if (reply?["shotError"] is JsonValue error && error.TryGetValue(out string? text))
+        {
+            return $"{ShotUntilMethod}({index}) was refused: {text}";
+        }
+
+        return reply?["shotHeld"] is JsonValue held && held.TryGetValue(out bool shot) && shot ? null : ShotNotHeldBeforeUntil;
+    }
+
+    /// <summary>
     /// How a step's play went: why it failed, or the bridge's refusal of its until's wait or its shot condition's wait, the
-    /// until's figures, its wait_for reply, which holds the met frame's screenshot for a captured step (its until's, or its shot
-    /// condition's), why its shot already failed in the play, whether the play waited on its shot condition, which says
+    /// until's figures, its wait_for reply, which holds the captured frame's screenshot for a captured step (its until's met
+    /// frame, the frame its shot condition first held on before the until was met, or a paced step's shot condition's met
+    /// frame), why its shot already failed in the play, whether the play waited on a paced step's shot condition, which says
     /// whose wait a refusal is, and whether the bridge ended the step's window as the step's last wait ended.
     /// </summary>
     private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until)

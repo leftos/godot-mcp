@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `run_scratches` `options.capture.steps` takes a per-scene map, `{"<Scene>": steps}`, so each scene shoots its own steps.
+- `run_scratches` capture shoots a step with an until at its `GetStepShotUntil` condition, so a page open mid-step can be shot before the step closes it.
 
 ### Fixed
 

@@ -32,6 +32,12 @@ public sealed class ScratchLookRunTests : ScratchRunBase
         "ScratchShotPaced.tscn",
         "ScratchShotUntil.tscn",
         "ScratchShotNever.tscn",
+        "scratch_shot_until_step.gd",
+        "scratch_shot_mid.gd",
+        "scratch_shot_mid_never.gd",
+        "ScratchShotUntilStep.tscn",
+        "ScratchShotMid.tscn",
+        "ScratchShotMidNever.tscn",
     ];
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -254,6 +260,41 @@ public sealed class ScratchLookRunTests : ScratchRunBase
         JsonArray details = scene["details"]!.AsArray();
         Assert.Null(StepDetail(details, 0)["screenshot"]);
         AssertWaitedTheWholePace(StepDetail(details, 1));
+    }
+
+    // ScratchShotUntilStep's first step has an until met as its rect turns blue again after the red flash; ScratchShotMid is the
+    // same step with a GetStepShotUntil condition on the red state, so its shot is taken mid-step, before the until is met.
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
+    [InlineData("ScratchShotMid", new byte[] { 255, 0, 0 })]
+    [InlineData("ScratchShotUntilStep", new byte[] { 0, 0, 255 })]
+    public async Task AStepWithAnUntilIsShotAtItsShotConditionAndOneWithoutAtItsUntil(string name, byte[] centre)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CopyShotFixtures();
+
+        JsonObject scene = ScratchRunnerTests.Single(await RunAsync(_probe.Directory, [name], ShotStepZero(), cancellation));
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.Null(scene["warnings"]);
+        string shot = StepDetail(scene["details"]!.AsArray(), 0)["screenshot"]!.GetValue<string>();
+        var image = PngImage.Decode(await File.ReadAllBytesAsync(shot, cancellation), shot);
+        int at = ((image.Height / 2 * image.Width) + (image.Width / 2)) * image.Channels;
+        Assert.Equal(centre, image.Pixels[at..(at + 3)]);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AShotConditionThatNeverHoldsLeavesAStepWithAnUntilUnshotWithAWarning()
+    {
+        CopyShotFixtures();
+
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(_probe.Directory, ["ScratchShotMidNever"], ShotStepZero(), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        string warning = Assert.Single(scene["warnings"]!.AsArray())!.GetValue<string>();
+        Assert.Equal(ScratchVerdict.ShotFailed(0, "flash", ScratchRun.ShotNotHeldBeforeUntil), warning);
+        Assert.Null(StepDetail(scene["details"]!.AsArray(), 0)["screenshot"]);
     }
 
     /// <summary>Copies the scratch_shot fixtures into the probe's scratch folder.</summary>

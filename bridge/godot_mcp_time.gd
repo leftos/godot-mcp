@@ -87,6 +87,7 @@ func _init() -> void:
 	signal_wait.time = self
 	add_child(signal_wait)
 	add_child((load(script_dir.path_join("godot_mcp_hold.gd")) as GDScript).new())
+	add_child((load(script_dir.path_join("godot_mcp_mid_shot.gd")) as GDScript).new())
 
 
 ## Runs params.action: pause, resume, step {count, unit, screenshot, previewMaxWidth} or
@@ -164,11 +165,13 @@ func _end(deadline: SceneTreeTimer) -> void:
 	_running_params = null
 
 
-## Drops an exit hold that rode on params (the Hold child) and ends the running step or capture as
-## its deadline would, when params is the very Dictionary its request holds (a step leaves the tree
-## paused, STEP_STALLED; a capture answers the frames taken). Returns whether it ended one.
+## Drops an exit hold and a shot check that rode on params (the Hold and MidShot children) and ends
+## the running step or capture as its deadline would, when params is the very Dictionary its request
+## holds (a step leaves the tree paused, STEP_STALLED; a capture answers the frames taken). Returns
+## whether it ended one.
 func cancel(params: Dictionary) -> bool:
 	$Hold.drop_for(params)
+	$MidShot.drop_for(params)
 	if _running.is_empty() or not is_same(params, _running_params):
 		return false
 	_on_deadline()
@@ -475,7 +478,8 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 ## (a scratch fixture) that must time something from the wait's start joins the group. _tree() is
 ## the tree it reads and tells. Scratch's own params, which the MCP tool never sends: endMarker
 ## ends the step's window as the wait ends, endMarkerAtGameMs holds a met one's end to that game
-## time (_end_window), holdGameMs/holdEndMarker run the exit hold (Hold), keepRaised keeps errors.
+## time (_end_window), holdGameMs/holdEndMarker run the exit hold (Hold), keepRaised keeps errors,
+## shotWhen is a shot condition checked at each draw, its first holding frame the shot (MidShot).
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var tree: Object = _tree()
@@ -646,8 +650,9 @@ static func _add_game_ms(outcome: Dictionary, params: Dictionary) -> void:
 
 ## Polls probe as _poll does (params.backstopMs when sent, else timeout_ms, until a cancel), with
 ## params.screenshot checking probe at each draw of a waiting wait (_check_at_draws) and capturing
-## the met frame. The poll's end first ends a scratch step's window (_end_window), and a met wait
-## not held to that end keeps its met check's game ms (params._metGameMs). A met wait runs
+## the met frame, or with params.shotWhen the frame its shot check first held on (MidShot), none
+## when it never held. The poll's end first ends a scratch step's window (_end_window), and a met
+## wait not held to that end keeps its met check's game ms (params._metGameMs). A met wait runs
 ## params.then there (_finish_then): the result holds then and screenshot or warning, or {error}.
 func _poll_and_capture(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
 	var bound_ms: float = _bound_ms(params, timeout_ms)
@@ -658,12 +663,16 @@ func _poll_and_capture(probe: Callable, timeout_ms: int, params: Dictionary) -> 
 	var drawn: Dictionary = {"params": params}
 	if timeout_ms > 0:
 		probe = _check_at_draws(probe, drawn)
+	$MidShot.start(params)
 	var outcome: Dictionary = _end_window(await _poll(probe, bound_ms, params), params)
 	_stop_draw_checks(drawn)
+	var image: Variant = $MidShot.take(outcome, drawn.get("image"), params)
 	outcome = _finish_then(outcome, params, drawn)
 	if outcome.has("error") or not outcome["result"]["met"]:
 		return outcome
-	var captured: Dictionary = await _with_capture(drawn.get("image"), params, outcome["result"])
+	if not outcome["result"].get("shotHeld", true):
+		return await _hold_to_window_end(outcome, params, bound_ms, began)
+	var captured: Dictionary = await _with_capture(image, params, outcome["result"])
 	return await _hold_to_window_end(captured, params, bound_ms, began)
 
 
@@ -953,7 +962,7 @@ func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dict
 		result["warning"] = headless
 		return {"result": result}
 	if image == null:
-		image = await _capture_this_frame()
+		image = await $MidShot.capture_this_frame()
 	if image == null:
 		result["warning"] = NOT_DRAWN_WARNING
 		return {"result": result}
@@ -981,18 +990,6 @@ func _save_capture(image: Image, params: Dictionary, result: Dictionary) -> Dict
 		return {"error": saved}
 	result["screenshot"] = saved
 	return {"result": result}
-
-
-## The image of the frame drawn before the next process_frame, which from a request's handler or
-## a process_frame is the frame running now, or null when that frame is not drawn.
-func _capture_this_frame() -> Image:
-	var shot: Array[Image] = []
-	var grab := func() -> void: shot.append(bridge._frame.grab_frame())
-	RenderingServer.frame_post_draw.connect(grab, CONNECT_ONE_SHOT)
-	await get_tree().process_frame
-	if RenderingServer.frame_post_draw.is_connected(grab):
-		RenderingServer.frame_post_draw.disconnect(grab)
-	return null if shot.is_empty() else shot[0]
 
 
 ## params[key] when it is a String, else empty: the server leaves out fields it has no value for.

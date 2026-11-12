@@ -225,6 +225,84 @@ public sealed class ScratchUntilTests
         );
     }
 
+    // A step with an until options.capture shoots, whose GetStepShotUntil gives a condition, carries it in its until's wait as
+    // shotWhen: the condition alone, checked at each drawn frame, with no timeout, preview or call of its own.
+    [Fact]
+    public void AShotConditionForAStepWithAnUntilIsTheConditionAloneWithoutATimeoutPreviewOrCall()
+    {
+        (JsonObject? shotWhen, string? refusal) = ScratchRun.UntilShotWhen(
+            JsonNode.Parse("{\"node\": \"Globe\", \"property\": \"shot_ready\", \"equals\": true}"),
+            2,
+            2000
+        );
+
+        Assert.Null(refusal);
+        Assert.Equal("property", shotWhen!["kind"]!.GetValue<string>());
+        Assert.Equal(("Globe", "shot_ready"), (shotWhen["node"]!.GetValue<string>(), shotWhen["property"]!.GetValue<string>()));
+        Assert.True(shotWhen["equals"]!.GetValue<bool>());
+        Assert.False(shotWhen.ContainsKey("timeoutMs"), shotWhen.ToJsonString());
+        Assert.False(shotWhen.ContainsKey("previewMaxWidth"), shotWhen.ToJsonString());
+        Assert.False(shotWhen.ContainsKey("call"), shotWhen.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    public void NullOrAnEmptyDictionaryShotConditionLeavesAStepWithAnUntilShotAtItsMetFrame(string answer) =>
+        Assert.Equal(((JsonObject?)null, (string?)null), ScratchRun.UntilShotWhen(JsonNode.Parse(answer), 0, 2000));
+
+    [Theory]
+    [InlineData("\"soon\"", "GetStepShotUntil(2) returned \"soon\", not a wait_for condition")]
+    [InlineData("[1]", "GetStepShotUntil(2) returned [1], not a wait_for condition")]
+    [InlineData("true", "GetStepShotUntil(2) returned true, not a wait_for condition")]
+    public void AShotConditionForAStepWithAnUntilNeitherADictionaryNorNullIsRefused(string answer, string refused) =>
+        Assert.Equal(((JsonObject?)null, refused), ScratchRun.UntilShotWhen(JsonNode.Parse(answer), 2, 2000));
+
+    [Theory]
+    [InlineData("{\"node\": \"Globe\", \"signal\": \"Settled\"}", "signal")]
+    [InlineData("{\"gameMs\": 100}", "gameMs")]
+    [InlineData("{\"frames\": 3}", "frames")]
+    public void AShotConditionForAStepWithAnUntilNotCheckedAtADrawnFrameIsRefused(string answer, string kind) =>
+        Assert.Equal(
+            (
+                (JsonObject?)null,
+                $"GetStepShotUntil(1) returned a {kind} condition; a step with an until is shot on a condition checked at a drawn frame, "
+                    + "not signal, gameMs or frames"
+            ),
+            ScratchRun.UntilShotWhen(JsonNode.Parse(answer), 1, 2000)
+        );
+
+    [Fact]
+    public void AShotConditionForAStepWithAnUntilThatWaitForRefusesIsRefused()
+    {
+        (JsonObject? shotWhen, string? refusal) = ScratchRun.UntilShotWhen(
+            JsonNode.Parse("{\"node\": \"Globe\", \"signal\": \"Settled\", \"expression\": \"true\"}"),
+            1,
+            2000
+        );
+
+        Assert.Null(shotWhen);
+        Assert.StartsWith("GetStepShotUntil(1) was refused: condition needs exactly one of: ", refusal, StringComparison.Ordinal);
+    }
+
+    // A step with an until whose wait carried shotWhen: the bridge's refusal of the shot condition, its hold, or why it is unshot.
+    [Theory]
+    [InlineData("{\"met\": true, \"shotHeld\": false, \"shotError\": \"unknown condition kind 'bogus'\"}", "refused")]
+    [InlineData("{\"met\": true, \"shotHeld\": true}", null)]
+    [InlineData("{\"met\": true, \"shotHeld\": false}", "not held")]
+    [InlineData("{\"met\": true}", "not held")]
+    [InlineData("null", "not held")]
+    public void AStepWithAnUntilsShotFailureIsTheShotConditionsRefusalOrThatItDidNotHold(string reply, string? failure) =>
+        Assert.Equal(
+            failure switch
+            {
+                "refused" => "GetStepShotUntil(3) was refused: unknown condition kind 'bogus'",
+                "not held" => ScratchRun.ShotNotHeldBeforeUntil,
+                _ => null,
+            },
+            ScratchRun.UntilShotFailure(JsonNode.Parse(reply), 3)
+        );
+
     [Fact]
     public void AShotConditionThatDidNotHoldWithinItsPaceIsTheShotsWarning() =>
         Assert.Equal(
