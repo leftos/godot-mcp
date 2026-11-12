@@ -7,10 +7,12 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A second `stop_project` on a folder also waits for processes a quit game left and a game it could not open, listing any still running.
+- A scene tool's node path that names no node now names the deepest node that exists and its children.
 
 ### For agents
 
 - `stop_project` called again on a folder waits once more for the processes the first stop's warning named as left running (never killing them) and for a killed game the run could not open; any still running are listed by pid in `gameStillRunning`, so reading pids from the first warning and waiting by hand is no longer needed.
+- Headless scene tools (`get_node_properties`, `set_node_properties`, `add_node`, `move_node`, `delete_nodes`, the signal tools, …): a node path the scene does not hold is refused as `<scene> has no node <path>: <deepest node> has no child '<name>' (children: …).`, so the right path is one call away instead of a read of the scene file.
 
 ## 0.41.0 - 2026-11-12
 

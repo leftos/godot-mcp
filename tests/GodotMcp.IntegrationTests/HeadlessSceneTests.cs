@@ -568,7 +568,8 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         Assert.Equal(
             "delete_nodes failed: Boss/Sprite is inside the instance of res://enemy.tscn at Boss; its changes would not be saved. "
-                + "Edit res://enemy.tscn instead. res://level.tscn has no node Ghost.",
+                + "Edit res://enemy.tscn instead. res://level.tscn has no node Ghost: its root has no child 'Ghost' "
+                + "(children: Boss, Btn, Box).",
             refused.Message
         );
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));

@@ -943,7 +943,8 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
 
         Assert.Equal(
-            "set_node_properties failed: Box has no property nope. res://level.tscn has no node Missing. "
+            "set_node_properties failed: Box has no property nope. res://level.tscn has no node Missing: its root has "
+                + "no child 'Missing' (children: Boss, Box, Pic, Holder). "
                 + "Property 'visible' on 'Box' is bool; \"no\" does not convert to it.",
             refused.Message
         );
@@ -1359,7 +1360,8 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         Assert.Equal(
             """[{"nodePath":"Box","type":"Node2D","properties":{"visible":true}},"""
-                + """{"nodePath":"Nope","error":"res://level.tscn has no node Nope."},"""
+                + """{"nodePath":"Nope","error":"res://level.tscn has no node Nope: its root has no child """
+                + """\u0027Nope\u0027 (children: Boss, Box, Pic, Holder)."},"""
                 + """{"nodePath":"Box","error":"Box has no property nope."}]""",
             read["results"]!.ToJsonString()
         );
@@ -1570,7 +1572,10 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         Assert.Equal("add_node failed: nodeType 'NoSuchNode' is not a Node class, a script class_name or a scene.", unknown.Message);
         Assert.Equal("add_node failed: nodeType 'Resource' is not a Node class, a script class_name or a scene.", notANode.Message);
-        Assert.Equal("add_node failed: res://level.tscn has no node Nope.", noParent.Message);
+        Assert.Equal(
+            "add_node failed: res://level.tscn has no node Nope: its root has no child 'Nope' " + "(children: Boss, Box, Pic, Holder).",
+            noParent.Message
+        );
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 

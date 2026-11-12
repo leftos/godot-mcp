@@ -89,6 +89,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A path that names no node is refused with the base it was read from, the deepest node on it that exists, the name that node lacks and up to 10 of its children (`(+n)` for the rest): `No node 'Main/Missing' in the running game: a path is read from /root, and /root/Main has no child 'Missing' (children: HUD, Board); …`; a bare name says none was found anywhere under `/root`.
 
+  A headless node path that names no node in the scene file is refused the same way, from the scene's root: `res://hud.tscn has no node Plate/Column/Scroll: Plate has no child 'Column' (children: Rows, Title).`, or `its root has no child '<name>'` when the root lacks the first name; this covers every scene tool that takes a node path. `get_scene_file_tree`'s `root` still says only that the scene has no such node.
+
   Every tool that names a node refuses this way, the input tools' `{element}`, `wait_for`'s signal wait, `watch`'s tracks and a `{"$node": path}` argument to the C# tools included; the closing hint points to `get_ui_elements` for an input target and to `get_scene_tree` elsewhere.
 - **C# projects.**
 

@@ -8,6 +8,7 @@ extends RefCounted
 ## inherited connections: 4.7.2 packed_scene.cpp L233-236, L682).
 
 const SceneFiles := preload("scene_files.gd")
+const ScenePaths := preload("scene_paths.gd")
 const SceneSplice := preload("scene_splice.gd")
 const SceneTabs := preload("scene_tabs.gd")
 const Json := preload("../bridge/godot_mcp_json.gd")
@@ -101,12 +102,11 @@ static func find(root: Node, path: String) -> Node:
 	return root.get_node_or_null(NodePath(path))
 
 
-## {node} for the node at path relative to root, or {error} saying the scene at scene_path has no
-## such node.
+## {node} for the node at path relative to root, or {error} saying scene_path has no such node.
 static func node_or_error(root: Node, path: String, scene_path: String) -> Dictionary:
 	var node: Node = find(root, path)
 	if node == null:
-		return {"error": "%s has no node %s." % [scene_path, path]}
+		return {"error": ScenePaths.node_miss(root, path, scene_path)}
 	return {"node": node}
 
 

@@ -1,6 +1,8 @@
 extends "res://gd_test.gd"
 ## The headless scene edits' C# refusal (headless/scene_edit.gd csharp_refusal): refused only while
-## the build failed and the scene uses C#, quoting the configuration and the compiler errors.
+## the build failed and the scene uses C#, quoting the configuration and the compiler errors. And
+## the node refusal (SceneEdit.node_or_error): a missing path names the deepest node of it that
+## exists, the segment it lacks and that node's children.
 
 const SCENE_EDIT_SCRIPT := "../../headless/scene_edit.gd"
 const ERRORS := "D:/p/CsProbeNode.cs:10: CS1002 ; expected\n(and 3 more)"
@@ -69,6 +71,117 @@ func test_pack_native_stores_the_engine_value_a_script_member_hides() -> void:
 		ClassDB.class_get_property(hidden, "scale"), Vector2(2, 2), "the live node is left alone"
 	)
 	root.free()
+
+
+func test_a_missing_path_names_the_deepest_node_and_its_children() -> void:
+	var root := _plate_tree()
+	assert_eq(
+		_edit.node_or_error(root, "Plate/Column/Scroll", "res://s.tscn"),
+		{
+			"error":
+			(
+				"res://s.tscn has no node Plate/Column/Scroll: Plate has no child 'Column'"
+				+ " (children: Rows, Title)."
+			)
+		},
+		"a missing segment names the node it is missing under and that node's children"
+	)
+	root.free()
+
+
+func test_a_missing_child_of_the_root_names_the_root() -> void:
+	var root := _plate_tree()
+	assert_eq(
+		_edit.node_or_error(root, "Nope", "res://s.tscn"),
+		{"error": "res://s.tscn has no node Nope: its root has no child 'Nope' (children: Plate)."},
+		"a path whose first segment is missing names the root"
+	)
+	root.free()
+
+
+func test_a_missing_last_segment_names_its_parent() -> void:
+	var root := _plate_tree()
+	assert_eq(
+		_edit.node_or_error(root, "Plate/Rows/Gone", "res://s.tscn"),
+		{
+			"error":
+			(
+				"res://s.tscn has no node Plate/Rows/Gone: Plate/Rows has no child 'Gone'"
+				+ " (children: Scroll)."
+			)
+		},
+		"a path that exists but for its last segment names that segment's parent"
+	)
+	root.free()
+
+
+func test_a_node_with_no_children_says_none() -> void:
+	var root := _plate_tree()
+	assert_eq(
+		_edit.node_or_error(root, "Plate/Title/X", "res://s.tscn"),
+		{
+			"error":
+			(
+				"res://s.tscn has no node Plate/Title/X: Plate/Title has no child 'X'"
+				+ " (children: none)."
+			)
+		},
+		"a node without children lists none"
+	)
+	root.free()
+
+
+func test_more_than_ten_children_are_cut_at_ten() -> void:
+	var root := Node.new()
+	root.name = "Root"
+	for index in 12:
+		_child_named(root, "C%d" % index)
+	assert_eq(
+		_edit.node_or_error(root, "Nope", "res://s.tscn"),
+		{
+			"error":
+			(
+				"res://s.tscn has no node Nope: its root has no child 'Nope' (children:"
+				+ " C0, C1, C2, C3, C4, C5, C6, C7, C8, C9 (+2))."
+			)
+		},
+		"only ten children are listed, with the count of the rest"
+	)
+	root.free()
+
+
+func test_a_path_that_exists_returns_its_node() -> void:
+	var root := _plate_tree()
+	assert_eq(
+		_edit.node_or_error(root, "Plate/Rows/Scroll", "res://s.tscn"),
+		{"node": root.get_node("Plate/Rows/Scroll")},
+		"an existing path returns its node"
+	)
+	assert_eq(
+		_edit.node_or_error(root, "./Plate", "res://s.tscn"),
+		{"node": root.get_node("Plate")},
+		"a path starting at ./ is read from the root"
+	)
+	root.free()
+
+
+## A root named Root holding Plate, which holds Rows and Title, Rows holding Scroll.
+func _plate_tree() -> Node:
+	var root := Node.new()
+	root.name = "Root"
+	var plate := _child_named(root, "Plate")
+	_child_named(plate, "Rows")
+	_child_named(plate, "Title")
+	_child_named(plate.get_node("Rows"), "Scroll")
+	return root
+
+
+## A plain Node named node_name added under parent.
+func _child_named(parent: Node, node_name: String) -> Node:
+	var node := Node.new()
+	node.name = node_name
+	parent.add_child(node)
+	return node
 
 
 ## A Node2D named node_name under root, owned by it, with engine scale and a script whose _get
