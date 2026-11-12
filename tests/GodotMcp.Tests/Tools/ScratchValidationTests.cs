@@ -1335,7 +1335,11 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Theory]
-    [InlineData("true", "options.capture.steps is a true; it must be a step index or name, or an array of them.")]
+    [InlineData(
+        "true",
+        "options.capture.steps is a true; it must be a step index or name, an array of them, or an object mapping a scene name to one or an "
+            + "array."
+    )]
     [InlineData("[]", "options.capture.steps is empty; list the steps to shoot by index or name, or leave it out to shoot every played step.")]
     [InlineData("[-1]", "options.capture.steps token -1 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
     [InlineData("[1.5]", "options.capture.steps token 1.5 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
@@ -1368,6 +1372,95 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Null(error);
         Assert.Equal([0], steps!);
     }
+
+    [Fact]
+    public void ACaptureMapGivesEachSceneItsOwnSteps()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan plan = Plan(["Beta", "Alpha"], CaptureOf("""{ "Beta": [0, "close"], "Alpha": "open" }"""));
+
+        Assert.Null(plan.Capture!.Steps);
+        Assert.Equal([new("0", IsNumber: true), new ScratchStepToken("close", IsNumber: false)], plan.Capture.StepsFor("Beta"));
+        Assert.Equal([new ScratchStepToken("open", IsNumber: false)], plan.Capture.StepsFor("Alpha"));
+    }
+
+    [Fact]
+    public void ASceneTheCaptureMapLeavesOutHasEveryPlayedStepShot()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan plan = Plan(["Beta", "Alpha"], CaptureOf("""{ "Beta": [0] }"""));
+
+        Assert.Null(plan.Capture!.StepsFor("Alpha"));
+    }
+
+    [Fact]
+    public void ACaptureMapKeyThatIsNoSceneIsRefused()
+    {
+        string message = Refused(() => Plan(["res://Scratch/Beta.tscn"], CaptureOf("""{ "Alpha": [0] }""")));
+
+        Assert.Equal(
+            "options.capture.steps scene 'Alpha' is not in the plan; its scenes are Beta. Pass one of those; a scene the map leaves out "
+                + "has every played step shot.",
+            message
+        );
+    }
+
+    [Fact]
+    public void AnEmptyCaptureMapIsRefused() =>
+        Assert.Equal(
+            "options.capture.steps is an empty map; name a scene and its steps, or leave steps out to shoot every played step.",
+            Refused(() => Plan(["res://Other.tscn"], CaptureOf("{}")))
+        );
+
+    [Fact]
+    public void AnEmptyCaptureListForASceneIsRefusedNamingTheScene()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        Assert.Equal(
+            "options.capture.steps for Beta is empty; list the steps to shoot by index or name, or leave it out to shoot every played step.",
+            Refused(() => Plan(["Beta"], CaptureOf("""{ "Beta": [] }""")))
+        );
+    }
+
+    [Fact]
+    public void ANullCaptureListForASceneIsRefused()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        Assert.Equal(
+            "options.capture.steps for Beta is null; list that scene's steps by index or name, or leave the scene out to shoot every played step.",
+            Refused(() => Plan(["Beta"], CaptureOf("""{ "Beta": null }""")))
+        );
+    }
+
+    [Theory]
+    [InlineData("""{ "Beta": true }""", "options.capture.steps for Beta is a true; it must be a step index or name, or an array of them.")]
+    [InlineData("""{ "Beta": {} }""", "options.capture.steps for Beta is a object; it must be a step index or name, or an array of them.")]
+    [InlineData(
+        """{ "Beta": [-1] }""",
+        "options.capture.steps for Beta token -1 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name."
+    )]
+    public void ACaptureMapValueThatIsNoListOfStepsIsRefusedNamingTheScene(string steps, string refusal)
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        Assert.Equal(refusal, Refused(() => Plan(["Beta"], CaptureOf(steps))));
+    }
+
+    [Fact]
+    public void ACaptureMapWithoutWindowedIsRefusedForWindowedFirst() =>
+        Assert.Equal(
+            "options.capture needs options.windowed: true, since a headless scene draws no frames",
+            Refused(() =>
+                Plan(
+                    ["res://Other.tscn"],
+                    new ScratchOptions(Capture: new ScratchCaptureOptions(Steps: Tokens("""{ "Other": [0] }"""), Screenshot: true))
+                )
+            )
+        );
 
     [Theory]
     [InlineData(0)]

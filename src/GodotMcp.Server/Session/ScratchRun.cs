@@ -206,8 +206,22 @@ internal sealed record ScratchPlan(
     public ScratchCapture? Capture { get; init; }
 }
 
-/// <summary>options.capture as a plan holds it: the tokens naming the steps to shoot, by index or name; null shoots every played step.</summary>
-internal sealed record ScratchCapture(IReadOnlyList<ScratchStepToken>? Steps);
+/// <summary>
+/// options.capture as a plan holds it: the tokens naming the steps to shoot, by index or name, for every scene (Steps) or per scene
+/// (StepsByScene); a scene with no tokens has every played step shot.
+/// </summary>
+internal sealed record ScratchCapture(IReadOnlyList<ScratchStepToken>? Steps)
+{
+    /// <summary>
+    /// options.capture.steps' tokens when it is a map, keyed by the scene they apply to; a scene the map leaves out shoots every
+    /// played step. Empty when options.capture.steps is a list or left out.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<ScratchStepToken>> StepsByScene { get; init; } =
+        ReadOnlyDictionary<string, IReadOnlyList<ScratchStepToken>>.Empty;
+
+    /// <summary>The tokens the scene named <paramref name="scene"/> shoots; null shoots every played step.</summary>
+    public IReadOnlyList<ScratchStepToken>? StepsFor(string scene) => Steps ?? StepsByScene.GetValueOrDefault(scene);
+}
 
 /// <summary>
 /// A scene's step paces by index, the steps a run plays of them, ascending, the time scale its game runs at and its exit hold:
@@ -815,13 +829,13 @@ internal sealed class ScratchRun
     /// </summary>
     internal static (int[]? Steps, string? Error) CaptureSteps(ScratchCapture capture, string scene, ScratchStepNames names)
     {
-        if (capture.Steps is null)
+        if (capture.StepsFor(scene) is not { } tokens)
         {
             return (null, null);
         }
 
         SortedSet<int> steps = [];
-        foreach (ScratchStepToken token in capture.Steps)
+        foreach (ScratchStepToken token in tokens)
         {
             (int step, string? error) = token.IsNumber ? CaptureIndex(token, scene, names) : StepOf(token.Text, CaptureTokenLabel, scene, names);
             if (error is not null)
@@ -1806,7 +1820,7 @@ internal sealed class ScratchRun
     /// <summary>Adds the scene warning naming the steps options.capture.steps names that the run does not play, if any.</summary>
     private void WarnOfUnplayedShots()
     {
-        if (_plan.Capture?.Steps is not null && CaptureNotPlayed(_shots, _walk.Played, _names) is { } unplayed)
+        if (_plan.Capture?.StepsFor(_scene.Name) is not null && CaptureNotPlayed(_shots, _walk.Played, _names) is { } unplayed)
         {
             _warnings.Add(unplayed);
         }

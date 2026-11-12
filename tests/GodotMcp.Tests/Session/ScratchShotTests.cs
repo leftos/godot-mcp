@@ -175,6 +175,22 @@ public sealed class ScratchShotTests
     [Fact]
     public void CapturedStepsTheRunPlaysAllGiveNoWarning() => Assert.Null(ScratchRun.CaptureNotPlayed([0, 2], [0, 1, 2], ["open", "hit", "fight"]));
 
+    [Fact]
+    public void CaptureStepsTakeEachScenesOwnListFromAMap()
+    {
+        ScratchStepNames names = new(["open", "fight", "close"], new HashSet<int>());
+        ScratchCapture capture = new(null)
+        {
+            StepsByScene = new Dictionary<string, IReadOnlyList<ScratchStepToken>> { ["A"] = [new ScratchStepToken("close", IsNumber: false)] },
+        };
+
+        (int[]? steps, string? error) = ScratchRun.CaptureSteps(capture, "A", names);
+
+        Assert.Null(error);
+        Assert.Equal([2], steps!);
+        Assert.Equal(((int[]?)null, (string?)null), ScratchRun.CaptureSteps(capture, "B", names));
+    }
+
     private static ScratchScenePlan[] Scenes(params string[] resPaths) => [.. resPaths.Select(Scene)];
 
     private static ScratchScenePlan Scene(string resPath) =>

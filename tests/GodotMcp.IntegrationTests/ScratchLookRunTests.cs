@@ -174,6 +174,47 @@ public sealed class ScratchLookRunTests : ScratchRunBase
         }
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ACaptureMapShootsEachSceneAtItsOwnSteps()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        foreach (string file in new[] { "scratch_until_released.gd", $"{Released}.tscn" })
+        {
+            File.Copy(Path.Combine(RepoPaths.InputProbe, "scratch_until", file), Path.Combine(_probe.Directory, "scratch", file));
+        }
+
+        Directory.CreateDirectory(Path.Combine(_probe.Directory, ".godot"));
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ".godot", "scratch_released.marker"), "released", cancellation);
+        CopyShotFixtures();
+        Dictionary<string, string[]> steps = new() { [Released] = ["done"], ["ScratchShotPaced"] = ["flash"] };
+        ScratchCaptureOptions capture = new(Steps: JsonSerializer.SerializeToElement(steps), Screenshot: true);
+
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            [Released, "ScratchShotPaced"],
+            new ScratchOptions(Windowed: true, Capture: capture, Details: ScratchRunnerTests.FullDetails),
+            cancellation
+        );
+
+        JsonArray scenes = result["scenes"]!.AsArray();
+        JsonObject until = scenes.Single(scene => scene!["scene"]!.GetValue<string>() == Released)!.AsObject();
+        JsonObject paced = scenes.Single(scene => scene!["scene"]!.GetValue<string>() == "ScratchShotPaced")!.AsObject();
+        Assert.Equal("green", until["verdict"]!.GetValue<string>());
+        Assert.Null(until["warnings"]);
+        Assert.Equal("green", paced["verdict"]!.GetValue<string>());
+        Assert.Null(paced["warnings"]);
+
+        JsonArray untilDetails = until["details"]!.AsArray();
+        Assert.Null(StepDetail(untilDetails, 0)["screenshot"]);
+        string done = StepDetail(untilDetails, 1)["screenshot"]!.GetValue<string>();
+        Assert.True(File.Exists(done), done);
+
+        JsonArray pacedDetails = paced["details"]!.AsArray();
+        string flash = StepDetail(pacedDetails, 0)["screenshot"]!.GetValue<string>();
+        Assert.True(File.Exists(flash), flash);
+        Assert.Null(StepDetail(pacedDetails, 1)["screenshot"]);
+    }
+
     // ScratchShotPaced's first paced step turns a full-screen rect red, holds it 0.5 s of game time and turns it blue again, inside
     // its 2 s pace, and its second reports the game ms since the first's PlayStep; ScratchShotUntil is the same steps with a
     // GetStepShotUntil condition on the red state. The second step's figure, at least the pace less one frame, shows the rest of
