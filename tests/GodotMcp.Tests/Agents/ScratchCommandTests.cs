@@ -66,6 +66,7 @@ public sealed class ScratchCommandTests : IDisposable
         Assert.Null(parsed.Options.Prepare);
         Assert.Null(parsed.Options.Details);
         Assert.Null(parsed.Options.Only);
+        Assert.Null(parsed.Options.UserData);
         Assert.Null(parsed.Options.KeepGoing);
         Assert.Null(parsed.Options.Steps);
         Assert.Null(parsed.Options.Ceilings);
@@ -115,6 +116,31 @@ public sealed class ScratchCommandTests : IDisposable
     }
 
     [Theory]
+    [InlineData("real", "\"real\"")]
+    [InlineData("scratch", "\"scratch\"")]
+    [InlineData("seed=Saves/base", "{\"seed\":\"Saves/base\"}")]
+    [InlineData("seed=a=b", "{\"seed\":\"a=b\"}")]
+    public void ParseReadsEachUserDataForm(string value, string json)
+    {
+        ScratchArguments? parsed = ScratchCommand.Parse(["--run-scratches", "C:/game", "--user-data", value], out string? error);
+
+        Assert.Null(error);
+        Assert.NotNull(parsed);
+        Assert.Equal(json, JsonNode.Parse(parsed.Options.UserData!.Value.GetRawText())!.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("bogus")]
+    [InlineData("Real")]
+    [InlineData("seed=")]
+    [InlineData("seed")]
+    public void ParseRefusesAUserDataOfNoForm(string value)
+    {
+        Assert.Null(ScratchCommand.Parse(["--run-scratches", "game", "--user-data", value], out string? error));
+        Assert.Equal($"--user-data takes real, scratch or seed=<folder>, not '{value}'.", error);
+    }
+
+    [Theory]
     [InlineData("--run-scratches", "--run-scratches needs a project folder.")]
     [InlineData("--run-scratches game other", "--run-scratches takes one project folder, not 'other'.")]
     [InlineData("--run-scratches game --bogus value", "--run-scratches does not take '--bogus'.")]
@@ -125,6 +151,7 @@ public sealed class ScratchCommandTests : IDisposable
     [InlineData("--run-scratches game --pace abc", "--pace takes a number, not 'abc'.")]
     [InlineData("--run-scratches game --time-scale soon", "--time-scale takes a number, not 'soon'.")]
     [InlineData("--run-scratches game --parallel two", "--parallel takes a number, not 'two'.")]
+    [InlineData("--run-scratches game --user-data", "--user-data needs a value.")]
     public void ParseRefusesTheArgumentsItCannotRead(string line, string refusal)
     {
         Assert.Null(ScratchCommand.Parse(Words(line), out string? error));
@@ -145,6 +172,7 @@ public sealed class ScratchCommandTests : IDisposable
     [InlineData("--run-scratches game --pace 1 --pace 2", "--pace is given twice; give it once.")]
     [InlineData("--run-scratches game --details full --details compact", "--details is given twice; give it once.")]
     [InlineData("--run-scratches game --only red --only red", "--only is given twice; give it once.")]
+    [InlineData("--run-scratches game --user-data real --user-data scratch", "--user-data is given twice; give it once.")]
     public void ParseRefusesANonRepeatableOptionGivenTwice(string line, string refusal)
     {
         Assert.Null(ScratchCommand.Parse(Words(line), out string? error));
@@ -248,6 +276,19 @@ public sealed class ScratchCommandTests : IDisposable
             error.ToString(),
             StringComparison.Ordinal
         );
+    }
+
+    [Fact]
+    public void AUserDataOfNoFormIsRefusedWithExitTwo()
+    {
+        StringWriter output = new();
+        StringWriter error = new();
+
+        int status = ScratchCommand.Run(["--run-scratches", "game", "--user-data", "bogus"], output, error);
+
+        Assert.Equal(2, status);
+        Assert.Equal("", output.ToString());
+        Assert.StartsWith("godot-mcp: --user-data takes real, scratch or seed=<folder>, not 'bogus'. ", error.ToString(), StringComparison.Ordinal);
     }
 
     [Theory]

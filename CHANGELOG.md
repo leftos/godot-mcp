@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `godot-mcp --run-scratches` takes `--user-data real|scratch|seed=<folder>`, as `run_scratches` takes `userData`.
+
+### For agents
+
+- A terminal or gate run of scratches picks its `user://` with `--user-data` (`real`, `scratch` or `seed=<folder>`), so a scratch whose files under `user://` must outlive its game runs with `--user-data real` instead of editing `godot-mcp.json`'s `scratch.userData` and reverting it.
+
 ## 0.41.1 - 2026-11-12
 
 ### Fixed

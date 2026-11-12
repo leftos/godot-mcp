@@ -660,11 +660,13 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A whole result that cannot be written still comes back capped, without `full`, its `cut` ending `the whole result could not be written to {path}: {message}`.
 
-  **From a terminal:** `godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--user-arg <arg>]... [--engine-arg <arg>]... [--json] [--windowed] [--audible] [--steps <token>]... [--ceiling <scene>[#<batch>]=<seconds|derived>]... [--memory-ceiling <scene>=<megabytes>]... [--batch <scene>=<token>[,<token>]]... [--capture [--capture-step <token>]...]` runs the same runner on the same `godot-mcp.json`, headless unless `--windowed` is given, and a game repo calls it through the installed launcher as it does `--sweep-agents`.
+  **From a terminal:** `godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--user-arg <arg>]... [--engine-arg <arg>]... [--json] [--windowed] [--audible] [--user-data <real|scratch|seed=<folder>>] [--steps <token>]... [--ceiling <scene>[#<batch>]=<seconds|derived>]... [--memory-ceiling <scene>=<megabytes>]... [--batch <scene>=<token>[,<token>]]... [--capture [--capture-step <token>]...]` runs the same runner on the same `godot-mcp.json`, headless unless `--windowed` is given, and a game repo calls it through the installed launcher as it does `--sweep-agents`.
 
   Each option is the `options` key of the same name, and a name the command does not take is refused; `background` and `watch` are the tool's only. The run's session is `cli-<pid>`.
 
-  `--windowed` and `--audible` set `options.windowed` and `options.audible` to true. Each `--steps` adds one token to `options.steps` in its list form, so the same steps play in every scene.
+  `--windowed` and `--audible` set `options.windowed` and `options.audible` to true. `--user-data real`, `--user-data scratch` and `--user-data seed=<folder>` set `options.userData` to `"real"`, `"scratch"` and `{"seed": "<folder>"}` (the folder is everything after the first `=`), so a run picks its `user://` without editing `godot-mcp.json` (`real` keeps what a scratch writes there; a scratch one is deleted when its scene's game ends); any other value is refused as `godot-mcp: --user-data takes real, scratch or seed=<folder>, not '<value>'.`, exit 2.
+
+  Each `--steps` adds one token to `options.steps` in its list form, so the same steps play in every scene.
 
   Each `--batch <scene>=<token>[,<token>]...` adds one batch to that scene in the map form of `options.steps`, so each batch plays in a fresh game, in the order given, and a scene no `--batch` names plays every step. The value splits at its first `=` and its tokens at `,`, so a step whose name holds a comma is named by its index. `--batch` with `--steps` is refused.
 

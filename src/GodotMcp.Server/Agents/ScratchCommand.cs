@@ -337,6 +337,7 @@ internal static class ScratchCommand
                 or "--prepare"
                 or "--details"
                 or "--only"
+                or "--user-data"
                 or "--user-arg"
                 or "--engine-arg"
                 or "--steps"
@@ -377,7 +378,7 @@ internal static class ScratchCommand
             return SceneKeyed(flags, option, value);
         }
 
-        return option is "--prepare" or "--details" or "--only" ? Text(flags, option, value) : Amount(flags, option, value);
+        return option is "--prepare" or "--details" or "--only" or "--user-data" ? Text(flags, option, value) : Amount(flags, option, value);
     }
 
     /// <summary>One scene-keyed option's value: a ceiling's amount, or one of a batch's token lists.</summary>
@@ -506,6 +507,7 @@ internal static class ScratchCommand
         {
             "--ceiling" => $"--ceiling takes <scene>=<seconds|derived> or <scene>#<batch>=<seconds|derived>, not '{value}'.",
             "--memory-ceiling" => $"--memory-ceiling takes <scene>=<megabytes>, not '{value}'.",
+            "--user-data" => $"--user-data takes real, scratch or seed=<folder>, not '{value}'.",
             _ => $"--batch takes <scene>=<token>[,<token>]..., not '{value}'.",
         };
 
@@ -540,7 +542,9 @@ internal static class ScratchCommand
         return null;
     }
 
-    /// <summary>A text option's value, as the tool itself reads it: the command holds no check of its own.</summary>
+    /// <summary>
+    /// A text option's value: the tool reads --prepare, --details and --only itself, and --user-data's form is checked here.
+    /// </summary>
     private static string? Text(Flags flags, string option, string value)
     {
         switch (option)
@@ -554,9 +558,31 @@ internal static class ScratchCommand
             case "--only":
                 flags.Only = value;
                 break;
+            case "--user-data":
+                return UserData(flags, value);
         }
 
         return null;
+    }
+
+    /// <summary>The --user-data value as the tool reads options.userData, or the refusal for a value of no form.</summary>
+    private static string? UserData(Flags flags, string value)
+    {
+        if (value is "real" or "scratch")
+        {
+            flags.UserData = JsonSerializer.SerializeToElement(value);
+            return null;
+        }
+
+        const string SeedPrefix = "seed=";
+        if (value.StartsWith(SeedPrefix, StringComparison.Ordinal) && value.Length > SeedPrefix.Length)
+        {
+            JsonObject seed = new() { ["seed"] = value[SeedPrefix.Length..] };
+            flags.UserData = JsonSerializer.SerializeToElement(seed);
+            return null;
+        }
+
+        return Form("--user-data", value);
     }
 
     /// <summary>One scene's block: its verdict line, the step it failed at, what its exit did and the folder of its shots.</summary>
@@ -673,6 +699,9 @@ internal static class ScratchCommand
 
         public string? Only { get; set; }
 
+        /// <summary>The --user-data form as the tool reads options.userData; null leaves the profile's own value to hold.</summary>
+        public JsonElement? UserData { get; set; }
+
         public bool KeepGoing { get; set; }
 
         public bool Json { get; set; }
@@ -733,7 +762,8 @@ internal static class ScratchCommand
                 MemoryCeilings: GivenAmounts(MemoryCeilings),
                 Windowed: Windowed ? true : null,
                 Audible: Audible ? true : null,
-                Capture: CaptureOptions()
+                Capture: CaptureOptions(),
+                UserData: UserData
             );
 
         /// <summary>The capture the switches ask for, null when --capture is not given.</summary>
