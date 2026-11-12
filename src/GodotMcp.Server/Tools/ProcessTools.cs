@@ -54,19 +54,10 @@ internal sealed class ProcessTools(SessionRegistry sessions)
         ReadyProfile? ready = ReadyFor(declared, options?.Ready);
         string? session = options?.Session;
         GodotSession reserved = await sessions.ReserveProcessAsync(session ?? process, profile.ProjectDir, defaultName: session is null);
-        try
-        {
-            Func<CancellationToken, Task<ProcessPrepResult>>? prep = PrepRunner(profile.ProjectDir, reserved.Name, declared);
-            ProcessPrepResult? prepared = prep is null ? null : await prep(cancellationToken);
-            (int processId, string log, ReadyResult? met) = await reserved.StartProcess(process, declared, command, ready, cancellationToken, prep);
-            return new ProcessStartResult(reserved.Name, reserved.ProjectDir, process, processId, command, log) { Ready = met, Prep = prepared };
-        }
-        catch
-        {
-            sessions.Forget(reserved);
-            reserved.Dispose();
-            throw;
-        }
+        Func<CancellationToken, Task<ProcessPrepResult>>? prep = PrepRunner(profile.ProjectDir, reserved.Name, declared);
+        GodotSession.ProcessLaunch launch = new(process, declared, command, ready, prep);
+        (ProcessPrepResult? prepared, int processId, string log, ReadyResult? met) = await reserved.StartFirstProcessAsync(launch, cancellationToken);
+        return new ProcessStartResult(reserved.Name, reserved.ProjectDir, process, processId, command, log) { Ready = met, Prep = prepared };
     }
 
     /// <summary>

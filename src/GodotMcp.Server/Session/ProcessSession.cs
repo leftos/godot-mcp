@@ -22,13 +22,22 @@ internal sealed partial class GodotSession
     /// One start of a process session: the started program and its one end, kept together so a restart replaces both at once
     /// while the replaced start's exit watcher still holds its own.
     /// </summary>
-    private sealed record ProcessRun(ToolProcess.Running Running, ProcessEnd End);
+    private sealed record ProcessRun(ToolProcess.Running Running, ProcessEnd End)
+    {
+        private int _endedByStop;
+
+        /// <summary>Whether a stop ended this start's program, so a ready wait it cut short says so rather than "exited".</summary>
+        public bool EndedByStop => Volatile.Read(ref _endedByStop) == 1;
+
+        /// <summary>Marks the program as ended by a stop, before the stop starts its end.</summary>
+        public void MarkEndedByStop() => Volatile.Write(ref _endedByStop, 1);
+    }
 
     /// <summary>
     /// The launch a process session keeps, so a restart runs the same prep again, starts the same command and waits on the
-    /// same ready line; the prep is null when the profile declares none.
+    /// same ready line; the prep is null when the profile declares none. run_process hands one to the first start.
     /// </summary>
-    private sealed record ProcessLaunch(
+    internal sealed record ProcessLaunch(
         string Key,
         ProcessProfile Profile,
         IReadOnlyList<string> Command,
@@ -83,6 +92,61 @@ internal sealed partial class GodotSession
     internal const string NothingToRestart = "No process has been started in this session, so there is nothing to restart.";
 
     /// <summary>
+    /// The first start of a session run_process reserved: the launch's prep, then <see cref="StartProcess"/>. The session, starting
+    /// since its reservation, stops starting once this has returned or failed; a start that fails lets go of the session
+    /// (<see cref="AbandonFirstStartAsync"/>).
+    /// </summary>
+    /// <exception cref="SessionException">The prep failed, or the start did (see <see cref="StartProcess"/>).</exception>
+    internal async Task<(ProcessPrepResult? Prep, int ProcessId, string Log, ReadyResult? Ready)> StartFirstProcessAsync(
+        ProcessLaunch launch,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            ProcessPrepResult? prepared = await RunPrepAsync(launch, cancellationToken);
+            (int processId, string log, ReadyResult? ready) = await StartProcess(
+                launch.Key,
+                launch.Profile,
+                launch.Command,
+                launch.Ready,
+                cancellationToken,
+                launch.Prep
+            );
+            return (prepared, processId, log, ready);
+        }
+        catch
+        {
+            await AbandonFirstStartAsync();
+            throw;
+        }
+        finally
+        {
+            _pending = false;
+        }
+    }
+
+    /// <summary>
+    /// Lets go of a session whose first start failed: drops it from the registry, so no later call finds it, then takes its gate,
+    /// so a stop that holds the gate or waits on it finishes first, and lets go of the program under it. The gates are never
+    /// disposed here, so a stop that found the session before it was dropped still takes the gate and is told there is nothing
+    /// to stop.
+    /// </summary>
+    private async Task AbandonFirstStartAsync()
+    {
+        registry.Forget(this);
+        await _gate.WaitAsync(CancellationToken.None);
+        try
+        {
+            DisposeProcess();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
     /// Starts the process a run_process call declares: <paramref name="command"/> from the project folder, in the profile's
     /// cwd with its environment, with no ceiling or stall kill, its output buffered and logged, and its tree in a job that
     /// ends it when the job closes. When the call declares a ready line, the start waits for it before returning; a process
@@ -127,6 +191,8 @@ internal sealed partial class GodotSession
                 StandardOutputLine = _processStdout.Add,
                 StandardErrorLine = _processStderr.Add,
             };
+            // A shutdown that began during the prep or a restart's stop refuses the start before any program starts.
+            registry.RefuseStartAtShutdown();
             run = StartRun(request);
         }
         catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
@@ -143,7 +209,6 @@ internal sealed partial class GodotSession
         ProcessProgram = ProgramName(command[0]);
         _ = EndWhenExitedAsync(run);
         ReadyResult? met = ready is null ? null : await WaitForReadyAsync(launch, stdoutStart, stderrStart, cancellationToken);
-        _pending = false;
         return (processId, log, met);
     }
 
@@ -192,9 +257,14 @@ internal sealed partial class GodotSession
                 );
             }
 
+            if (registry.ShutdownBegun)
+            {
+                throw await RefuseReadyAsync(() => new SessionException(SessionRegistry.ShuttingDown));
+            }
+
             if (ProgramExited)
             {
-                throw await RefuseReadyAsync(() => ExitedBeforeReady(launch));
+                throw await RefuseReadyAsync(() => ExitRefusal(launch));
             }
 
             if (deadline.Expired)
@@ -241,6 +311,20 @@ internal sealed partial class GodotSession
         return warning is null ? refused : new SessionException($"{refused.Message}\n\n{warning}");
     }
 
+    /// <summary>
+    /// The refusal of a ready wait whose program exited: one a stop ended says so, one the server's shutdown ended says the
+    /// server is shutting down, and one that exited on its own gives its exit code and last stderr lines.
+    /// </summary>
+    private SessionException ExitRefusal(ProcessLaunch launch)
+    {
+        if (_process is { EndedByStop: true })
+        {
+            return new SessionException($"The process '{launch.Key}' was stopped by stop_project before a line matched '{launch.Ready!.Output}'.");
+        }
+
+        return registry.ShutdownBegun ? new SessionException(SessionRegistry.ShuttingDown) : ExitedBeforeReady(launch);
+    }
+
     /// <summary>The refusal of a process that exited before its ready line: its own exit code and its last stderr lines.</summary>
     private SessionException ExitedBeforeReady(ProcessLaunch launch)
     {
@@ -283,6 +367,7 @@ internal sealed partial class GodotSession
         ProcessRun run = _process ?? throw new SessionException("No process has been started in this session, so there is nothing to stop.");
         bool alreadyExited = ProgramExited;
         int? exitCode = alreadyExited ? ExitCodeOf(run.Running.Process) : null;
+        run.MarkEndedByStop();
         string? warning = await run.End.Start();
         return new ProcessStopResult(Name, ProjectDir, "process", exitCode, Killed: !alreadyExited, AlreadyExited: alreadyExited)
         {
@@ -334,6 +419,7 @@ internal sealed partial class GodotSession
                     )
                     {
                         Prep = prepared,
+                        Warning = stopped.Warning,
                     };
                 }
                 finally

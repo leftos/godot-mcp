@@ -9,6 +9,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A warm headless host that connects the moment it starts is accepted, instead of failing the scene tool with "ended before its warm headless host connected".
 - A launch or restart that fails once Godot is running, such as when its output cannot be read, ends that Godot instead of leaving it running.
 - An `attach_project` whose wait ends while another session holds the folder list writes no attach or join file, and its timeout says so.
+- A process start or restart in flight when the server shuts down starts no program, and says the server is shutting down.
+- A `stop_project` during a process's ready wait now ends the start with a "stopped by stop_project" refusal, without an error from the stop.
+- A second `restart_project` or a same-name `run_process` is refused until a process restart has returned.
+- A process `restart_project` reports the old program's stop warning in its `warning`.
 
 ## 0.40.2 - 2026-11-11
 

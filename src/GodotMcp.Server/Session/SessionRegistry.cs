@@ -812,6 +812,21 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
+    /// Whether <see cref="Shutdown"/> has begun, read under the registry's lock as <see cref="RefuseStartAtShutdown"/> reads it:
+    /// a process session's ready wait ends its program and refuses its start once it has.
+    /// </summary>
+    internal bool ShutdownBegun
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _shuttingDown;
+            }
+        }
+    }
+
+    /// <summary>
     /// Ends every session's real-time recording at once, each already marked for the exit by <see cref="Shutdown"/>, then waits
     /// for every launch or restart in flight to settle, then stops every session's game at once and waits for them and for
     /// the recordings' clips, all sharing <see cref="ShutdownCap"/> of wall time; then kills every game still running of the
@@ -846,12 +861,16 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     private static bool IsHandedBack(Task<bool> stop) => stop.IsCompletedSuccessfully && !stop.Result;
 
     /// <summary>
-    /// Waits until no launch or restart of <paramref name="sessions"/> is in flight, or <paramref name="cap"/> has passed. No
-    /// start begins once the shutdown has, and one still in its prep is refused when it ends, so they settle quickly.
+    /// Waits until no launch or restart of <paramref name="sessions"/> (a run's, an editor's or a process session's) is in flight,
+    /// or <paramref name="cap"/> has passed. No start begins once the shutdown has, one still in its prep is refused when it
+    /// ends, and a process session's ready wait ends its program and refuses its start, so they settle quickly.
     /// </summary>
     private static async Task WaitForStartsAsync(GodotSession[] sessions, Task cap)
     {
-        while (!cap.IsCompleted && sessions.Any(session => session.Kind is SessionKind.Run or SessionKind.Editor && session.IsStarting))
+        while (
+            !cap.IsCompleted
+            && sessions.Any(session => session.Kind is SessionKind.Run or SessionKind.Editor or SessionKind.Process && session.IsStarting)
+        )
         {
             await Task.Delay(StartSettlePoll);
         }

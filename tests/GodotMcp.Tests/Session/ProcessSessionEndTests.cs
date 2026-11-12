@@ -158,6 +158,42 @@ public sealed partial class ProcessSessionEndTests
     }
 
     [Fact]
+    public async Task ARestartReportsTheOldStopsWarning()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        using EventWaitHandle exit = NewExitEvent(out string name);
+        (GodotSession session, Task start) = await BeginAsync(harness, name, null, cancellation);
+        await start;
+        (Process main, Process child) = await OpenHeldAsync(session);
+        using (main)
+        using (child)
+        {
+            using ExitHold hold = await ExitHold.AttachAsync(child, RegistryHarness.HangGuard);
+            try
+            {
+                Task<object> restart = harness.Sessions.RestartAsync(Session, prepare: false, cancellationToken: cancellation);
+                await hold.Killed.WaitAsync(RegistryHarness.HangGuard, cancellation);
+                // As in the stop's test: the deadline is on the fake clock, so this real-time wait spends none of it.
+                Assert.True(await Task.Run(() => main.WaitForExit(RegistryHarness.HangGuard), cancellation));
+                await RegistryHarness.AdvanceUntilDoneAsync(time, restart, cancellation);
+                ProcessRestartResult restarted = Assert.IsType<ProcessRestartResult>(await restart);
+                hold.Release();
+
+                Assert.NotNull(restarted.Warning);
+                AssertWarningNames(restarted.Warning, child.Id, main.Id);
+            }
+            finally
+            {
+                EndHeld(exit, child);
+            }
+        }
+    }
+
+    [Fact]
     public async Task AStopDuringANaturalExitsEndReportsAlreadyExited()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
@@ -484,7 +520,7 @@ public sealed partial class ProcessSessionEndTests
         string[] command = ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script];
         GodotSession session = await harness.Sessions.ReserveProcessAsync(Session, harness.Path, defaultName: false);
         ProcessProfile profile = new(command, null, new Dictionary<string, string>(), ready, null);
-        Task start = session.StartProcess(Session, profile, command, ready, cancellation);
+        Task start = session.StartFirstProcessAsync(new GodotSession.ProcessLaunch(Session, profile, command, ready, null), cancellation);
         return (session, start);
     }
 

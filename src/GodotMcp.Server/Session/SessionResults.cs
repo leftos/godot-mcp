@@ -306,7 +306,15 @@ internal sealed record ProcessRestartResult(
     string Log,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadyResult? Ready = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProcessPrepResult? Prep = null
-);
+)
+{
+    /// <summary>
+    /// The stop of the replaced process's warning, as stop_project reports it: set when a process of its job was still running
+    /// as the stop's wait for its end ran out, naming its pid.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Warning { get; init; }
+}
 
 /// <summary>
 /// A process's prep: the command it ran, its exit code, how long it took in milliseconds, the log its output went to, and the
