@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.40.3 - 2026-11-11
 
 ### Fixed
 
@@ -15,6 +15,16 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A process `restart_project` reports the old program's stop warning in its `warning`.
 - A process session's `process-<session>.log` is released once the session has ended, so it can be deleted or moved.
 - A `run_scratches` exit hold is measured in game time from the last step's cut, so a slow server no longer stretches the window that judges late errors.
+
+### For agents
+
+- Headless scene tools (`get_scene_tree`, `batch_scene_operations` and the rest): a warm host that connects the moment it starts is accepted; the "ended (Godot exited N) before its warm headless host connected" failure no longer needs a retry.
+- `attach_project`: a wait that ends while another session holds the folder list writes no attach or join file and says so: "...another session held the folder list (override-folders.txt) for the whole wait, so the join file was never written and the game is still dormant." for a join, "...so neither the attach file nor override.cfg was written." for an attach.
+- `run_process` / `restart_project`: a ready wait cut short by `stop_project` fails with "The process '<name>' was stopped by stop_project before a line matched '<pattern>'." instead of the "exited (code n)" text, and the stop returns normally.
+- `run_process` / `restart_project`: a start whose program would begin after the server's shutdown has begun, even one already in flight, starts nothing and fails with "The godot-mcp server is shutting down; no game can start now."
+- `restart_project` on a process session: a second `restart_project`, or a same-name `run_process`, is refused with "session '<name>' is still starting or restarting" until the first restart has returned, and the result gains `warning`, the old program's stop warning as `stop_project` words it.
+- `run_process`: `.godot/godot-mcp/process-<session>.log` is released once the session has ended, so it can be deleted or moved without stopping the server.
+- `run_scratches`: the exit hold (`exitHold`, or the last step's pace) is measured in game time from the last step's cut, so an error raised past the hold is no longer judged because the server was slow; a hold whose end marker never comes (a game paused through it) gives `exit.error` "the pace end marker reached stdout and stderr not both within N s".
 
 ## 0.40.2 - 2026-11-11
 
