@@ -70,7 +70,7 @@ foreach ($name in 'Show-ItestLongRunning', 'Complete-ItestGroup') {
     . ([scriptblock]::Create($function.Extent.Text))
 }
 function Get-GateKill { param([string]$Log) return 'gate: STALLED: it hung' }
-function Show-ItestFailureBlock { param([string]$Group, [string]$Log) }
+function Show-ItestFailureBlock { param([string]$Label, [string]$Log) }
 $folder = Join-Path $LogDir 'itest-nodes.diag/run1'
 New-Item -ItemType Directory -Force -Path $folder | Out-Null
 Set-Content -LiteralPath (Join-Path $folder 'x.diag') -Value "LONG_LINE"

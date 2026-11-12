@@ -1152,27 +1152,28 @@ function Show-ItestLongRunning {
     Write-Host "${Label}: still running when it was killed: $($lines[-1])"
 }
 
-# Prints, after a failed group's console output, the failure block of each failed test in its lane log, so the message
-# reaches the outer itest log, which a rerun on the build box cannot overwrite: at most 5 tests, each at most 40 lines,
-# the last of a cut block saying how many lines the log has beyond it. A log with no failed test (a build error, a gate
-# kill) says so, and a log that cannot be read (missing, locked) says why; it never throws.
+# Prints, after a failed itest group's or a failed unit run's console output, the failure block of each failed test in
+# the run's log, so the message reaches the outer log, which a rerun on the build box cannot overwrite: at most 5 tests,
+# each at most 40 lines, the last of a cut block saying how many lines the log has beyond it. -Label is the whole prefix
+# of every line it prints. A log with no failed test (a build error, a gate kill) says so, and a log that cannot be read
+# (missing, locked) says why; it never throws.
 function Show-ItestFailureBlock {
     param(
-        [Parameter(Mandatory)] [string]$Group,
+        [Parameter(Mandatory)] [string]$Label,
         [Parameter(Mandatory)] [string]$Log
     )
     try {
         $blocks = @(Get-ItestFailureBlock -Path $Log)
     }
     catch {
-        Write-Host "itest ${Group}: could not read ${Log}: $($_.Exception.GetBaseException().Message)"
+        Write-Host "${Label}: could not read ${Log}: $($_.Exception.GetBaseException().Message)"
         return
     }
     if ($blocks.Count -eq 0) {
-        Write-Host "itest ${Group}: no failed test in $Log; read the log for the cause"
+        Write-Host "${Label}: no failed test in $Log; read the log for the cause"
         return
     }
-    Write-Host "itest ${Group}: failed tests from ${Log}:"
+    Write-Host "${Label}: failed tests from ${Log}:"
     foreach ($block in @($blocks | Select-Object -First 5)) {
         if ($block.Count -le 40) {
             $block | ForEach-Object { Write-Host $_ }
@@ -1182,7 +1183,7 @@ function Show-ItestFailureBlock {
         Write-Host "  ... $($block.Count - 39) more lines in the log"
     }
     if ($blocks.Count -gt 5) {
-        Write-Host "itest ${Group}: $($blocks.Count - 5) more failed tests in the log"
+        Write-Host "${Label}: $($blocks.Count - 5) more failed tests in the log"
     }
 }
 
@@ -1208,7 +1209,7 @@ function Complete-ItestGroup {
         }
     }
     if ($status -ne 0) {
-        Show-ItestFailureBlock -Group $Group -Log (Join-Path $logDir "itest-$Group.log")
+        Show-ItestFailureBlock -Label "itest $Group" -Log (Join-Path $logDir "itest-$Group.log")
     }
     return $status
 }
@@ -1941,6 +1942,9 @@ try {
             $status = Invoke-Logged -Name 'test' -TimeoutSeconds 600 -StallSeconds $testStallSeconds -Arguments $run.Arguments -Slot $slot
             if ($status -eq 124) {
                 Show-ItestLongRunning -Folder $run.Folder -Label 'test'
+            }
+            if ($status -ne 0 -and $status -ne 124) {
+                Show-ItestFailureBlock -Label 'test' -Log (Join-Path $logDir 'test.log')
             }
             exit $status
         }

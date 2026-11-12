@@ -1,4 +1,4 @@
-"""Tests for the failure blocks run.ps1 prints after a failed itest group, read from that group's lane log."""
+"""Tests for the failure blocks run.ps1 prints after a failed itest group or unit run, read from that run's log."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ foreach ($name in 'Get-ItestFailureBlock', 'Show-ItestFailureBlock') {
     }
     . ([scriptblock]::Create($function.Extent.Text))
 }
-Show-ItestFailureBlock -Group lifecycle -Log $Log
+Show-ItestFailureBlock -Label 'itest lifecycle' -Log $Log
 """
 
 STAMP = "2026-10-30T02:21:47.378864-07:00"
@@ -62,6 +62,16 @@ def _lane_log(*blocks: list[str]) -> list[str]:
     return lines
 
 
+def _bare_log(*blocks: list[str]) -> list[str]:
+    """A log as GitHub Actions writes it, with no gate stamps and no gate lines."""
+    lines: list[str] = []
+    for block in blocks:
+        lines += block
+        lines.append("")
+    lines += SUMMARY
+    return lines
+
+
 def _show(tmp_path: Path, log_lines: list[str] | None) -> tuple[Path, list[str]]:
     driver = tmp_path / "driver.ps1"
     driver.write_text(DRIVER, encoding="utf-8", newline="\n")
@@ -87,6 +97,12 @@ def _block(test: str, lines: int) -> list[str]:
 
 def test_a_failed_groups_lane_log_prints_each_failed_tests_block(tmp_path: Path) -> None:
     log, printed = _show(tmp_path, _lane_log(FIRST_BLOCK, SECOND_BLOCK))
+
+    assert printed == [_header(log), *FIRST_BLOCK, *SECOND_BLOCK]
+
+
+def test_an_unstamped_log_as_github_actions_writes_it_prints_each_failed_tests_block(tmp_path: Path) -> None:
+    log, printed = _show(tmp_path, _bare_log(FIRST_BLOCK, SECOND_BLOCK))
 
     assert printed == [_header(log), *FIRST_BLOCK, *SECOND_BLOCK]
 
