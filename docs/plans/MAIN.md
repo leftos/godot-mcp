@@ -5,8 +5,6 @@
 ## Do first
 
 - [!] GMCP-592 Find the unit test that flaked in CI run 42982648818 · release vNext — Urgent · Singles
-- [ ] GMCP-589 run_scratches capture: a step list per scene · release vNext — High · Singles
-- [ ] GMCP-590 run_scratches capture: a shot inside a step · release vNext — High · Singles
 
 ## Ideas from the survey and the projects
 
@@ -68,16 +66,10 @@
 - [ ] GMCP-495 validate reports a csproj-level MSBuild error with no code as a red build with no errors
 - [ ] GMCP-520 Prep: an asset in a folder Godot skips makes an import due on every request
 
-### Session lifecycle and override.cfg (1/18 done)
+### Session lifecycle and override.cfg (7/18 done)
 - [ ] GMCP-243 Count the server-exit ShutdownCap on the load-adjusted clock · release vNext
-- [ ] GMCP-253 Release this server's own override entry when a release fails or an attach is forgotten · release vNext
-- [ ] GMCP-254 Decide what an override write does when the folder list stays busy past 2 s · release vNext
-- [ ] GMCP-259 Give the itest harness its own override-folders list · release vNext
-- [ ] GMCP-263 Give a cleanly quit game's console wrapper a load-adjusted exit wait · release vNext
-- [ ] GMCP-264 stop_project: wait for or name a quit game's children still holding the folder · release vNext
 - [ ] GMCP-265 Lead a backstop's failure text with the wall time that passed
 - [ ] GMCP-266 Log a launch's handshake times
-- [ ] GMCP-267 stop_project: warn when a run's game had no handle to wait on · release vNext
 - [ ] GMCP-288 GitExclude: cache a folder's git rev-parse answers across launches
 - [ ] GMCP-297 stop_project's leftover clear: delete through the judged handle, not by path
 - [ ] GMCP-302 override.cfg rewrite can be read half-written by a starting scratch game
@@ -169,7 +161,6 @@
 - [ ] GMCP-158 Give transforms a structured JSON form in tool results, and compare settled transforms as numbers
 - [ ] GMCP-177 run_script: take a script path as well as inline source
 - [ ] GMCP-278 Find which engine or .NET phase makes a headless game's teardown take up to 3 s
-- [ ] GMCP-292 LoadClock credits a starved server's gap at its last free share · release vNext
 - [ ] GMCP-391 Property paths: take the ClassDB route on every segment a script member could hide
 - [ ] GMCP-447 watch: the unknown-monitor refusal does not name frame_work_ms
 - [ ] GMCP-534 RuntimeTools.ReadInt cannot read an int-backed JsonValue built in memory
@@ -188,6 +179,11 @@
 - [ ] GMCP-585 The restart refusal suggests stop_project, which cannot cut a restart short
 - [ ] GMCP-586 A process session that cannot start says Godot could not be started
 - [ ] GMCP-587 Split the two bridge scripts that sit at gdlint's file length limit
+- [ ] GMCP-593 Test that a per-scene capture map warns of a shot step its partial run does not play · release vNext
+- [ ] GMCP-594 Let a scratch step's until or shot condition ask for an edge · release vNext
+- [ ] GMCP-595 run_scratches: refuse output and uiChanged shot conditions on a step with an until, and name a not-drawn until · release vNext
+- [ ] GMCP-596 Record a failed disarm or failed-arm override release for the shutdown to retry · release vNext
+- [ ] GMCP-597 stop_project: name a quit game's leftover child it could not open, or open it with wait rights only · release vNext
 
 ## Docs
 
