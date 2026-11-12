@@ -547,7 +547,7 @@ internal static class ToolProcess
 
         /// <summary>
         /// Lets go of the log file while keeping the process and its job usable for a stop, so a restart can open the same path
-        /// again: call it once the output has finished draining, which drops any line that still arrives.
+        /// again: a process session's end calls it once the output has drained, which drops any line that still arrives.
         /// </summary>
         public void CloseLog() => started.Sink.Dispose();
 

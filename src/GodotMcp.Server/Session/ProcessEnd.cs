@@ -59,11 +59,13 @@ internal sealed class ProcessEnd(ToolProcess.Running run, LoadClock clock, strin
             kept.AddRange(ended.Kept);
             string? warning = await WaitForTreeAsync(kept, ended.Unopened);
             await _run.FinishOutputAsync();
+            _run.CloseLog();
             return warning;
         }
         catch (Exception e)
         {
             Log.ProcessEndFailed(_run.Logger, e, _projectDir);
+            _run.CloseLog();
             return null;
         }
         finally

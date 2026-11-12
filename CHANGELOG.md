@@ -13,6 +13,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A `stop_project` during a process's ready wait now ends the start with a "stopped by stop_project" refusal, without an error from the stop.
 - A second `restart_project` or a same-name `run_process` is refused until a process restart has returned.
 - A process `restart_project` reports the old program's stop warning in its `warning`.
+- A process session's `process-<session>.log` is released once the session has ended, so it can be deleted or moved.
 
 ## 0.40.2 - 2026-11-11
 

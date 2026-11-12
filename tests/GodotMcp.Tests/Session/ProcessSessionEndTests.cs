@@ -476,6 +476,108 @@ public sealed partial class ProcessSessionEndTests
         );
     }
 
+    [Fact]
+    public async Task AnEndedProcessSessionsLogCanBeDeleted()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using LoadClock clock = new(new FakeTimeProvider(), new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        using EventWaitHandle exit = NewExitEvent(out string name);
+        (GodotSession session, Task start) = await BeginAsync(harness, name, null, cancellation);
+        await start;
+        string log = Path.Combine(ProjectPrep.LogFolder(harness.Path), $"process-{session.Name}.log");
+        Assert.True(File.Exists(log), $"the session wrote no log at {log}");
+        await session.StopAsync(cancellation);
+
+        File.Delete(log);
+        Assert.False(File.Exists(log));
+    }
+
+    [Fact]
+    public async Task AReadyWaitTimesOutOnTheRegistrysClock()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        using EventWaitHandle exit = NewExitEvent(out string name);
+        (GodotSession session, Task start) = await BeginAsync(harness, name, NeverReady, cancellation);
+        (Process main, Process child) = await OpenHeldAsync(session);
+        using (main)
+        using (child)
+        {
+            try
+            {
+                await RegistryHarness.AdvanceUntilDoneAsync(time, start, cancellation);
+                SessionException refused = await Assert.ThrowsAsync<SessionException>(() => start);
+
+                Assert.StartsWith(
+                    "The process 'held' printed no line matching 'never printed' within 600 s of load-adjusted time, " + "so it was stopped",
+                    refused.Message
+                );
+                Assert.True(
+                    await Task.Run(() => child.WaitForExit(RegistryHarness.HangGuard) && main.WaitForExit(RegistryHarness.HangGuard), cancellation)
+                );
+            }
+            finally
+            {
+                EndHeld(exit, child);
+                Abandon(harness, session);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ARestartWhoseReadyTimesOutStopsTheNewProcess()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), Held);
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        using EventWaitHandle exit = NewExitEvent(out string name);
+        // The first start prints "ready" while this file is missing; writing it keeps the restart's program from ever printing it.
+        string marker = harness.Combine("ready-once");
+        (GodotSession session, Task start) = await BeginAsync(harness, name, ReadyOnce, cancellation, marker);
+        await start.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        (Process firstMain, Process firstChild) = await OpenHeldAsync(session);
+        using (firstMain)
+        using (firstChild)
+        {
+            File.WriteAllText(marker, "");
+            Task restart = harness.Sessions.RestartAsync(Session, prepare: false, cancellationToken: cancellation);
+            int? mainPid = null;
+            await RegistryHarness.WaitUntilAsync(() => (mainPid = session.ProcessId) is int pid && pid != firstMain.Id);
+            int? childPid = null;
+            await RegistryHarness.WaitUntilAsync(() => (childPid = ChildPidOtherThan(session, firstChild.Id)) is not null);
+            using var main = Process.GetProcessById(mainPid!.Value);
+            using var child = Process.GetProcessById(childPid!.Value);
+            _ = main.Handle;
+            _ = child.Handle;
+            try
+            {
+                await RegistryHarness.AdvanceUntilDoneAsync(time, restart, cancellation);
+                SessionException refused = await Assert.ThrowsAsync<SessionException>(() => restart);
+
+                Assert.StartsWith(
+                    "The process 'held' printed no line matching 'ready' within 600 s of load-adjusted time, so it was stopped",
+                    refused.Message
+                );
+                Assert.True(
+                    await Task.Run(() => child.WaitForExit(RegistryHarness.HangGuard) && main.WaitForExit(RegistryHarness.HangGuard), cancellation)
+                );
+            }
+            finally
+            {
+                EndHeld(exit, child);
+                EndHeld(exit, firstChild);
+                Abandon(harness, session);
+            }
+        }
+    }
+
     /// <summary>
     /// Asserts that <paramref name="warning"/> is the end's warning after its 5 s budget, in either form, naming
     /// <paramref name="named"/> and not <paramref name="gone"/>: another member of the job, such as the program's console host,

@@ -236,7 +236,7 @@ internal sealed partial class GodotSession
     {
         ReadyProfile ready = launch.Ready!;
         long started = Stopwatch.GetTimestamp();
-        using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromMilliseconds(ready.TimeoutMs), cancellationToken);
+        using LoadDeadline deadline = registry.LaunchClock.Start(TimeSpan.FromMilliseconds(ready.TimeoutMs), cancellationToken);
         while (true)
         {
             (OutputPage stdout, OutputPage stderr, _, _) = GetProcessRawOutput();
@@ -394,7 +394,6 @@ internal sealed partial class GodotSession
                 // A restart cancelled by now must not stop a healthy program.
                 cancellationToken.ThrowIfCancellationRequested();
                 ProcessStopResult stopped = await StopProcessAsync();
-                previous.CloseLog();
                 try
                 {
                     ProcessPrepResult? prepared = await RunPrepAsync(launch, cancellationToken);
