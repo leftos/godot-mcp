@@ -75,7 +75,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A screenshot is the render target, not the window: under stretch aspect `keep` it is the window less its letterbox bars, floored (a 1366x768 window at a 1920x1080 base captures 1365x768), and its pixels differ from the viewport's when the project stretches (a 640x360 viewport in a 1000x900 letterboxed window captures 1000x562), so a point read off a screenshot is not a viewport point.
 
-  Every capture result (`take_screenshot`, `save_screenshot`, `wait_for`'s `options.screenshot`, a `frame_control` step's shot, `capture_frames`, `preview_scene`, a `run_scratches` step shot in its `details` entry) carries `window`, the root Window's `size` when the frame was grabbed, and `viewport`, the root's visible rect then, each `{width, height}`, beside its own `width` and `height`; a `warning` names a capture whose size differs from the window's, except a cropped one or one taken at `scale` above 1, which differ by design.
+  Every capture result (`take_screenshot`, `save_screenshot`, `wait_for`'s `options.screenshot`, a `frame_control` step's shot, `capture_frames`, `preview_scene`, a `run_scratches` step shot in its `details` entry) carries `window`, the root Window's `size` when the frame was grabbed, and `viewport`, the root's visible rect then, each `{width, height}`, beside its own `width` and `height`.
+
+  A `warning` names a capture whose size differs from the window's, except a cropped one or one taken at `scale` above 1, which differ by design.
 
   A `crop` is in viewport coordinates, so a rect `get_ui_elements` or `hover` reports crops as it is, at the capture's scale. Aim at `{element}` where a Control or a world node exists.
 - **Paging.** Long lists come back one page at a time with `total`, `offset` and, while more remain, `next`: pass `next` as the next call's `offset`. A value longer than its budget comes back as `{valuePreview, valueLength}`.
@@ -140,7 +142,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A failed build refuses a launch with its compiler errors, naming the configuration built (`The Debug C# build of …`).
 
-  The headless write tools will not save a scene that uses C# scripts while the build fails (nor `attach_script` a `.cs`, nor `connect_signal` to a C# method), and the refusal quotes up to 20 compiler errors, then `(and N more)`; its "Godot logged:" section leaves out the lines the missing assembly causes, counting them as `(and N lines a missing C# assembly causes, left out: the build failed)`; the `Failed to add a custom resource loader/saver, script '…cs' does not inherit …` lines of an addon's loader are among them.
+  The headless write tools will not save a scene that uses C# scripts while the build fails (nor `attach_script` a `.cs`, nor `connect_signal` to a C# method), and the refusal quotes up to 20 compiler errors, then `(and N more)`.
+
+  Its "Godot logged:" section leaves out the lines the missing assembly causes, counting them as `(and N lines a missing C# assembly causes, left out: the build failed)`. The `Failed to add a custom resource loader/saver, script '…cs' does not inherit …` lines of an addon's loader are among them.
 
   While the build fails, every headless scene tool's result carries `csharp: {build: "failed", errors, errorsOmitted?, symptomsDropped?}`, and `errors` leaves out the lines a missing project assembly causes (a C# autoload that "does not inherit from 'Node'", a C# script whose class could not be found): `csharp` is their cause, and `symptomsDropped` counts them when there were any. A GDScript autoload's failure still reports. `options.prepare: "never"` skips the prep on the tools that take it.
 - **Scene edits keep the file's own text.** The in-place scene tools (`add_node`, `delete_nodes`, `duplicate_node`, `move_node`, `attach_script`, `load_sprite`, `set_node_properties`, `connect_signal`, `disconnect_signal`, `batch_scene_operations`) rewrite only the sections they add, change or delete; every other line of the `.tscn` stays as it was, so the diff shows the edit.
@@ -205,10 +209,20 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `run_project`
 
-- **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, version, recording?, prep, godot, window, log?, userDataDir?, warning?}` (`userDataDir` the game's own user data folder, only when `options.userData` asks for a scratch one; `log` the absolute path of `.godot/godot-mcp/run-<session>.log`, the game's whole output, left out when the file could not be opened; see `get_debug_output`; `window` `{width, height}` the game window's size in pixels; `version` is the server's, `0.1.0+<sha>`, to quote in an issue; `godot` is the Godot executable it launched: `GODOT_PATH`, else a `Godot*console*.exe` found on `PATH`, the newest-named in the first folder that has one; with neither, the launch is refused with the `claude mcp add` line that sets `GODOT_PATH`).
+- **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, version, recording?, prep, godot, window, log?, userDataDir?, warning?}`.
+
+  `userDataDir` is the game's own user data folder, only when `options.userData` asks for a scratch one. `log` is the absolute path of `.godot/godot-mcp/run-<session>.log`, the game's whole output, left out when the file could not be opened; see `get_debug_output`. `window` `{width, height}` is the game window's size in pixels. `version` is the server's, `0.1.0+<sha>`, to quote in an issue.
+
+  `godot` is the Godot executable it launched: `GODOT_PATH`, else a `Godot*console*.exe` found on `PATH`, the newest-named in the first folder that has one; with neither, the launch is refused with the `claude mcp add` line that sets `GODOT_PATH`.
 
   `restart_project`'s result carries `godot` and `log` too.
-- **Use:** `projectPath` (the folder holding `project.godot`); `scene` for a scene other than the main one (passed as `--scene`, so a custom loader's extension such as `.xscn` runs); `userArgs` (after `--`, read with `OS.get_cmdline_user_args()`); `engineArgs` (before `--`, e.g. `["--resolution", "1280x720"]`; the last `--resolution`, after `godot-mcp.json`'s `resolution`, gives the window exactly that size, even one larger than the screen, 1 to 16384 pixels a side, and a window that still differs adds `warning`: "--resolution asked for a WxH window and the game's window is wxh: the system did not give it the size asked for, so screenshots and input work in the window it has." A `--resolution` without a value, not `WIDTHxHEIGHT` or out of range is refused before launch. For a 2x capture of a project whose stretch mode is not `canvas_items`, launch at twice its size; a `canvas_items` one uses `take_screenshot`'s `scale`); `options {quiet, audible, shutOutRealGamepads, mute, session, prepare, preset, record, dropIdle, repickHover, env, userData, projectSettings}`; `mute: true` silences a watched run (`quiet: false`) by muting its Master bus for the whole session, again whenever the game unmutes it, and `restart_project` keeps it; `mute: false` on a quiet run is refused, since a quiet run is silent unless `audible` is true (the refusal points to `audible` and to `quiet: false`).
+- **Use:** `projectPath` (the folder holding `project.godot`); `scene` for a scene other than the main one (passed as `--scene`, so a custom loader's extension such as `.xscn` runs); `userArgs` (after `--`, read with `OS.get_cmdline_user_args()`); `engineArgs` (before `--`, e.g. `["--resolution", "1280x720"]`).
+
+  The last `--resolution`, after `godot-mcp.json`'s `resolution`, gives the window exactly that size, even one larger than the screen, 1 to 16384 pixels a side, and a window that still differs adds `warning`. The `warning` reads "--resolution asked for a WxH window and the game's window is wxh: the system did not give it the size asked for, so screenshots and input work in the window it has." A `--resolution` without a value, not `WIDTHxHEIGHT` or out of range is refused before launch.
+
+  For a 2x capture of a project whose stretch mode is not `canvas_items`, launch at twice its size; a `canvas_items` one uses `take_screenshot`'s `scale`.
+
+  `options {quiet, audible, shutOutRealGamepads, mute, session, prepare, preset, record, dropIdle, repickHover, env, userData, projectSettings}`: `mute: true` silences a watched run (`quiet: false`) by muting its Master bus for the whole session, again whenever the game unmutes it, and `restart_project` keeps it. `mute: false` on a quiet run is refused, since a quiet run is silent unless `audible` is true (the refusal points to `audible` and to `quiet: false`).
 - **Edges:** a live session name is refused when you pass it, or when the default name's live holder runs on the same folder; a default name held live by another folder becomes `<name>-2`, `-3`, …; a new name starts a second session alongside.
 
   `options.preset` names a preset from `godot-mcp.json` and fails when the file or preset is missing. By default the machine's real gamepads stay live and feed the same actions as the gamepad tools; `shutOutRealGamepads: true` keeps them out, at the cost of focus-out notifications to the game (a game that pauses on focus loss will).
@@ -241,7 +255,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `{"seed": "<folder>"}` is scratch, seeded: the folder (inside the project and outside `.godot`, not the project folder itself) is copied into the game's user data folder as Godot names it (`Godot/app_userdata/<application/config/name, made safe>`, or the custom user dir with `application/config/use_custom_user_dir`) before the launch, hidden files included, links skipped.
 
-  Refusals: `userData must be "real", "scratch" or {"seed": "<folder in the project>"}, not <value>.`, `userData.seed must be a folder inside the project and outside .godot, not <path>.`, `userData.seed names <path>, which is a link; name a real folder.`, `userData.seed names <path>, which is not a folder.`, `userData: "scratch" sets APPDATA for the game, and env sets it too; drop one.` (`XDG_DATA_HOME` on Linux; names match in any case), `userData: "scratch" is not supported on macOS.`, `the scratch user data root <parent> is a link; remove it` and `Could not make the scratch user data folder <root>: <reason>`.
+  Refusals: `userData must be "real", "scratch" or {"seed": "<folder in the project>"}, not <value>.`, `userData.seed must be a folder inside the project and outside .godot, not <path>.`, `userData.seed names <path>, which is a link; name a real folder.`, `userData.seed names <path>, which is not a folder.`, `userData: "scratch" sets APPDATA for the game, and env sets it too; drop one.` (`XDG_DATA_HOME` on Linux; names match in any case).
+
+  The refusals go on with `userData: "scratch" is not supported on macOS.`, `the scratch user data root <parent> is a link; remove it` and `Could not make the scratch user data folder <root>: <reason>`.
 
   A launch empties a folder already at that path first (unlinking a link, never following it). `restart_project` keeps the folder, so a save written before the restart is still there (a fresh, re-seeded one when the game had exited and its folder was deleted).
 
@@ -257,7 +273,11 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   They leave with the file when the folder's last session stops. A string is quoted with Godot's escapes. `godot-mcp.json`'s top-level `projectSettings` and the chosen preset's are laid under the call's, per setting name (the call over the preset over the top level); `restart_project` keeps them, and a `preview_scene` beside such a run carries them.
 
-  A name is refused when it is empty, holds no `/`, starts or ends with `/`, holds a character outside printable ASCII (U+0021 to U+007E, so a space, a tab or a non-ASCII letter), or holds any of `= [ ] ; " \`; the refusal reads `options.projectSettings "<name>" must be a "section/key" project setting name, e.g. "rendering/renderer/rendering_method".` A name the bridge's `override.cfg` sets is refused too, `options.projectSettings cannot set "<name>": godot-mcp's override.cfg sets it for the bridge (<the names>).`: `autoload/*`, `input_devices/joypads/ignore_joypad_on_unfocused_application`, `display/window/size/no_focus`, `display/window/size/initial_position_type`, `display/window/size/initial_position` and `display/window/size/mode`, each also followed by `.` and a feature tag (`display/window/size/no_focus.windows`).
+  A name is refused when it is empty, holds no `/`, starts or ends with `/`, holds a character outside printable ASCII (U+0021 to U+007E, so a space, a tab or a non-ASCII letter), or holds any of `= [ ] ; " \`.
+
+  The refusal reads `options.projectSettings "<name>" must be a "section/key" project setting name, e.g. "rendering/renderer/rendering_method".`
+
+  A name the bridge's `override.cfg` sets is refused too. That refusal reads `options.projectSettings cannot set "<name>": godot-mcp's override.cfg sets it for the bridge (<the names>).` The names are `autoload/*`, `input_devices/joypads/ignore_joypad_on_unfocused_application`, `display/window/size/no_focus`, `display/window/size/initial_position_type`, `display/window/size/initial_position` and `display/window/size/mode`, each also followed by `.` and a feature tag (`display/window/size/no_focus.windows`).
 
   The bridge's lines also overwrite the project's own feature-tagged variants of those keys (a `window/size/no_focus.windows` or `joypads/ignore_joypad_on_unfocused_application.linux` in `project.godot`), so a project's per-platform setting cannot undo a quiet or unfocused run or the pad shut-out. A string, or a raw value, holding a line break or another control character (beyond the LF, CR and TAB a string escapes) is refused, since the file takes one line per setting.
 
@@ -311,9 +331,17 @@ For an agent driving a Godot project through this server: which tool fits a job,
     Replies `build` (`"built"` or `"up-to-date"`), `reloadWaited: true` when built, `log` (the build log's path), `buildGate` (the prep wrapper's closing verdict line, as `prep.buildGate`; absent when the build ran through no wrapper or left none) and, while a scene plays, `warning: "a scene is playing; the running game keeps its old assembly until it is played again."` (the build is allowed).
 
   `editor` is batchable.
-- **Edges:** server refusals are `action must be one of open, save, save_all, close, play, stop, select_file, build; got '<action>'.`, `build needs a C# project; <projectDir> has no .csproj.`, `the C# build failed, so the editor keeps its previous assembly: <errors>; full log: <path>` (a build that reaches its 300 s ceiling is refused the same way, saying the editor keeps its previous assembly; several `.csproj` files with none chosen give prep's `The C# build was skipped: …` note), `open needs scene, the res:// path of the scene to open.` and `select_file needs path, the res:// file or folder to select.` The bridge refuses with `The scene <path> has unsaved changes; save it first or pass discard: true.`, `<path> is not open in the editor; open it first with editor {action: open}.`, `the editor has no edited scene.`, `the edited scene has no file path; save it with Save As in the editor first.`, `scene must be a res:// path; got '<p>'.`, `<p> does not exist.`, `<p> is not a scene: no loader of this project reads .<ext> as one.`, `the project has no main scene (application/run/main_scene).` and `scene must be current, main or a res:// scene path; got '<scene>'.`
+- **Edges:** server refusals are `action must be one of open, save, save_all, close, play, stop, select_file, build; got '<action>'.`, `build needs a C# project; <projectDir> has no .csproj.`, `the C# build failed, so the editor keeps its previous assembly: <errors>; full log: <path>` (a build that reaches its 300 s ceiling is refused the same way, saying the editor keeps its previous assembly; several `.csproj` files with none chosen give prep's `The C# build was skipped: …` note).
 
-  An effect not shown within 30 s is an error, `editor <action> did not take effect within 30 s: expected <...>; a dialog may be open, check take_screenshot` (`open` adds `; the editor may have been changing scenes`, since Godot gives a script no way to see a scene change in progress and `open` does nothing during one; `play` adds `; if the project has C# scripts, the editor's own build before play may have failed: run editor {action: build} first`, since the editor shows that failure only in its MSBuild panel).
+  Two more server refusals are `open needs scene, the res:// path of the scene to open.` and `select_file needs path, the res:// file or folder to select.`
+
+  The bridge refuses with `The scene <path> has unsaved changes; save it first or pass discard: true.`, `<path> is not open in the editor; open it first with editor {action: open}.`, `the editor has no edited scene.`, `the edited scene has no file path; save it with Save As in the editor first.`, `scene must be a res:// path; got '<p>'.`
+
+  The bridge also refuses with `<p> does not exist.`, `<p> is not a scene: no loader of this project reads .<ext> as one.`, `the project has no main scene (application/run/main_scene).` and `scene must be current, main or a res:// scene path; got '<scene>'.`
+
+  An effect not shown within 30 s is an error, `editor <action> did not take effect within 30 s: expected <...>; a dialog may be open, check take_screenshot`.
+
+  `open` adds `; the editor may have been changing scenes`, since Godot gives a script no way to see a scene change in progress and `open` does nothing during one. `play` adds `; if the project has C# scripts, the editor's own build before play may have failed: run editor {action: build} first`, since the editor shows that failure only in its MSBuild panel.
 
   The bridge never dismisses a dialog an action opens: `take_screenshot`, then `click` it.
 
@@ -330,7 +358,11 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `attach_project`
 
-- **Does:** on an armed folder with a dormant game, joins that game as soon as no prep holds the folder, within the same `waitSeconds`; otherwise injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects (a dormant game a listing missed too, since a dormant game also reads the attach file), or ends with a timeout once `waitSeconds` runs out, counted from the call even while a prep holds the folder: `{session, projectPath, quiet, version, window, joinedPid?}` (`window` `{width, height}` the game window's size in pixels; `joinedPid` the dormant game joined).
+- **Does:** on an armed folder with a dormant game, joins that game as soon as no prep holds the folder, within the same `waitSeconds`; otherwise injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects (a dormant game a listing missed too, since a dormant game also reads the attach file).
+
+  It ends with a timeout once `waitSeconds` runs out, counted from the call even while a prep holds the folder. It returns `{session, projectPath, quiet, version, window, joinedPid?}`.
+
+  `window` `{width, height}` is the game window's size in pixels; `joinedPid` is the dormant game joined.
 - **Use:** for a game `run_project` does not start: a second client, a `--server` run, a smoke script, the editor's Play button. Start the launch in the background delayed a second or two (`Start-Sleep 2; godot --path <project>`) just before this call, or launch within `waitSeconds` (1 to 600, default 60, load-adjusted) after it.
 
   A game the editor plays (`editor {action: play}`) is a plain game with its own window, joined like any other. The call blocks while it waits, so a sequential agent cannot play during it: `arm_project` the folder, `editor {action: play}`, then this call, which joins the dormant game by pid; to end it, `editor {action: stop}` (or `stop_project` on the attached session), `detach_project`, `disarm_project`.
@@ -356,7 +388,11 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The game keeps running: on an armed folder it goes dormant again, letting go of any key, button or action the drive left held, so a later `attach_project` joins it again (a window a quiet join parked comes back on screen); otherwise its bridge goes idle. When the `override.cfg` cannot be removed the detach still succeeds and the result gains `warning` (the text under `stop_project`; left out when none).
 - **Use:** to finish with a game `attach_project` joined and leave it running; `stop_project` quits it instead.
-- **Edges:** a real-time recording (`record_mark`) of the game is ended at the detach and its clip finished before the call returns, reported as `recording: {mode: "realtime", clips: [path], startedSeconds, warning?}`, or `{mode: "realtime", startedSeconds, error}` when the clip could not be finished, which does not fail the detach (a finish that failed or was cancelled by a fault gives `error`, `The real-time recording ended without a clip.` for a cancelled one, else the fault's message, and the session is released); `recording` is left out when none ran, its clip was already returned, or its `start` is in flight.
+- **Edges:** a real-time recording (`record_mark`) of the game is ended at the detach and its clip finished before the call returns, reported as `recording: {mode: "realtime", clips: [path], startedSeconds, warning?}`, or `{mode: "realtime", startedSeconds, error}` when the clip could not be finished, which does not fail the detach.
+
+  A finish that failed or was cancelled by a fault gives `error`, `The real-time recording ended without a clip.` for a cancelled one, else the fault's message, and the session is released.
+
+  `recording` is left out when none ran, its clip was already returned, or its `start` is in flight.
 
   A `start` still in flight is ended at once and reports no recording; a `start` after the end begins is refused (see `record_mark`).
 
@@ -375,7 +411,13 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `stop_project`
 
-- **Does:** (the game first gets `NOTIFICATION_WM_CLOSE_REQUEST` and its root's `close_requested`, as a user's window close gives them, so a game with `auto_accept_quit` off can run its own exit work and quit; one that does not quit is quit after 10 frames or 1 s) (a game `run_project` started also quits by itself, running its exit work, when its server exits or is stopped; an attached game keeps running) asks the game to quit, kills it after 3 s (30 s for a recording run) of load-adjusted time, or 10 s when it acknowledged the quit and closed its bridge within the 3 s (the teardown grace: it is in the engine's own teardown), so a busy machine waits longer in wall time (at most 5 x), removes the override when no other live session uses the folder and it is not armed: `{session, projectPath, exitCode, killed, killReason?, overrideRemoved, alreadyExited, gameExitCode, leftRunning?, quitMs?, recording?, warning?, folder?, gameStillRunning?, headlessHostStopped}`.
+- **Does:** asks the game to quit, kills it after 3 s (30 s for a recording run) of load-adjusted time, or 10 s when it acknowledged the quit and closed its bridge within the 3 s (the teardown grace: it is in the engine's own teardown), so a busy machine waits longer in wall time (at most 5 x), removes the override when no other live session uses the folder and it is not armed.
+
+  It returns `{session, projectPath, exitCode, killed, killReason?, overrideRemoved, alreadyExited, gameExitCode, leftRunning?, quitMs?, recording?, warning?, folder?, gameStillRunning?, headlessHostStopped}`.
+
+  The game first gets `NOTIFICATION_WM_CLOSE_REQUEST` and its root's `close_requested`, as a user's window close gives them, so a game with `auto_accept_quit` off can run its own exit work and quit; one that does not quit is quit after 10 frames or 1 s.
+
+  A game `run_project` started also quits by itself, running its exit work, when its server exits or is stopped; an attached game keeps running.
 
   `projectPath` in place of `session` frees a folder: it stops the warm headless host there (waiting for a headless call running on it) and the session running there, if one does; with `session` too both must name the same folder, and several live sessions there are refused, naming them.
 
@@ -383,7 +425,11 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Each file is removed only when every godot-mcp server its owners line names has exited (a file with no owners line counts as stale; an owner entry that cannot be parsed counts as live), and an `override.cfg` without godot-mcp's marker is never touched. `attach.json`, join, dormant and scratch status files and the `.git/info/exclude` line are left alone.
 
-  A file left in place is named in `warning`, the reasons joined with `; `: `override.cfg is the project's own (no godot-mcp marker), left in place`; `<file> is open in another process (a running Godot?), left in place` (reported, never failing the stop); `<file> names a live owner (pid <pid>), left in place` (another server's process); `<file> belongs to this server's own session or arm, left in place`; `<file> names an owner this server cannot read (<entry>), left in place`; `<file> changed while it was judged, left in place`; `the owners list could not be opened (busy, or see the server's stderr), nothing removed` (then neither file is touched).
+  A file left in place is named in `warning`, the reasons joined with `; `.
+
+  The first reasons are `override.cfg is the project's own (no godot-mcp marker), left in place`; `<file> is open in another process (a running Godot?), left in place` (reported, never failing the stop); `<file> names a live owner (pid <pid>), left in place` (another server's process).
+
+  The other reasons are `<file> belongs to this server's own session or arm, left in place`; `<file> names an owner this server cannot read (<entry>), left in place`; `<file> changed while it was judged, left in place`; `the owners list could not be opened (busy, or see the server's stderr), nothing removed` (then neither file is touched).
 
   A release that cannot remove the file after the game stopped (a run or attached session, and `detach_project`) does not fail the call: `warning` gains "override.cfg in {projectDir} could not be removed ({ExceptionType}: {message}); this server's owner entry stays on it until stop_project {projectPath} on the folder or the server's exit."
 
@@ -405,7 +451,13 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A process session (`run_process`) is stopped by name only: `stop_project {session}` closes its job and ends the program and everything it started at once, returning `{session, projectPath, kind: "process", exitCode, killed, alreadyExited}` (`exitCode` the program's only when it had already exited, null when the stop had to end it; `killed` true only then), and the session stays listed as stopped.
 
-  It returns once every process of the job is gone (or after 5 s of load-adjusted time) and its output is drained (up to 5 s more); when the wait for the processes runs out it adds `warning`: `The ended process (pid <pid>) was still running after <spent>; the files it holds stay in use until it is gone.` (`<spent>` as the kill wait's: `5 s of load-adjusted time (wall 5.2 s, machine free 90% on average)`, or at the backstop `25 s of wall time, 5 x its 5 s end wait (...)`; a plural form names several pids, and a process the server could not open to wait for is named too).
+  It returns once every process of the job is gone (or after 5 s of load-adjusted time) and its output is drained (up to 5 s more); when the wait for the processes runs out it adds `warning`.
+
+  The `warning` reads `The ended process (pid <pid>) was still running after <spent>; the files it holds stay in use until it is gone.`
+
+  `<spent>` is as the kill wait's: `5 s of load-adjusted time (wall 5.2 s, machine free 90% on average)`, or at the backstop `25 s of wall time, 5 x its 5 s end wait (...)`.
+
+  A plural form names several pids, and a process the server could not open to wait for is named too.
 
   The killed program's exit code, as `get_debug_output` reads it, is 1.
 
@@ -434,8 +486,15 @@ For an agent driving a Godot project through this server: which tool fits a job,
   Calling `stop_project` again on that folder (with `projectPath`, or naming the stopped session) waits once more for what the stop left running, all on one 5 s load-adjusted kill wait. Each killed game still running (its pid with the same start time, so a pid since reused by another process counts as gone) is killed again.
 
   Each process the quit game left that was still running after the first wait (`leftRunning`, the "The game left ..." warning) is waited for, never killed: it is remembered by pid, start time and image name, and reopened only with the same start time.
+
   A killed game the run could not open at its hello (or whose start time could not be read) is remembered with a start window, from the console wrapper's start to the moment the game was taken in after the hello's handshake (UTC). At the second stop a process with that pid started inside the window is killed and waited for; one started outside it, or no process with the pid, counts as gone; one whose handle or start time cannot be read is reported, never killed or waited for.
-  A process still running after that wait too is listed by pid in `gameStillRunning` (in both result shapes): killed games still running, then games that could not be opened, then leftovers still running. `warning` joins, in that order, the killed games' sentence (`The killed games (pids <a>, <b>) were still running after <spent>; their project folder stays in use until they are gone.` for several), `The game's process (pid <pid>) could not be opened, so the stop could not wait for it; it may still be running and holding the project folder.` (several: `The games' processes (pids <a>, <b>) could not be opened, so the stop could not wait for them; they may still be running and holding the project folder.`), and the leftovers' sentence as the first stop words it.
+
+  A process still running after that wait too is listed by pid in `gameStillRunning` (in both result shapes): killed games still running, then games that could not be opened, then leftovers still running. `warning` joins, in that order, the killed games' sentence (`The killed games (pids <a>, <b>) were still running after <spent>; their project folder stays in use until they are gone.` for several).
+
+  Next it joins `The game's process (pid <pid>) could not be opened, so the stop could not wait for it; it may still be running and holding the project folder.` (several: `The games' processes (pids <a>, <b>) could not be opened, so the stop could not wait for them; they may still be running and holding the project folder.`).
+
+  Last it joins the leftovers' sentence as the first stop words it.
+
   A process waited for (gone or not) or reported as could not be opened counts as something the call did, so the folder's "No Godot session or warm headless host runs in <dir>." refusal comes only from a call with nothing left. A restart's replaced game and an attach's killed game leave nothing for a second stop. There is no need to read pids from the first stop's warning and wait by hand. Check this before an `override.cfg` check or a worktree's removal.
 
   A stop that killed a game the run held no handle on (the game's process could not be opened when the run started, so the stop could not wait for it) adds `The game's process (pid <pid>) could not be opened when the run started, so the stop could not wait for it; it may still be running and holding the project folder.` It is not added when the game quit cleanly, and it applies to `restart_project`'s replaced game and the discard path too.
@@ -447,7 +506,12 @@ For an agent driving a Godot project through this server: which tool fits a job,
 - **Edges:** `alreadyExited` is true when the run had ended before the stop: the game quit, crashed or was killed from outside (a debugger's stop); the exit code, not the flag, tells a kill from a quit, and a debugger picks that code. A game that does not answer a ping in 2 s is killed at once. A game a debugger is attached to is stopped all the same, and `warning` says its debug session ended with it.
   For a recording run, `recording` holds `{mode: "movie", path}` (no marks: the full movie) or `{mode: "movie", clips}` (one H.264 `.mp4` a mark pair; the full movie deleted), plus `error` when a cut failed. A clip whose encode failed (an ffmpeg without libx264, or the encode timing out) is a stream-copied `.avi` of the same frames instead, idle kept, and `error` says which; the other clips are still `.mp4`.
   A clip whose start mark named a `path` is at that path in `clips`, or stays under `recordings/` with a `recording.warning` when its delivery failed (`record_mark`, clip destination).
-  In any other session a real-time recording (`record_mark`) is ended before the game is asked to quit, so its clip ends at the stop, and `recording` holds `{mode: "realtime", clips: [path], startedSeconds, warning?}`, or `{mode: "realtime", startedSeconds, error}` when the clip could not be finished, which does not fail the stop: a finish that failed or was cancelled by a fault gives `error` (`The real-time recording ended without a clip.` for a cancelled one, else the fault's message) and the session is released. The helper gets 10 s of load-adjusted time to exit after the end; one still running is killed and `warning` says `the capture helper did not exit within 10 s of the recording's end and was killed; the clip may end earlier or later than the recording did`.
+
+  In any other session a real-time recording (`record_mark`) is ended before the game is asked to quit, so its clip ends at the stop, and `recording` holds `{mode: "realtime", clips: [path], startedSeconds, warning?}`, or `{mode: "realtime", startedSeconds, error}` when the clip could not be finished, which does not fail the stop.
+
+  A finish that failed or was cancelled by a fault gives `error` (`The real-time recording ended without a clip.` for a cancelled one, else the fault's message) and the session is released.
+
+  The helper gets 10 s of load-adjusted time to exit after the end; one still running is killed and `warning` says `the capture helper did not exit within 10 s of the recording's end and was killed; the clip may end earlier or later than the recording did`.
   `startedSeconds` is the whole seconds from the current game's launch (a restart resets it) or the attach to the recording's start.
   A recording that ended on its own (`maxSeconds`, or the game quitting) is returned by the next `stop_project`, unless `record_mark` `stop`, `restart_project` or `detach_project` took it first. A clip is reported once: `recording` is left out when it was already returned or its `start` is in flight. A `start` still in flight is ended at once and reports no recording; a `start` after the end begins is refused (see `record_mark`).
   Every `recording` carries `mode`, `"movie"` or `"realtime"`.
@@ -458,19 +522,29 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   On a process session (`run_process`) it stops the program and starts its stored command and arguments again, waiting on the same ready line and keeping the session and its output buffers; `options.prepare` does not apply, but the process's own `prep`, when the profile declares one, runs again before the start.
   Its result is `{session, projectPath, process, processId, previousProcessId, previousExitCode?, command, log, ready?, prep?, warning?}`, `previousExitCode` left out when the kill-on-close job ended the old process, `warning` the old program's stop warning as `stop_project` words it, `ready` when the launch waited on none and `prep` (as `run_process`'s) when the process declares a prep.
-  A session that never started is refused (`No process has been started in this session, so there is nothing to restart.`); a start that fails is refused as `run_process`'s is and leaves the session stoppable, and one whose new program would start after the server's shutdown has begun, even one already in flight, starts none and is refused with `The godot-mcp server is shutting down; no game can start now.` A second `restart_project`, or a same-name `run_process`, is refused until the first restart has returned.
+
+  A session that never started is refused (`No process has been started in this session, so there is nothing to restart.`).
+
+  A start that fails is refused as `run_process`'s is and leaves the session stoppable, and one whose new program would start after the server's shutdown has begun, even one already in flight, starts none and is refused with `The godot-mcp server is shutting down; no game can start now.`
+
+  A second `restart_project`, or a same-name `run_process`, is refused until the first restart has returned.
 
   A restart cancelled before it stops the old program leaves that program running; one cancelled during the new program's ready wait ends the new program and returns once its process tree is gone, leaving the session stopped.
 - **Use:** after editing code or scenes, to pick up the change without losing the session; `options {prepare}`.
 - **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted, nor can an editor session (`restart_project does not restart an editor session; stop it with stop_project and start it again with run_editor.`).
-  The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it, the killed game or wrapper or a leftover child of a game that quit was still running after the kill wait, or a killed game had no handle to wait on, joined in `stop_project`'s order (debugger, kill wait or leftover children, no handle, window size); `previousAlreadyExited` and `previousGameExitCode` (left out when unknown) say how it had ended, as `stop_project`'s `alreadyExited` and `gameExitCode` do, and `previousKillReason`, `previousLeftRunning` and `previousQuitMs` (each left out when empty) say how it was stopped, as its `killReason`, `leftRunning` and `quitMs` do.
+
+  The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it, the killed game or wrapper or a leftover child of a game that quit was still running after the kill wait, or a killed game had no handle to wait on, joined in `stop_project`'s order (debugger, kill wait or leftover children, no handle, window size).
+
+  `previousAlreadyExited` and `previousGameExitCode` (left out when unknown) say how it had ended, as `stop_project`'s `alreadyExited` and `gameExitCode` do, and `previousKillReason`, `previousLeftRunning` and `previousQuitMs` (each left out when empty) say how it was stopped, as its `killReason`, `leftRunning` and `quitMs` do.
   A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
   A real-time recording of the old game is ended before it is stopped and its clip returned as `previousRecording` in `stop_project`'s real-time shape (a failed finish is its `error`, as there, and does not fail the restart); the new game does not record until `record_mark` `start`.
   `window {width, height}` is the relaunched game's window, as `run_project` reports it, and a window that differs from `--resolution` adds `run_project`'s size text to `warning`, after the debugger's.
 
 ### `run_process`
 
-- **Does:** starts a program the project's `godot-mcp.json` declares, leaving it running: `{session, projectPath, process, processId, command, log, ready?}` (`process` its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to, `ready` the line it waited on when the call or the profile declares one, `prep` `{command, exit, ms, log, gate?}` when the profile declares a `prep`: the argv run, its exit code, its milliseconds and its log `.godot/godot-mcp/process-<session>.prep.log`).
+- **Does:** starts a program the project's `godot-mcp.json` declares, leaving it running: `{session, projectPath, process, processId, command, log, ready?}`.
+
+  In it, `process` is its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to, `ready` the line it waited on when the call or the profile declares one, `prep` `{command, exit, ms, log, gate?}` when the profile declares a `prep`: the argv run, its exit code, its milliseconds and its log `.godot/godot-mcp/process-<session>.prep.log`.
 
   It returns once the program starts, or once its ready line matches. A call cancelled during the ready wait ends the process and waits for it before the cancellation returns.
 - **Use:** a game server or a mock backend a drive needs beside its games. `projectPath` is the folder holding `project.godot`, `process` a name under the file's `processes` section, and `args` are appended to its `command`. Without `options.session` the session is the process's name fitted to the name rule, as a folder name is; a live session of that name on the same folder refuses the start as a run's does, and one on another folder takes `<name>-2`, `-3`, ….
@@ -485,7 +559,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The wait scans only the lines the program prints after it starts, so a restart never matches the replaced process's line, and the result's `ready` is `{line, stream, ms}`: the matched line cut as `get_debug_output` cuts it, the stream it came from, and the real elapsed milliseconds.
 
-  The process is stopped and the start refused when it exits first (`The process '<name>' exited (code <n>) before a line matched '<pattern>'; its last stderr lines:` its last 20, or `(none)`; `The process '<name>' was stopped by stop_project before a line matched '<pattern>'.` when a `stop_project` ended it, and the shutdown text above when the server's shutdown did), or when its timeout passes (`The process '<name>' printed no line matching '<pattern>' within <n> s of load-adjusted time, so it was stopped; its last output lines:` the last 20 of each stream).
+  The process is stopped and the start refused when it exits first (`The process '<name>' exited (code <n>) before a line matched '<pattern>'; its last stderr lines:` its last 20, or `(none)`; `The process '<name>' was stopped by stop_project before a line matched '<pattern>'.` when a `stop_project` ended it, and the shutdown text above when the server's shutdown did).
+
+  The process is stopped and the start refused also when its timeout passes (`The process '<name>' printed no line matching '<pattern>' within <n> s of load-adjusted time, so it was stopped; its last output lines:` the last 20 of each stream).
 
   Either refusal ends with a paragraph of its own, `stop_project`'s process warning, when the ended process was still running after the wait.
 
@@ -518,7 +594,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `stopProjectWouldRemove` says whether `stop_project {projectPath}` would remove a file: the owners judge it stale. A handle another process holds open at stop time, or a busy owners list, still keeps it.
 
-  `reason`, left out when every file there would go, says why nothing would be removed or which file is kept: the folder holds neither file; the `override.cfg` is the project's own; a file names a live owner, one this server cannot read, or this server's own session or arm; a file is open in another process or empty (godot-mcp is writing it) or could not be read; or one session of this server runs there, so the stop would end that session and release its `override.cfg` instead of clearing leftovers, or several do and the stop would be refused until one is named.
+  `reason`, left out when every file there would go, says why nothing would be removed or which file is kept.
+
+  It says one of these: the folder holds neither file; the `override.cfg` is the project's own; a file names a live owner, one this server cannot read, or this server's own session or arm; a file is open in another process or empty (godot-mcp is writing it) or could not be read; or one session of this server runs there, so the stop would end that session and release its `override.cfg` instead of clearing leftovers, or several do and the stop would be refused until one is named.
 
   For a folder whose earlier release by this server failed (and no session or arm of this server holds it) it is true with the reason "override.cfg still names this server, whose earlier release of it failed, so stop_project would remove it".
 - **Use:** when a call is refused for want of a session name, or to find a session a previous turn started; `gameProcessId` for a debugger's attach. A stopped run is kept until its name is reused, with its last pids and output (`get_debug_output` and `restart_project` still reach it by name), and listed only with `includeStopped: true`. `projectPath` is the way to see who holds a folder's `override.cfg` before a `stop_project {projectPath}`, which is destructive; leave it out for no `holders`.
@@ -583,7 +661,15 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   An existing file is refused unless `options.overwrite` is true. The write goes to a temporary `.godot-mcp-<random>.tmp` beside the destination, which is then moved over the destination's folder entry: a symlink or hard link there is replaced, never written through, and a temporary left by a failure is deleted.
 
-  The refusals read "path must end in .png: <path>", "path <path> resolves outside the project <project root>, its checkout <checkout> and the main checkout's .tmp folder <main>\.tmp; save inside one of them" (clauses that do not apply are dropped: two places read "…; save inside either", and no checkout above the project, or a `res://` path, reads "path <path> resolves outside the project <project root>; save inside the project"; a checkout that does not track the project reads "the checkout's .tmp folder <checkout>\.tmp (the checkout <checkout> does not track <project root>\project.godot, so only its .tmp folder is open)" in its place), "path <path> is inside a .git folder, which git owns; save outside it", "path <path> is under .godot/, which the editor owns; pick a tracked folder", "path <path> is relative to a drive's current folder or the current drive's root; give a full path, one relative to the project folder, or one starting .tmp/ for the checkout's .tmp folder" (`X:shot.png`, `\shot.png`), "path <path> names the Windows device <NAME>; pick another file name" (`NUL.png`, `COM1.png`) and "<path> exists; pass options.overwrite true to replace it"; a failed copy reads "saving the screenshot to <full path> failed: <message>", and a capture reported from outside the session's screenshots folder "the capture <capture> is not under the session's screenshots folder <folder>; it is not copied".
+  The refusals read "path must end in .png: <path>" and "path <path> resolves outside the project <project root>, its checkout <checkout> and the main checkout's .tmp folder <main>\.tmp; save inside one of them".
+
+  In the second, clauses that do not apply are dropped: two places read "…; save inside either", and no checkout above the project, or a `res://` path, reads "path <path> resolves outside the project <project root>; save inside the project"; a checkout that does not track the project reads "the checkout's .tmp folder <checkout>\.tmp (the checkout <checkout> does not track <project root>\project.godot, so only its .tmp folder is open)" in its place.
+
+  The refusals also read "path <path> is inside a .git folder, which git owns; save outside it", "path <path> is under .godot/, which the editor owns; pick a tracked folder", "path <path> is relative to a drive's current folder or the current drive's root; give a full path, one relative to the project folder, or one starting .tmp/ for the checkout's .tmp folder" (`X:shot.png`, `\shot.png`).
+
+  Two more read "path <path> names the Windows device <NAME>; pick another file name" (`NUL.png`, `COM1.png`) and "<path> exists; pass options.overwrite true to replace it".
+
+  A failed copy reads "saving the screenshot to <full path> failed: <message>", and a capture reported from outside the session's screenshots folder "the capture <capture> is not under the session's screenshots folder <folder>; it is not copied".
 
   A link (junction or symlink) on the way is followed hop by hop; every entry from the checkout down (the `.tmp` folder itself included, and the destination when it exists) must finally lead inside a place, and each position reached is held to the `.git` and `.godot` rules; an existing target file that is a link to outside is refused even with `options.overwrite`.
 
@@ -628,7 +714,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The crop is written only below the project's `.godot/godot-mcp/` or the checkout's or main checkout's `.tmp`, never through a link and never under a `.git` folder; a PNG saved as a file named `<checkout>\.tmp` is refused. A checkout whose final path does not hold the project (git's `core.worktree` pointing elsewhere) is taken as no checkout.
 
-  git runs only in the project, the checkout and the main checkout, never for a source outside them, and never in a folder below the checkout's root that holds a `.git` of its own. git's own repository layout (a `.git` file or link in the project or a folder above it, `commondir`, `core.worktree`, config includes, the worktree locations `git worktree list` gives) is trusted as the user's configuration, and git runs in the project before that layout is checked, so a repository configured to point at a network share is contacted.
+  git runs only in the project, the checkout and the main checkout, never for a source outside them, and never in a folder below the checkout's root that holds a `.git` of its own.
+
+  git's own repository layout (a `.git` file or link in the project or a folder above it, `commondir`, `core.worktree`, config includes, the worktree locations `git worktree list` gives) is trusted as the user's configuration, and git runs in the project before that layout is checked, so a repository configured to point at a network share is contacted.
 
   A folder reads "<full> is a folder, not a PNG", a missing file "<full> does not exist", and a file over 1074790400 bytes is refused. A file whose first 8 bytes are not the PNG signature is refused before it is read whole.
 
@@ -698,7 +786,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A lookup that cannot read the names refuses too, ahead of those: `PlayStep "<name>": reading its step names raised: <first error>` when `GetStepCount` or `GetStepName` raised an error, `PlayStep "<name>": GetStepCount returned <value>, not a step count`, and `PlayStep "<name>": GetStepName(<index>) returned <value>, not a name`, the value written as a GDScript value (`null`, `"text"`).
 
-  With `options.timeScale` N the game runs N times faster, so a pace of p s of game time takes p / N s of wall time; the pace itself stays game time, except the wait after the last played step, which is measured from that step's cut and lasts the longer of that step's pace in game time and in wall time (above scale 1 the pace in wall time, so the exit leak check gets the wall time a 1x run gives it; at 1 and below the pace in game time; a scene that needs a different wait sets its last step's pace, or `exitHold` in its pace object, which replaces that step's pace for this wait and counts the same way).
+  With `options.timeScale` N the game runs N times faster, so a pace of p s of game time takes p / N s of wall time. The pace itself stays game time, except the wait after the last played step, which is measured from that step's cut and lasts the longer of that step's pace in game time and in wall time.
+
+  Above scale 1 that is the pace in wall time, so the exit leak check gets the wall time a 1x run gives it; at 1 and below it is the pace in game time.
+
+  A scene that needs a different wait sets its last step's pace, or `exitHold` in its pace object, which replaces that step's pace for this wait and counts the same way.
 
   The top-level `timeScale` is in the result when the call's scale is not 1, and a scene whose profile pace opted out carries its own `timeScale: 1`, a refused or killed scene too.
 
@@ -708,9 +800,15 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A root that also has a public `GetStepUntil(i)` (C# or GDScript; an optional fifth method, found by `has_method`) gives each step a `wait_for` condition, as `{node, property, equals}` or `{expression}` would be written (an empty dictionary, or null, for a paced step, which plays as above).
 
-  Such a step is played inside one `wait_for` on that condition with `PlayStep(i)` as the wait's `options.call`, so the wait's clock starts in `PlayStep`'s frame and ends when the condition holds, whatever the step's pace: the pace is ignored, and a hang guard of 15 s of load-adjusted time (longer when the profile's `scratch.pace` gives the step or its scene a `guard`, below) fails the step as hung when the condition has not held by then (the bridge's own game-time limit on the wait is five times the guard in game time at the scene's time scale, so a loaded machine or a time scale above 1 never reaches it before the guard); then `GetStatus()` is read as usual.
+  Such a step is played inside one `wait_for` on that condition with `PlayStep(i)` as the wait's `options.call`, so the wait's clock starts in `PlayStep`'s frame and ends when the condition holds, whatever the step's pace: the pace is ignored.
 
-  The server reads `GetStepUntil(i)` once for each played step before the first step plays, before the scene's clock starts, and keeps the answer; a read that fails or logs an error is not kept and is read again when that step plays, and the errors and output of such an early read go to stderr as warnings; the step's own read at its play fails it at its own index when it logs the error again, and an error the early read logged that the step's own read does not log again (one from another thread or a timer, say) is kept for that step and fails it too, listed in its `details[n].errors` and as `failedAt.error` when the step has no other failure.
+  A hang guard of 15 s of load-adjusted time (longer when the profile's `scratch.pace` gives the step or its scene a `guard`, below) fails the step as hung when the condition has not held by then. The bridge's own game-time limit on the wait is five times the guard in game time at the scene's time scale, so a loaded machine or a time scale above 1 never reaches it before the guard. Then `GetStatus()` is read as usual.
+
+  The server reads `GetStepUntil(i)` once for each played step before the first step plays, before the scene's clock starts, and keeps the answer.
+
+  A read that fails or logs an error is not kept and is read again when that step plays, and the errors and output of such an early read go to stderr as warnings.
+
+  The step's own read at its play fails it at its own index when it logs the error again. An error the early read logged that the step's own read does not log again (one from another thread or a timer, say) is kept for that step and fails it too, listed in its `details[n].errors` and as `failedAt.error` when the step has no other failure.
 
   A `state` condition on a C# node is read through the C# helper, as `wait_for` reads one.
 
@@ -726,7 +824,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`: `gameMs` the game time from `PlayStep`'s frame to the met or limit frame, `elapsedMs` and `frames` as `wait_for` reports them. A step whose until's wait gave no figures (refused, or failed) carries `untilRan: false` and no `gameMs`, so `gameMs` alone always means a paced step.
 
-  The errors read `step <i> '<name>': its until hung at its guard of 15 s of load-adjusted time (its condition never held); check the condition GetStepUntil gives` (a step with a `guard` names it: `its guard of <guard> s`), `step <i> '<name>': its until was refused: <why>`, `GetStepUntil(<i>) returned <value>, not a wait_for condition`, `step <i> '<name>': its until was not met within 15 s: the game's clock stood still (is it paused?)` (the wait ended with under half the step's pace of game time played) and `step <i> '<name>': its until's wait failed: <message>` (the connection or session failed).
+  The errors read `step <i> '<name>': its until hung at its guard of 15 s of load-adjusted time (its condition never held); check the condition GetStepUntil gives` (a step with a `guard` names it: `its guard of <guard> s`), `step <i> '<name>': its until was refused: <why>`, `GetStepUntil(<i>) returned <value>, not a wait_for condition`.
+
+  The last two errors read `step <i> '<name>': its until was not met within 15 s: the game's clock stood still (is it paused?)` (the wait ended with under half the step's pace of game time played) and `step <i> '<name>': its until's wait failed: <message>` (the connection or session failed).
 
   A `PlayStep` that throws inside an until reads as its feed entry, `<message> (<file>:<line>)`, as a paced step's does.
 
@@ -764,7 +864,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `passed` is true when nothing is red or killed. `details` comes for a red or killed scene, or for every scene with `options.details`, and lists every played step as `{index, name, ok, gameMs?, until?, status}` (`gameMs` the pace, or for a step played on an until `until` in its place); only a failing step carries `error`, `errors` and `lines`, and `options.details: true` or `"full"` adds those for the green steps too, and keeps their `[scratch]` notes (a failing step keeps its own always).
 
-  `options.details` is `true`, `"full"` (the same), `"compact"` or `false` (left out is the same); anything else is refused with `details is <raw JSON>; it must be true, "full" or "compact".` `"compact"` lists every played step of every scene too, but a green step as one string, `{index} ok {name}[ {gameMs}ms][ until met|unmet {ms}ms][ | {status / notes}]`, the step's `status` (left out when empty or the same as its name) then its `[scratch]` notes, joined by ` / `, cut at `options.detailChars` and ending `… (+N chars)` when cut; a failing or killed step keeps its object.
+  `options.details` is `true`, `"full"` (the same), `"compact"` or `false` (left out is the same); anything else is refused with `details is <raw JSON>; it must be true, "full" or "compact".`
+
+  `"compact"` lists every played step of every scene too, but a green step as one string, `{index} ok {name}[ {gameMs}ms][ until met|unmet {ms}ms][ | {status / notes}]`, the step's `status` (left out when empty or the same as its name) then its `[scratch]` notes, joined by ` / `, cut at `options.detailChars` and ending `… (+N chars)` when cut; a failing or killed step keeps its object.
 
   With `only: "red"` the compact green lines are dropped.
 
@@ -808,14 +910,20 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   Each `--user-arg` adds one element to `options.userArgs` and each `--engine-arg` one to `options.engineArgs`, in order. Their value is the next argument as it stands, even one that begins with `--` (`--user-arg --shadow-quality=Low`), and the tool's own checks refuse what they refuse.
 
-  stdout holds only the result: one `<scene>: <verdict> (<played>/<total> steps, <seconds>s)` line per scene, a red one followed by `  failed at step <index> <name>: <error>` and one `  exit: <text>` line for each missing pattern, error or kill, and a `  shots: <folder>` line for a scene that took a screenshot (the folder of its first one), then a last `scratch: passed (<green> green, <known> known, <noSteps> no steps)` or `scratch: failed (<green> green, <red> red, <killed> killed, <known> known, <noSteps> no steps)` line; with `--json` it is the tool's JSON instead.
+  stdout holds only the result: one `<scene>: <verdict> (<played>/<total> steps, <seconds>s)` line per scene, a red one followed by `  failed at step <index> <name>: <error>` and one `  exit: <text>` line for each missing pattern, error or kill, and a `  shots: <folder>` line for a scene that took a screenshot (the folder of its first one).
+
+  A last `scratch: passed (<green> green, <known> known, <noSteps> no steps)` or `scratch: failed (<green> green, <red> red, <killed> killed, <known> known, <noSteps> no steps)` line follows.
+
+  With `--json` stdout is the tool's JSON instead.
 
   Logs go to stderr.
 
   The exit status is 0 when the run passed and 1 when it did not, 2 for a usage error or a call refused before anything launched (`godot-mcp: <message>` on stderr), and 130 on Ctrl+C, after the games are stopped. A load rig can wrap the command: the games it starts are its children.
 - **Use:** in place of a project's `Run-Scratches.ps1`.
 
-  `projectPath`, `scenes` (scene names in `scratch.folder`, or `res://` paths of any extension a loader of the project reads as a scene; left out: every `.tscn`, `.scn` or `.xscn` directly in `scratch.folder`, in name order, a name two of them share refused), `options {pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, detailChars, parallel, session, keepGoing, steps, background, only, watch, windowed, capture, userData}`: `pace` in seconds (above 0, at most 120) for every step of every scene of this call, step paces of the profile included; a step whose scene gives a `GetStepUntil` condition ignores its pace: it waits for its condition, and fails as hung once 15 s of load-adjusted time pass without it,
+  `projectPath`, `scenes` (scene names in `scratch.folder`, or `res://` paths of any extension a loader of the project reads as a scene; left out: every `.tscn`, `.scn` or `.xscn` directly in `scratch.folder`, in name order, a name two of them share refused), `options {pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, detailChars, parallel, session, keepGoing, steps, background, only, watch, windowed, capture, userData}`.
+
+  Of the options, `pace` is in seconds (above 0, at most 120) for every step of every scene of this call, step paces of the profile included; a step whose scene gives a `GetStepUntil` condition ignores its pace: it waits for its condition, and fails as hung once 15 s of load-adjusted time pass without it,
 
   `timeScale` from 0.01 to 100 (default 1; anything else is refused with "options.timeScale must be at least 0.01 and at most 100; got <n>."): each scene's game launches with `--headless --time-scale <n>` (at 1, `--headless` alone), so a pace of p s of game time takes p / timeScale s of wall time and the kill bound scales with it.
 
@@ -825,7 +933,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `engineArgs` is checked before any scene runs, each source on its own: it refuses `--display-driver` and `--audio-driver` (Godot keeps the last driver argument it reads, so the scene would open a window or play sound), and a `--resolution` Godot cannot read, with the parser's own refusal plus `It came from <source>.`; a `--resolution` at the end of one source whose value sits in the other is refused as having no value.
 
-  An `engineArgs` entry that, with its surrounding spaces trimmed as Godot trims every argument, equals `--` or `++` (Godot reads both as the separator), or equals or starts with `--headless`, `--time-scale` or `--scratch-auto`, is refused before any scene runs (an `options.engineArgs` null entry is refused too, naming its source): "run_scratches sets --headless and --time-scale itself and puts the scene's own arguments after --, so engineArgs cannot hold <arg>; it came from <source>.", the source being `options.engineArgs` or the profile file's path.
+  An `engineArgs` entry that, with its surrounding spaces trimmed as Godot trims every argument, equals `--` or `++` (Godot reads both as the separator), or equals or starts with `--headless`, `--time-scale` or `--scratch-auto`, is refused before any scene runs (an `options.engineArgs` null entry is refused too, naming its source).
+
+  The refusal reads "run_scratches sets --headless and --time-scale itself and puts the scene's own arguments after --, so engineArgs cannot hold <arg>; it came from <source>.", the source being `options.engineArgs` or the profile file's path.
 
   Any other engine argument passes through as given, one that undoes `--headless` included: a later `--display-driver` or `--audio-driver` wins in Godot, so the scene opens a window or plays sound, which is the caller's choice.
 
@@ -836,7 +946,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
   It replaces the ceiling derived from the paces, lower or higher (a value below the paces' sum is allowed), and wins over the profile's `scratch.ceilings` for the same scene; a scene in neither keeps the derived ceiling. One batch's ceiling is the call's array entry, else the call's value for the scene, else the profile's row for the run's mode, else derived. A key naming no scene of the run is refused before any scene runs.
   A value of the wrong kind is refused as `options.ceilings.<scene>[<i>] must be a number of seconds above 0 and at most 3600 or null; got a boolean.` (`a string`, `an array`, `an object` likewise), and `ceilings` itself as `ceilings is a boolean; it must be an object mapping a scene name to a number of seconds, null, or an array of those.`
 
-  `memoryCeilings {<scene>: megabytes}` (at least 64, at most 1048576; 1 MB is 1048576 bytes) bounds a scene's game by its memory: while its steps play, the server reads the game process's private bytes about once a second, and a reading above the ceiling stops the game, the scene `killed` with `failedAt.error` `the scene's game passed its memory ceiling of <N> MB (<M> MB private), set by options.memoryCeilings, so its game was stopped` (`set by the profile's scratch.memoryCeilings` for the profile's).
+  `memoryCeilings {<scene>: megabytes}` (at least 64, at most 1048576; 1 MB is 1048576 bytes) bounds a scene's game by its memory: while its steps play, the server reads the game process's private bytes about once a second, and a reading above the ceiling stops the game, the scene `killed`.
+
+  Its `failedAt.error` reads `the scene's game passed its memory ceiling of <N> MB (<M> MB private), set by options.memoryCeilings, so its game was stopped` (`set by the profile's scratch.memoryCeilings` for the profile's).
 
   It wins over the profile's `scratch.memoryCeilings` for the same scene, a scene in neither has no memory bound, and a key naming no scene of the run is refused before any scene runs. The boot and the exit wait are not watched, only the game's own process is counted (not a child it starts), and a game that reported no process id is played unwatched with the warning `the scene's game reported no process id, so its memory ceiling of <N> MB was not watched`.
 
@@ -858,7 +970,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   Every batch counts as a scene in the run's totals, and the CLI prints its line as `<scene> [batch <i+1>/<n>]: ...`.
 
-  An outer array that mixes batches and tokens is refused (`steps for <Scene>: it mixes batches (arrays) with step tokens; give one list of tokens, or an array of batches, each a list of tokens.`), as are an empty batch (`steps for <Scene>: batch <i> is empty; each batch lists at least one step.`), more than 100 (`steps for <Scene>: <n> batches; at most 100.`), and batches outside the map form (`steps: an array of batches is taken only per scene, in the map form {"<Scene>": [[...], [...]]}.`); a batch's own token refusal starts with `steps for <Scene>, batch <i>: `.
+  An outer array that mixes batches and tokens is refused (`steps for <Scene>: it mixes batches (arrays) with step tokens; give one list of tokens, or an array of batches, each a list of tokens.`), as is an empty batch (`steps for <Scene>: batch <i> is empty; each batch lists at least one step.`).
+
+  More than 100 batches are refused too (`steps for <Scene>: <n> batches; at most 100.`), as are batches outside the map form (`steps: an array of batches is taken only per scene, in the map form {"<Scene>": [[...], [...]]}.`).
+
+  A batch's own token refusal starts with `steps for <Scene>, batch <i>: `.
 
   An empty array, a token that is neither a number nor a string, a negative or non-integer number, a reversed range (`"5-2"`) and a duplicate token (`3` and `"3"` are one token) are refused before launch. A token matching no step (a number past the end, an unknown name, `"١-٢"`), a range reaching past the last step and a name shared by two steps make that scene red at index -1 with no step played, the message listing the scene's steps; the other scenes still play.
 
@@ -882,11 +998,21 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The project's `godot-mcp.json` holds the rest in a `scratch` section, parsed strictly: `folder` (project-relative or `res://`, exact case; required when `scenes` is left out), `userArgs` (used in place of the top-level `userArgs` for scratch runs), `engineArgs` (an array of strings, read for `run_scratches` only, with no fallback to the top-level `engineArgs`; the same refusals as `options.engineArgs`),
 
-  `pace {<Scene>: seconds | {seconds, reason, timeScale?, exitHold?, guard?}}` (default 0.5; the object form takes both keys and an optional `"timeScale": 1`, the opt-out from `options.timeScale` (any other value is refused: "a pace entry's "timeScale" can only be 1, which keeps the scene at normal speed"; a bare number cannot carry it), an optional `"exitHold": <seconds>` (above 0, at most 120; a bare number cannot carry it, nor can a step entry) that replaces the last played step's pace as the wait after it, so the exit wait can differ from the pace the last step would otherwise give it, and stays when `options.pace` is set, and an optional `"guard": <seconds>` (above 15, at most 120; a bare number cannot carry it) that sets the hang guard of the scene's until steps, and an optional `steps {<step>: seconds | {seconds, reason, optional?, guard?}}` of paces for single steps, each key a step's index written plainly (tried first; `03` or `+3` is a name) or its name, so one slow step does not make every step wait;
+  `pace {<Scene>: seconds | {seconds, reason, timeScale?, exitHold?, guard?}}` (default 0.5).
 
-  it says why the scene needs that pace, and the reason comes back as `paceReason` on a `red` or `killed` scene whose pace came from the profile, the failed step's own reason when that step has a pace of its own (none when its pace is a bare number), since a step that ran into the next is usually a pace set too short),
+  The object form takes both keys and an optional `"timeScale": 1`, the opt-out from `options.timeScale` (any other value is refused: "a pace entry's "timeScale" can only be 1, which keeps the scene at normal speed"; a bare number cannot carry it).
 
-  `ceilings {<Scene>: seconds | {headless?: seconds, windowed?: seconds}}` (a number for both modes, or an object whose key for the run's mode, windowed with `options.windowed`, is the ceiling, the other leaving it derived from the paces; each number above 0, at most 3600; a key naming a scene outside the run is ignored, and `options.ceilings` wins for the same scene; an unknown key in the object or a number out of range is refused as `<file> (scratch, ceilings of "<Scene>"): ...`), `memoryCeilings {<Scene>: megabytes}` (the same map as `options.memoryCeilings`, read the same way),
+  The object form also takes an optional `"exitHold": <seconds>` (above 0, at most 120; a bare number cannot carry it, nor can a step entry) that replaces the last played step's pace as the wait after it, so the exit wait can differ from the pace the last step would otherwise give it, and stays when `options.pace` is set.
+
+  The object form also takes an optional `"guard": <seconds>` (above 15, at most 120; a bare number cannot carry it) that sets the hang guard of the scene's until steps.
+
+  The object form also takes an optional `steps {<step>: seconds | {seconds, reason, optional?, guard?}}` of paces for single steps, each key a step's index written plainly (tried first; `03` or `+3` is a name) or its name, so one slow step does not make every step wait.
+
+  The `reason` says why the scene needs that pace, and the reason comes back as `paceReason` on a `red` or `killed` scene whose pace came from the profile, the failed step's own reason when that step has a pace of its own (none when its pace is a bare number), since a step that ran into the next is usually a pace set too short,
+
+  `ceilings {<Scene>: seconds | {headless?: seconds, windowed?: seconds}}` (a number for both modes, or an object whose key for the run's mode, windowed with `options.windowed`, is the ceiling, the other leaving it derived from the paces; each number above 0, at most 3600; a key naming a scene outside the run is ignored, and `options.ceilings` wins for the same scene; an unknown key in the object or a number out of range is refused as `<file> (scratch, ceilings of "<Scene>"): ...`).
+
+  `memoryCeilings {<Scene>: megabytes}` (the same map as `options.memoryCeilings`, read the same way),
 
   `setup {<Scene>: [step, ...]}` (the steps a scene's partial run needs for the state the selected steps build on; each step is an index written plainly or a step's exact name, resolved as a `pace.steps` key is; with `options.steps` they play with the selected steps, ascending, and a setup step is judged like any other, `keepGoing` included; without `options.steps` every step plays and `setup` changes nothing; a duplicate entry is deduped).
 
@@ -900,7 +1026,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `known {<Scene>: reason}`, `patterns` (case-sensitive regexes, each a string or `{pattern, reason}` with both keys; a step failed by a matching line names the first matching entry as `failedAt.pattern`, with its reason; default `^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked`; `[]` turns line matching off),
 
-  `warnings` (only `"red"`, which judges a warning entry the game logs, a `push_warning` or an engine warning, wherever an error entry is judged: at the boot, after each step and in the wait after the last step; a `known` scene is handled as for an error, and a failure it causes reads its `error` (`failedAt`, `failures[]`, `details[]`, `exit`) as `warning: <message> (<file>:<line>)`, and a listed step's `errors[].message` carries the same `warning: ` prefix; left out, a warning is not judged; any other value is refused at load with `<path> (scratch): scratch.warnings is <JSON value>; it takes "red", which judges a warning as an error, or is left out.`),
+  `warnings` (only `"red"`, which judges a warning entry the game logs, a `push_warning` or an engine warning, wherever an error entry is judged: at the boot, after each step and in the wait after the last step; left out, a warning is not judged).
+
+  A `known` scene is handled as for an error, and a failure it causes reads its `error` (`failedAt`, `failures[]`, `details[]`, `exit`) as `warning: <message> (<file>:<line>)`, and a listed step's `errors[].message` carries the same `warning: ` prefix.
+
+  Any other value is refused at load with `<path> (scratch): scratch.warnings is <JSON value>; it takes "red", which judges a warning as an error, or is left out.`,
 
   `expect` (an array of lines every scene's output must print, each item a regex string or `{pattern, reason}` compiled as `patterns` are; an object item's reason must be a non-empty string saying why the scene must print the line, and `exit.missing` repeats it) and `expectFor {<Scene>: [same items]}` (a scene's own; a scene's list is `expect` then its `expectFor` entry, not deduplicated; a scene named twice is refused with `the scene "A" appears twice in "expectFor"; keep one`),
 
@@ -952,7 +1082,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `capture.steps` naming steps the run does not play (an `options.steps` selection leaving them out) adds the warning `options.capture names steps this run did not play: <index> '<name>', ...`, ascending.
 
-  `watch {tracks, window?, options?}` is the `watch` tool's start arguments, and `options.watch` is the way to watch a scene from its first step: it is armed on every scene's session after its steps are read and before its first step plays, and collected through the game's quit (or where the scene stopped, or on a kill): at the shutdown the server reads the timeline so far, and the bridge sends the final one as the game's tree exits, after the game's own exit work (its scene's and its autoloads' `_exit_tree`), with one last sample of the audio voices only (no track, monitor or bus point at quit), so a quit sound is listed.
+  `watch {tracks, window?, options?}` is the `watch` tool's start arguments, and `options.watch` is the way to watch a scene from its first step.
+
+  `options.watch` is armed on every scene's session after its steps are read and before its first step plays, and collected through the game's quit (or where the scene stopped, or on a kill).
+
+  At the shutdown the server reads the timeline so far, and the bridge sends the final one as the game's tree exits, after the game's own exit work (its scene's and its autoloads' `_exit_tree`), with one last sample of the audio voices only (no track, monitor or bus point at quit), so a quit sound is listed.
 
   A watch still running then ends with `stopped: "quit"`; one whose window had ended gets the last voice sample and keeps no `stopped`. When the final timeline does not come (a game killed or hung in its quit), the shutdown's stands with `stopped: "shutdown"` and the warning "options.watch could not be collected at the game's exit; the timeline ends at the shutdown".
 
@@ -962,7 +1096,15 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A watch that does not start adds the warning `options.watch did not start: <the refusal>` to the scene and one that cannot be read at the end `options.watch could not be collected: <reason>`; the scene plays on either way. Past 20000 characters a scene's `watch` is left out as its `details` are (`watchOmitted: true`), the whole result in its `full` file, and the `cut` text is unchanged.
 
-  For a step played on an until, the pace is ignored: the step waits for its condition, up to the hang guard of 15 s of load-adjusted time (the clock `wait_for`'s timeouts run on, so a loaded machine that draws fewer frames a second gives a frame-counting until more time); a step measured to land later keeps a longer bound through an explicit `guard` in seconds (above 15, at most 120) on its `scratch.pace` step entry, else its scene entry, the step's replacing the scene's, and `options.pace` leaves it as it is; a pace above 15 s does not raise the guard; a `guard` outside the range is refused with `(scratch, pace of "<Scene>"[, step "<key>"]): "guard" must be a number of seconds above 15 and at most 120, not <value>; it bounds an until step whose condition never holds, and the default is 15.`; the ceiling below counts it at its guard plus 10 s in place of its pace; when that step is the last, its pace is still the wait after it, and `exitHold` sets that wait.
+  For a step played on an until, the pace is ignored: the step waits for its condition, up to the hang guard of 15 s of load-adjusted time (the clock `wait_for`'s timeouts run on, so a loaded machine that draws fewer frames a second gives a frame-counting until more time).
+
+  A step measured to land later keeps a longer bound through an explicit `guard` in seconds (above 15, at most 120) on its `scratch.pace` step entry, else its scene entry, the step's replacing the scene's, and `options.pace` leaves it as it is.
+
+  A pace above 15 s does not raise the guard.
+
+  A `guard` outside the range is refused with `(scratch, pace of "<Scene>"[, step "<key>"]): "guard" must be a number of seconds above 15 and at most 120, not <value>; it bounds an until step whose condition never holds, and the default is 15.`
+
+  The ceiling below counts it at its guard plus 10 s in place of its pace; when that step is the last, its pace is still the wait after it, and `exitHold` sets that wait.
 
   A `steps` name matching more than one step, or two keys naming one step, makes the scene red before it plays (names are known only after launch). A `setup` entry matching no step, or a name two steps share, does the same, with `setup "<key>" of <Scene> matches no step; its steps are …` or `… names 2 steps (1, 2); key it by index`; a malformed `setup` value is refused when the profile loads.
 
@@ -1009,7 +1151,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   An install stops no running server directly; a server registered through the MCP front restarts on the new install between requests once none of its sessions is live (a live background run keeps it busy), and the migration of an install from before the versioned layout stops servers.
 
-  A `Monitor` wait needs a time limit of its own (`scratch_status {waitSeconds}` carries one): the scenes' paces (each divided by the time scale, an until step's hang guard (15 s unless its `guard` says more) in place of its pace, the last step's pace of each scene (its `exitHold` when set) once more, pace / min(1, time scale); a scene with a given ceiling counts that ceiling) plus a minute or two for launch and prep; a game that runs slowed (a frozen process, a rig that holds it back) can outlast that sum in its exit hold, which a derived ceiling no longer cuts, so give a run with a slow game a longer limit.
+  A `Monitor` wait needs a time limit of its own (`scratch_status {waitSeconds}` carries one): the scenes' paces (each divided by the time scale, an until step's hang guard (15 s unless its `guard` says more) in place of its pace, the last step's pace of each scene (its `exitHold` when set) once more, pace / min(1, time scale); a scene with a given ceiling counts that ceiling) plus a minute or two for launch and prep.
+
+  A game that runs slowed (a frozen process, a rig that holds it back) can outlast that sum in its exit hold, which a derived ceiling no longer cuts, so give a run with a slow game a longer limit.
 
   When it passes with no completion line, call `scratch_status`; `live: false` with `state: running` means the server that played the run is gone, and the run must be started again.
 - **A headless session draws no frames** (a windowed one, `options.windowed`, does): a frame tool (`take_screenshot`, `save_screenshot`, `capture_frames`, a screenshot baseline or comparison, a stepped screenshot) sent to a scratch session gets the headless refusal and does not turn the step red; `get_game_state`, `get_ui_elements` and `run_script` work.
@@ -1019,7 +1163,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   While scratch sessions hold the folder, a non-scratch run, attach, preview or arm writes only its own values into `override.cfg`; after a windowed drive ends the file keeps its values until the scratch sessions end, so another server's quiet session is refused meanwhile.
 
-  Each scene is a game session named `<folder>.scratch-<scene>`, or `<options.session>.scratch-<scene>` when `options.session` names the prefix (give each worktree's agent its own, so parallel runs are told apart in `list_sessions`), (numbered `-2`, `-3`, … when another session holds that name), still listed as stopped afterwards so `get_debug_output {session}` reads its output; its stdout and stderr carry the runner's own `[godot-mcp] scratch … end <nonce>` marker lines, which end each window (the bridge prints them as a step's last wait ends) and are never judged.
+  Each scene is a game session named `<folder>.scratch-<scene>`, or `<options.session>.scratch-<scene>` when `options.session` names the prefix (give each worktree's agent its own, so parallel runs are told apart in `list_sessions`), (numbered `-2`, `-3`, … when another session holds that name), still listed as stopped afterwards so `get_debug_output {session}` reads its output.
+
+  Its stdout and stderr carry the runner's own `[godot-mcp] scratch … end <nonce>` marker lines, which end each window (the bridge prints them as a step's last wait ends) and are never judged.
 
   The root is the game's current scene once started, whatever it renamed itself to; a root missing a protocol method, a scene with no current scene, or a launch that fails is `red` at `failedAt.index` -1, even for a `known` scene.
 
@@ -1027,7 +1173,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A line printed at the boot that a `scratch.patterns` entry matches does the same, with `failedAt {index: -1, name: "boot", error: "<the line>", status: "", pattern: {pattern, reason?}}`. A warning at the boot that no pattern matches is not judged unless the profile sets `scratch.warnings` to `"red"`.
 
-  A scene's ceiling is each step's pace / time scale + 10 s (an until step counts its own hang guard, 15 s unless it has a `guard`, in place of its pace / time scale), the last step's pace once more for the wait after it (its wall time, pace / min(1, time scale)), and 10 s for the markers, in load-adjusted time (the fixed 10 s are not divided); at a scale other than 1 the kill reason reads "each of its N steps' pace at time scale <n> + 10 s, the last step's pace once more ("in wall time" is added above 1), and 10 s for the markers", with ", an until step's guard of <g> s in place of its pace", g the largest guard among the played until steps, after the first 10 s when a played step has an until; past it, or when the game stops answering, the scene is `killed` and its game stopped.
+  A scene's ceiling is each step's pace / time scale + 10 s (an until step counts its own hang guard, 15 s unless it has a `guard`, in place of its pace / time scale), the last step's pace once more for the wait after it (its wall time, pace / min(1, time scale)), and 10 s for the markers, in load-adjusted time (the fixed 10 s are not divided).
+
+  At a scale other than 1 the kill reason reads "each of its N steps' pace at time scale <n> + 10 s, the last step's pace once more ("in wall time" is added above 1), and 10 s for the markers", with ", an until step's guard of <g> s in place of its pace", g the largest guard among the played until steps, after the first 10 s when a played step has an until.
+
+  Past the ceiling, or when the game stops answering, the scene is `killed` and its game stopped.
 
   A scene given a ceiling by `options.ceilings` or `scratch.ceilings` is killed at that many seconds of load-adjusted time from its first step instead, and the kill reason reads `the scene passed its ceiling of <N> s of load-adjusted time, set by options.ceilings, so its game was stopped` (`set by the profile's scratch.ceilings` for the profile's; the backstop clause comes before `, so its game was stopped` when the backstop fired). The derived ceiling's reason is unchanged.
 
@@ -1035,7 +1185,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   That wait is bounded as a stall guard on the game's own clock: each window is the hold's game time at the time scale + 10 s + the 5 s reply allowance, on the load clock, and when one passes the server reads how far the hold's game clock has run, so a game slowed by a frozen process or a slow rig is not failed while its clock advances.
 
-  It fails when the clock stood still a whole window (the `exit.error` reads "the exit hold ran S of G game s, then no more for W s of load-adjusted time: the game's clock stood still (is it paused?)"), when the bridge ran no hold ("the bridge ran no exit hold, so its pace end marker never came") or when its progress could not be read ("the exit hold's progress could not be read: <message>"), and, once the bridge reports the hold ended, when the pace end marker does not reach stdout and stderr both (the `exit.error` reads "the pace end marker reached stdout and stderr not both within N s", N the windows waited plus the markers' allowance, with the stdout-buffering hint).
+  It fails when the clock stood still a whole window (the `exit.error` reads "the exit hold ran S of G game s, then no more for W s of load-adjusted time: the game's clock stood still (is it paused?)"), when the bridge ran no hold ("the bridge ran no exit hold, so its pace end marker never came") or when its progress could not be read ("the exit hold's progress could not be read: <message>").
+
+  Once the bridge reports the hold ended, it also fails when the pace end marker does not reach stdout and stderr both (the `exit.error` reads "the pace end marker reached stdout and stderr not both within N s", N the windows waited plus the markers' allowance, with the stdout-buffering hint).
 
   A scene whose ceiling is derived is no longer killed by that ceiling during the exit hold; a given ceiling, the run's cancellation and the memory ceiling still end it. The exception is a game that closes the bridge connection during that wait and exits with code 0: that is a clean exit, so the scene stays green with `exit.code` 0 and no `exit.error`. The same close with a non-zero or missing exit code, a feed error in that wait, and a close during a step stay red.
 
@@ -1054,7 +1206,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
   `state` is `running`, `done`, `stopped`, `interrupted` (the server exited) or `failed` (with `error`). `scenes` are in play order, each `queued`, `playing` (with its step index, name and the scene's step count, `remainingSecondsAtMost` the wall seconds the paces still to come take at the scene's time scale plus the last pace's wait after it, launch left out) or `done` (with its `verdict`), or the run's final word for a scene the end cut off mid-step.
 
   `result`, once `done`, is the object `run_scratches` returns without background; a status over 20000 characters is shrunk as `run_scratches`' result is (`detailsOmitted`, `cut`), its `full` naming the run's status file, `<project>/.godot/godot-mcp/scratch-<runId>.json`, which holds the whole result and which `scratch_status` never writes. `startedAt` and `updatedAt` are UTC ISO 8601.
-- **Use:** `projectPath`, `runId` (as `run_scratches` returned it), `stop` (default false), `waitSeconds` (a whole number from 1 to 600, load-adjusted seconds: the call holds until the background run finishes or the limit passes, then returns the status either way; left out, the call returns at once), `only` (`"all"` default, or `"red"`: `result.scenes[].details` keeps only the steps with `ok: false`, and a scene left with none drops the key; every other field stays; a status with no `result`, a running run's, is returned as it is; the status file on disk is never changed, so a later read with `"all"` sees every step; any other value is refused as in `run_scratches`).
+- **Use:** `projectPath`, `runId` (as `run_scratches` returned it), `stop` (default false), `waitSeconds` (a whole number from 1 to 600, load-adjusted seconds: the call holds until the background run finishes or the limit passes, then returns the status either way; left out, the call returns at once), `only` (`"all"` default, or `"red"`).
+
+  With `"red"`, `result.scenes[].details` keeps only the steps with `ok: false`, and a scene left with none drops the key. Every other field stays. A status with no `result`, a running run's, is returned as it is. The status file on disk is never changed, so a later read with `"all"` sees every step. Any other value is refused as in `run_scratches`.
 
   `live` is true while this server still plays the run, until its final write has ended; the status may already show the final state while `live` is still true. A run of this server is read from memory; any other run's status file is returned as it is, with `live` false: one a server killed outright left says `running`, and its `serverPid` tells whose it was.
 - **Edges:** `waited` is a string present only on a call with `waitSeconds`: `the run was still running after waitSeconds <N> (within <N> s of load-adjusted time (wall <W> s, machine free <P>% on average)); call scratch_status again to keep waiting` when the limit passed with the run live, so the agent calls again; a run that ended within the limit carries none.
