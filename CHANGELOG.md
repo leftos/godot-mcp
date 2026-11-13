@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.42.1 - 2026-11-13
 
 ### Added
 
@@ -12,6 +12,13 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A `run_scratches` scene whose game runs slowed no longer fails its exit hold while the game's own clock still advances.
+
+### For agents
+
+- `run_scratches`: an until step whose pace, in wall time at the time scale, is longer than its hang guard adds a scene warning naming the `guard` to set; a pace never lengthened an until, the guard ends it.
+- `run_scratches`: a scene's run log (its `log`) carries `[godot-mcp] step <index> <name> failed: <reason>` right after a failed step's status line, the reason being the step's `failedAt.error`, so a copy of the log alone says why a step stopped.
+- `run_scratches`: a game slowed on an otherwise idle machine (a suspended or starved Godot) no longer fails its exit hold with `the pace end marker reached stdout and stderr not both within N s` while its game clock still advances, and a derived scene ceiling no longer cuts the exit hold; a `Monitor` limit summed from the paces can now be outrun by such a game, so give it room.
+- `run_scratches`: an exit hold that stands still for a whole window now fails with `the exit hold ran <s> of <g> game s, then no more for <W> s of load-adjusted time: the game's clock stood still (is it paused?)`; the other new exit failures are `the bridge ran no exit hold, so its pace end marker never came` and `the exit hold's progress could not be read: <message>`.
 
 ## 0.42.0 - 2026-11-12
 
