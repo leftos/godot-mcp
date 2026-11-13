@@ -277,7 +277,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The refusal reads `options.projectSettings "<name>" must be a "section/key" project setting name, e.g. "rendering/renderer/rendering_method".`
 
-  A name the bridge's `override.cfg` sets is refused too. That refusal reads `options.projectSettings cannot set "<name>": godot-mcp's override.cfg sets it for the bridge (<the names>).` The names are `autoload/*`, `input_devices/joypads/ignore_joypad_on_unfocused_application`, `display/window/size/no_focus`, `display/window/size/initial_position_type`, `display/window/size/initial_position` and `display/window/size/mode`, each also followed by `.` and a feature tag (`display/window/size/no_focus.windows`).
+  A name the bridge's `override.cfg` sets is refused too.
+
+  That refusal reads `options.projectSettings cannot set "<name>": godot-mcp's override.cfg sets it for the bridge (<the names>).` The names are `autoload/*`, `input_devices/joypads/ignore_joypad_on_unfocused_application`, `display/window/size/no_focus`, `display/window/size/initial_position_type`, `display/window/size/initial_position` and `display/window/size/mode`, each also followed by `.` and a feature tag (`display/window/size/no_focus.windows`).
 
   The bridge's lines also overwrite the project's own feature-tagged variants of those keys (a `window/size/no_focus.windows` or `joypads/ignore_joypad_on_unfocused_application.linux` in `project.godot`), so a project's per-platform setting cannot undo a quiet or unfocused run or the pad shut-out. A string, or a raw value, holding a line break or another control character (beyond the LF, CR and TAB a string escapes) is refused, since the file takes one line per setting.
 
@@ -774,7 +776,22 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
 ### `run_scratches`
 
-- **Does:** plays each scratch scene in its own fresh game session, headless or, with `options.windowed`, in a hidden, off-screen window, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict: `{passed, green, red, known, noSteps, killed, listed?, timeScale?, prep: {build, buildMs?, buildLog?, buildGate?, import, importMs?, importLog?, importGate?, note?}, scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, batch?, batches?, stepList?, pace, paceReason?, timeScale?, seconds, session, log?, failedAt?: {index, name, error, status, pattern?: {pattern, reason?}}, failures?: [{index, name, error}], alone?, aloneFailedAt?, details?: [{index, name, ok, gameMs?, until?: {met, gameMs, elapsedMs, frames}, status, screenshot?, window?, viewport?, error?, errors?: [{message, file, line, count?}], errorsOmitted?, errorsAfterCut?, lines?, cut?}], detailsOmitted?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, known?}], full?, cut?}`.
+- **Does:** plays each scratch scene in its own fresh game session, headless or, with `options.windowed`, in a hidden, off-screen window, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict. The result's shape:
+
+  ```
+  {passed, green, red, known, noSteps, killed, listed?, timeScale?,
+   prep: {build, buildMs?, buildLog?, buildGate?, import, importMs?, importLog?, importGate?, note?},
+   scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, batch?, batches?, stepList?,
+             pace, paceReason?, timeScale?, seconds, session, log?,
+             failedAt?: {index, name, error, status, pattern?: {pattern, reason?}},
+             failures?: [{index, name, error}], alone?, aloneFailedAt?,
+             details?: [{index, name, ok, gameMs?, until?: {met, gameMs, elapsedMs, frames}, status,
+                         screenshot?, window?, viewport?, error?, errors?: [{message, file, line, count?}],
+                         errorsOmitted?, errorsAfterCut?, lines?, cut?}],
+             detailsOmitted?,
+             exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, known?}],
+   full?, cut?}
+  ```
 
   A scratch scene's root implements the **scratch protocol**: `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)` and `GetStatus()`. Per step the server calls `PlayStep`, waits the scene's **pace** in game time (`wait_for {gameMs}`), then reads `GetStatus()` (its second line is `status`, or the text whole when it has one line).
 
@@ -888,7 +905,16 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A whole result that cannot be written still comes back capped, without `full`, its `cut` ending `the whole result could not be written to {path}: {message}`.
 
-  **From a terminal:** `godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>] [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red] [--user-arg <arg>]... [--engine-arg <arg>]... [--json] [--windowed] [--audible] [--user-data <real|scratch|seed=<folder>>] [--steps <token>]... [--ceiling <scene>[#<batch>]=<seconds|derived>]... [--memory-ceiling <scene>=<megabytes>]... [--batch <scene>=<token>[,<token>]]... [--capture [--capture-step <token>]...]` runs the same runner on the same `godot-mcp.json`, headless unless `--windowed` is given, and a game repo calls it through the installed launcher as it does `--sweep-agents`.
+  **From a terminal:** this command runs the same runner on the same `godot-mcp.json`, headless unless `--windowed` is given, and a game repo calls it through the installed launcher as it does `--sweep-agents`:
+
+  ```
+  godot-mcp --run-scratches <projectPath> [--scene <name-or-res-path>]... [--pace <seconds>] [--time-scale <x>]
+    [--keep-going] [--parallel <n>] [--prepare <mode>] [--details <full|compact>] [--only red]
+    [--user-arg <arg>]... [--engine-arg <arg>]... [--json] [--windowed] [--audible]
+    [--user-data <real|scratch|seed=<folder>>] [--steps <token>]...
+    [--ceiling <scene>[#<batch>]=<seconds|derived>]... [--memory-ceiling <scene>=<megabytes>]...
+    [--batch <scene>=<token>[,<token>]]... [--capture [--capture-step <token>]...]
+  ```
 
   Each option is the `options` key of the same name, and a name the command does not take is refused; `background` and `watch` are the tool's only. The run's session is `cli-<pid>`.
 

@@ -383,7 +383,9 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
   Logs go to `.godot/godot-mcp/build.log` and `import.log`; each process (the build, the Compile listing, the import) has a 300 s ceiling of load-adjusted time, its backstop and the stall kill, and a killed one refuses the launch saying it `did not finish (<detail>)` with its log.
 - **Profile** (`run_project`, before the launch).
 
-  The same file is loaded for every prep about to run a process: `PrepWrapper.Read` loads it for its `prepWrapper`, and `PrepWrapper.Wrap` runs the build, the import and the Compile-items listing through it from the project folder (decision 53). It substitutes `{log}`, `{ceiling}`, `{slot}` (`heavy`, `light` for the listing) and `{cwd}` (the step's own working directory; a process prep whose wrapper holds it starts the wrapper in the project folder). The wrapper's own output goes in `<step>.wrapper.log` when it owns `{log}`, there is no stall kill, the ceiling is paused from a gate's waiting line to its took line with a wall backstop of 5 x the ceiling (decision 52), and exit 124 is a stop.
+  The same file is loaded for every prep about to run a process: `PrepWrapper.Read` loads it for its `prepWrapper`, and `PrepWrapper.Wrap` runs the build, the import and the Compile-items listing through it from the project folder (decision 53). It substitutes `{log}`, `{ceiling}`, `{slot}` (`heavy`, `light` for the listing) and `{cwd}` (the step's own working directory; a process prep whose wrapper holds it starts the wrapper in the project folder).
+
+  The wrapper's own output goes in `<step>.wrapper.log` when it owns `{log}`, there is no stall kill, the ceiling is paused from a gate's waiting line to its took line with a wall backstop of 5 x the ceiling (decision 52), and exit 124 is a stop.
 
   The server reads MSBuild's own files first: the build's diagnostics from its file logger in `build.diagnostics.log` and the Compile items from its `/getResultOutputFile` JSON, with the switches in slash form on the command line because a PowerShell wrapper splits `-name:value` at the colon. The captured log is the fallback when that file is missing or a failed build's holds no error.
 
@@ -834,7 +836,9 @@ Input calls are serialised per session by the session's input gate. `McpServerSm
 
   `screenshot` saves `.godot/godot-mcp/screenshots/<stamp>-<pid>.png` and a Lanczos preview when wider than asked, and replies with paths, never bytes.
 
-  `run_script` compiles a script with `execute` and calls it with `Object.call`, never awaiting it. A suspended `execute` is kept in `_running_scripts` with its instance and a snapshot of `Engine.time_scale` and `SceneTree.paused`, and answered from its `completed` signal. A cancel drops the instance, whose destructor clears the pending coroutine so it never resumes, restores the snapshot and answers the request as stopped. A `call_method` still awaited is kept in `_running_calls`, and a cancel restores its snapshot, answers it and leaves the method running.
+  `run_script` compiles a script with `execute` and calls it with `Object.call`, never awaiting it. A suspended `execute` is kept in `_running_scripts` with its instance and a snapshot of `Engine.time_scale` and `SceneTree.paused`, and answered from its `completed` signal.
+
+  A cancel drops the instance, whose destructor clears the pending coroutine so it never resumes, restores the snapshot and answers the request as stopped. A `call_method` still awaited is kept in `_running_calls`, and a cancel restores its snapshot, answers it and leaves the method running.
 
   `input` takes gestures and raw events, under `_handle_input`.
 
@@ -876,7 +880,9 @@ Every tool sets all three hints explicitly: a read-only tool is also `destructiv
 
 ## Adding a headless scene edit tool
 
-1. A method in a `HeadlessTools` partial (`HeadlessTools.Scene.cs`, `HeadlessTools.Properties.cs`, `HeadlessTools.Signals.cs`, `HeadlessTools.Mesh.cs`; five schema parameters at most): check the scene path (`CheckEditableScenePath`). Build the op's parameters in an `internal static <Op>Parameters(…)` beside it (taking `projectDir` only when a check needs it, as a path check does). That builder checks every other argument (`CheckNodePath`, the new-file check, …) and `batch_scene_operations` calls it too.
+1. A method in a `HeadlessTools` partial (`HeadlessTools.Scene.cs`, `HeadlessTools.Properties.cs`, `HeadlessTools.Signals.cs`, `HeadlessTools.Mesh.cs`; five schema parameters at most): check the scene path (`CheckEditableScenePath`).
+
+   Build the op's parameters in an `internal static <Op>Parameters(…)` beside it (taking `projectDir` only when a check needs it, as a path check does). That builder checks every other argument (`CheckNodePath`, the new-file check, …) and `batch_scene_operations` calls it too.
 
    Then call `RunAsync` with the op name and its ceiling.
 2. An `apply_<op>(root, params, context)` in the module that owns its kind of op, returning `{result}` or `{error}` without saving and reading the scene and build state from `context`, and its entry in `scene_ops.gd`'s `EDIT_MODULES` (and `READ_OPS` for a read); refuse before changing anything, so a list edit stays all-or-nothing.
