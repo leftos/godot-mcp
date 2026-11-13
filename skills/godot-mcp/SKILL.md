@@ -36,7 +36,15 @@ A drive is always the same five moves: **start → look → act → wait → che
    To look mid-drag (an aiming arrow, a drag preview), `drag {release: false}` stops at `to` with the button held: `take_screenshot` or read state, then `mouse_button {action: "release"}` of that button.
 4. **Wait.**
 
-   `wait_for` a condition after every act instead of sleeping: `{node, exists}`, `{node, property, equals}`, `{node, signal}`, `{expression}` or `{text}` (a caption: exactly one visible Control or Label3D shows that text, `under` scoping it, `exists: false` waiting for it to go; prefer it to polling `run_script`) (`options.screenshot: true` captures the very frame it was met on, when the scene moves on faster than a following `take_screenshot`); when the game exposes its own state (`get_game_state`), wait on a key of it instead of a screenshot: `{node: "Board", state: "turn", equals: 2}` (a key path such as `seats[0].hp`, or `$` for the whole state; the node must be in the `mcp_state` group; a key the state lacks is not met, and `equals: null` waits for a key that is present and null; `match: "prefix"` or `"contains"` waits on the start or a part of a string value, case-sensitive); before a press on something that moves (a card hand re-sorting, a tween), wait for it to hold still with `{node: "Hand", stable: 10}` (its rect, transform or named `property` unchanged for 10 frames; `options.then` presses in the settled frame); when you cannot name what the input will change (a menu, a dialog), `{uiChanged: true}` reports which Controls appeared or disappeared and whether focus or the top popup moved (it compares Controls' paths, focus and the top popup, never label text); a wait in a parallel group beside an input in another session has no gesture of its own to take the baseline, so it asks `{uiChanged: "now"}`, which snapshots when the wait starts.
+   `wait_for` a condition after every act instead of sleeping: `{node, exists}`, `{node, property, equals}`, `{node, signal}`, `{expression}` or `{text}` (a caption: exactly one visible Control or Label3D shows that text, `under` scoping it, `exists: false` waiting for it to go; prefer it to polling `run_script`) (`options.screenshot: true` captures the very frame it was met on, when the scene moves on faster than a following `take_screenshot`).
+
+   When the game exposes its own state (`get_game_state`), wait on a key of it instead of a screenshot: `{node: "Board", state: "turn", equals: 2}` (a key path such as `seats[0].hp`, or `$` for the whole state; the node must be in the `mcp_state` group; a key the state lacks is not met, and `equals: null` waits for a key that is present and null; `match: "prefix"` or `"contains"` waits on the start or a part of a string value, case-sensitive).
+
+   Before a press on something that moves (a card hand re-sorting, a tween), wait for it to hold still with `{node: "Hand", stable: 10}` (its rect, transform or named `property` unchanged for 10 frames; `options.then` presses in the settled frame).
+
+   When you cannot name what the input will change (a menu, a dialog), `{uiChanged: true}` reports which Controls appeared or disappeared and whether focus or the top popup moved (it compares Controls' paths, focus and the top popup, never label text).
+
+   A wait in a parallel group beside an input in another session has no gesture of its own to take the baseline, so it asks `{uiChanged: "now"}`, which snapshots when the wait starts.
 
    A met bridge wait's `metAt` is the drive time of the frame that met it.
 
@@ -62,9 +70,17 @@ A drive is always the same five moves: **start → look → act → wait → che
 
 **Sessions.**
 
-`run_project` starts a game; `attach_project` joins one started some other way (a second client, a `--server` run, the editor's Play button: start it within `waitSeconds` after the call, never before; `options.quiet: true` for one a debugger launches, which also mutes it; `options.mute: true` silences a watched game); to join a game that is already running (a launcher script, a windowed smoke, a state a player reached), `arm_project` the folder first: every game with a window started on it from then on waits dormant (a `--headless` one is left alone), `attach_project` joins it (`options.pid` when several wait; `list_sessions`' `armed` lists them), `detach_project` returns it to waiting, and `disarm_project` ends that.
+`run_project` starts a game; `attach_project` joins one started some other way (a second client, a `--server` run, the editor's Play button: start it within `waitSeconds` after the call, never before; `options.quiet: true` for one a debugger launches, which also mutes it; `options.mute: true` silences a watched game).
 
-A game started before the arm has no bridge and cannot be joined; `restart_project` relaunches a run session with the same scene and arguments after you change code, keeping its name and output; `stop_project` and `detach_project` end them; `list_sessions` names the live ones (`includeStopped: true` adds runs that ended, still reachable by name); `get_debug_output` reads a run's stdout and stderr when it crashed or quit, and the whole output is in the result's `log` (`run_project` and `restart_project` return it too).
+To join a game that is already running (a launcher script, a windowed smoke, a state a player reached), `arm_project` the folder first: every game with a window started on it from then on waits dormant (a `--headless` one is left alone).
+
+`attach_project` then joins it (`options.pid` when several wait; `list_sessions`' `armed` lists them), `detach_project` returns it to waiting, and `disarm_project` ends that.
+
+A game started before the arm has no bridge and cannot be joined; `restart_project` relaunches a run session with the same scene and arguments after you change code, keeping its name and output.
+
+`stop_project` and `detach_project` end them; `list_sessions` names the live ones (`includeStopped: true` adds runs that ended, still reachable by name).
+
+`get_debug_output` reads a run's stdout and stderr when it crashed or quit, and the whole output is in the result's `log` (`run_project` and `restart_project` return it too).
 
 `run_process` starts a companion a project declares in `godot-mcp.json`'s `processes` section (a game server, a mock backend) as a process session: it has no bridge, `list_sessions` lists it with `kind: "process"` and a null `gameProcessId`, `get_debug_output` and `wait_for {output}` read what it prints (also written to `.godot/godot-mcp/process-<session>.log`), and `stop_project {session}` ends it and everything it started at once.
 
@@ -80,7 +96,9 @@ Pass the `session` `run_project` (or `run_editor`) returned to every call from t
 
 **Seeing.**
 
-`take_screenshot` (read-only, saves under `.godot/`; with `crop` in viewport coordinates, so a rect from `get_ui_elements` or `hover` crops as it is; `scale: 2` (1 to 4) grows the window for that one capture, so a crop has that many times the pixels, in a windowed `canvas_items` project that is not recording; for any other project, launch at twice the project's size with `--resolution`, which is given exactly), `get_ui_elements` (filter by class, e.g. `BaseButton`), and `preview_scene`, which shows one scene without playing it: it starts the scene quiet, screenshots its first frames and stops, beside any live session.
+`take_screenshot` (read-only, saves under `.godot/`; with `crop` in viewport coordinates, so a rect from `get_ui_elements` or `hover` crops as it is; `scale: 2` (1 to 4) grows the window for that one capture, so a crop has that many times the pixels, in a windowed `canvas_items` project that is not recording; for any other project, launch at twice the project's size with `--resolution`, which is given exactly).
+
+`get_ui_elements` (filter by class, e.g. `BaseButton`) and `preview_scene`, which shows one scene without playing it: it starts the scene quiet, screenshots its first frames and stops, beside any live session.
 
 To keep a still for the user or a later step, `take_screenshot` takes a `path` that copies the PNG into the checkout's or the main checkout's `.tmp` folder only (`options.overwrite` replaces a file there); `wait_for` with `options.screenshot` takes `options.path` the same way, and `capture_frames` an `options.path` `.png` stem its frames are numbered from. A `batch_drive` step with such a path is refused.
 
@@ -94,7 +112,33 @@ The `rect` is in the PNG's own pixels, not viewport coordinates; it returns the 
 
 **Scratch scenes.**
 
-A project whose scratch scenes implement `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)` and `GetStatus()` runs them with `run_scratches {projectPath}` (or `scenes: [...]` for a few) in place of its `Run-Scratches.ps1`: each scene plays in a fresh headless game (`options.windowed` plays it in a hidden, off-screen window, where screenshots, `capture_frames` and `watch` work, and `options.audible` with it keeps the project's audio driver so an audio scene records on a real mixer, and `options.watch {tracks}` watches the scene from its first step and returns the timeline as the scene's `watch`; a windowed run's `options.capture {steps?, screenshot: true}` shoots the steps it names, each at its until's met frame or the end of its pace (or, for a step whose root's optional `GetStepShotUntil(int)` gives a `wait_for` condition, the first drawn frame that holds within its pace, or before its until is met; a `signal`, `gameMs` or `frames` condition is refused on a step with an until), into `.godot/godot-mcp/scratch-<runId>/` and lists the file as the step's `details[].screenshot`, which `only: "red"` drops for green steps), each step paced in game time, and a red scene names its failing step with the errors from the error feed (identical ones folded with a count) and the matching output lines, cut to a small budget (`options.details: true` adds the green steps' detail and a larger budget; `"compact"` lists every green step as one line, with its status and `[scratch]` notes), and stops there unless `options.keepGoing` plays on so `failures` lists every red step, and `options.steps` plays only some steps (an array of indices, names or ranges like `["2-5"]`, or one token alone, `"2-5"`; an object `{"<Scene>": [...]}` gives each scene its own list and a scene it leaves out plays every step; `{"<Scene>": [[...], [...]]}` plays the scene once per inner list, each a fresh game and its own result entry with `batch` and `batches`, so a long run's memory starts over between blocks), plus the steps the scene's `scratch.setup` entry declares, which come back as `setup` beside `selected`.
+A project whose scratch scenes implement `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)` and `GetStatus()` runs them with `run_scratches {projectPath}` (or `scenes: [...]` for a few) in place of its `Run-Scratches.ps1`.
+
+Each scene plays in a fresh headless game.
+
+`options.windowed` plays a scene in a hidden, off-screen window, where screenshots, `capture_frames` and `watch` work, and `options.audible` with it keeps the project's audio driver so an audio scene records on a real mixer.
+
+`options.watch {tracks}` watches the scene from its first step and returns the timeline as the scene's `watch`.
+
+A windowed run's `options.capture {steps?, screenshot: true}` shoots the steps it names, each at its until's met frame or the end of its pace, into `.godot/godot-mcp/scratch-<runId>/` and lists the file as the step's `details[].screenshot`, which `only: "red"` drops for green steps.
+
+For a step whose root's optional `GetStepShotUntil(int)` gives a `wait_for` condition, the shot is taken at the first drawn frame that holds within its pace, or before its until is met.
+
+A `signal`, `gameMs` or `frames` condition is refused on a step with an until.
+
+Each step is paced in game time.
+
+A red scene names its failing step with the errors from the error feed (identical ones folded with a count) and the matching output lines, cut to a small budget (`options.details: true` adds the green steps' detail and a larger budget; `"compact"` lists every green step as one line, with its status and `[scratch]` notes).
+
+A red scene stops there unless `options.keepGoing` plays on so `failures` lists every red step.
+
+`options.steps` plays only some steps (an array of indices, names or ranges like `["2-5"]`, or one token alone, `"2-5"`).
+
+An object `{"<Scene>": [...]}` gives each scene its own list and a scene it leaves out plays every step.
+
+`{"<Scene>": [[...], [...]]}` plays the scene once per inner list, each a fresh game and its own result entry with `batch` and `batches`, so a long run's memory starts over between blocks.
+
+`options.steps` also plays the steps the scene's `scratch.setup` entry declares, which come back as `setup` beside `selected`.
 
 To learn a scene's step indices first, `options.listSteps: true` boots each scene and returns it as `listed` with its whole `stepList`, playing no step.
 
@@ -120,7 +164,21 @@ A step whose until is given and whose pace (in wall time, at the time scale) is 
 
 An until that counts frames or physics ticks (`frames`, `settled`) sees that many times fewer frames per second of game time, and at a high scale one frame's delta can exceed a short span it counts, so such a scene may need a longer span. A game that sets `Engine.time_scale` itself overrides the launch's scale and has its long steps cut short with a "clock stood still" error: that scene opts out with `"timeScale": 1` in its profile pace object (`{seconds, reason, timeScale: 1}`).
 
-Its folder, paces, ceilings, setup steps (`setup {"<scene>": [step, ...]}`, an index or an exact step name, for a partial run whose selected steps need earlier ones; `{"always": [...], "steps": {"<step>": [...]}}` instead keys the list per selected step), known-red scenes, patterns and the lines a scene must print (`expect`, `expectFor {"<scene>": [...]}`; a scene whose steps are green but whose output lacks one is red, `exit.missing` naming it) live in `godot-mcp.json`'s `scratch` section (a scene is killed at a ceiling derived from its paces; `options.ceilings` or `scratch.ceilings` `{"<scene>": seconds}` gives a scene its own, in load-adjusted seconds from its first step, not scaled by `timeScale`, the call's winning; the call's value may also be `null` (derived, beating the profile's row) or an array with one number or `null` per batch, and the profile's a number or `{headless, windowed}` read for the run's mode; `options.memoryCeilings` or `scratch.memoryCeilings` `{"<scene>": megabytes}` kills a scene whose game's private memory passes that many megabytes while its steps play; every scene's entry reports `peakPrivateMb`, the most private memory its game was read at, to size one, and a red or killed entry's `warnings` name the machine's free memory when its game launched); `get_debug_output {session}` with the scene's `session` reads its whole output afterwards.
+Its folder, paces, ceilings, setup steps (`setup {"<scene>": [step, ...]}`, an index or an exact step name, for a partial run whose selected steps need earlier ones; `{"always": [...], "steps": {"<step>": [...]}}` instead keys the list per selected step), known-red scenes, patterns and the lines a scene must print (`expect`, `expectFor {"<scene>": [...]}`) live in `godot-mcp.json`'s `scratch` section.
+
+A scene whose steps are green but whose output lacks one of those lines is red, `exit.missing` naming it.
+
+A scene is killed at a ceiling derived from its paces.
+
+`options.ceilings` or `scratch.ceilings` `{"<scene>": seconds}` gives a scene its own, in load-adjusted seconds from its first step, not scaled by `timeScale`, the call's winning.
+
+The call's value may also be `null` (derived, beating the profile's row) or an array with one number or `null` per batch, and the profile's a number or `{headless, windowed}` read for the run's mode.
+
+`options.memoryCeilings` or `scratch.memoryCeilings` `{"<scene>": megabytes}` kills a scene whose game's private memory passes that many megabytes while its steps play.
+
+Every scene's entry reports `peakPrivateMb`, the most private memory its game was read at, to size one, and a red or killed entry's `warnings` name the machine's free memory when its game launched.
+
+`get_debug_output {session}` with the scene's `session` reads its whole output afterwards.
 
 A terminal, hook or CI step runs the same runner on the same `godot-mcp.json` with `godot-mcp --run-scratches <projectPath>` (the installed launcher; `--scene` repeats, `--pace`, `--time-scale`, `--keep-going`, `--parallel`, `--prepare`, `--details`, `--only red`, `--windowed`, `--audible` and `--json` are the options of the same name, `--user-data real|scratch|seed=<folder>` is `userData`; see `TOOLS.md` for the rest).
 
@@ -136,7 +194,9 @@ Wait with `scratch_status {projectPath, runId, waitSeconds}` (1 to 600): it hold
 
 Or wait on its log with a `Monitor` running `timeout <limit> tail -n +1 -F <logFile>` and matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`).
 
-The Monitor's limit is the scenes' paces (each divided by the time scale, an until step's hang guard (15 s unless it has a `guard`) in place of its pace, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two (a game that runs slowed can outlast that sum in its exit hold, so give such a run a longer limit): a server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
+The Monitor's limit is the scenes' paces (each divided by the time scale, an until step's hang guard (15 s unless it has a `guard`) in place of its pace, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two (a game that runs slowed can outlast that sum in its exit hold, so give such a run a longer limit).
+
+A server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
 
 Never drop the `timeout`: on Windows a bare `tail -F` outlives the Monitor's shell when the Monitor ends, and runs on for good.
 
@@ -148,7 +208,13 @@ Its sessions are skipped by calls that name no `session`, so name one to drive o
 
 **Input.**
 
-`click`, `drag` (a GUI drag starts only past 10 px), `type_text` (into the focused Control: click the LineEdit first), `key` (`Enter`, `Escape`, `A`, with `action` `press`/`release` to hold one), `mouse_button` (a press or release by hand, for paths `drag` cannot draw; `action: "move"` only moves), `hover` (the pointer over a Control, waiting for its tooltip and returning its text and rect; hover while the game runs, since a paused Control never starts its tooltip timer, then pause if needed), `scroll` (wheel notches at a target, `notches` and `options.factor` for how far, `options.via: "pan"` for a trackpad pan; a ScrollContainer moves an eighth of its page per notch, and a child with mouse filter Stop swallows the wheel unless it sets `force_pass_scroll_events`; a click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or the arrow clicks, that bring it in).
+`click`, `drag` (a GUI drag starts only past 10 px), `type_text` (into the focused Control: click the LineEdit first), `key` (`Enter`, `Escape`, `A`, with `action` `press`/`release` to hold one), `mouse_button` (a press or release by hand, for paths `drag` cannot draw; `action: "move"` only moves).
+
+`hover` (the pointer over a Control, waiting for its tooltip and returning its text and rect; hover while the game runs, since a paused Control never starts its tooltip timer, then pause if needed).
+
+`scroll` (wheel notches at a target, `notches` and `options.factor` for how far, `options.via: "pan"` for a trackpad pan; a ScrollContainer moves an eighth of its page per notch, and a child with mouse filter Stop swallows the wheel unless it sets `force_pass_scroll_events`).
+
+A click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or the arrow clicks, that bring it in).
 
 Pads: `gamepad_button` (`A`, `START`, `DPAD_DOWN`), `gamepad_stick` (push, then `options.release: true` before the next push moves focus again), `gamepad_axis` (triggers, analogue values). `simulate_input` sends raw event sequences, InputMap `action` events included, when no gesture fits.
 
@@ -156,7 +222,15 @@ The injected pad never shows in `Input.get_connected_joypads()`. Without `device
 
 **Time.**
 
-`frame_control` pauses, resumes, steps exact drawn or physics frames (`step` leaves the game paused; `options.screenshot: true` captures the frame reached; `options.until`, any `wait_for` condition but `frames` or `output`, stops the step on the first frame that meets it and leaves the game paused there, `count` then the most frames, 1000 by default: `step {count: 1000, options: {until: {...}}}` from a running game freezes it on that frame, and an `until` never met answers `met: false` with `last`; `options.input` sends `simulate_input`'s raw events inside chosen stepped frames, each with a `frame`, so a press lands in an exact frame (a `{type: "repeat", count, every, events}` entry sends its events every `every` frames, to hold an action or repeat an input without a script): a key, button or action with `pressed` left out is released one frame later, an `until` met early reports `inputNotSent`, and `held` lists what is still pressed, so release it) and sets `time_scale`.
+`frame_control` pauses, resumes, steps exact drawn or physics frames and sets `time_scale`.
+
+`step` leaves the game paused; `options.screenshot: true` captures the frame reached.
+
+`options.until`, any `wait_for` condition but `frames` or `output`, stops the step on the first frame that meets it and leaves the game paused there, `count` then the most frames, 1000 by default: `step {count: 1000, options: {until: {...}}}` from a running game freezes it on that frame, and an `until` never met answers `met: false` with `last`.
+
+`options.input` sends `simulate_input`'s raw events inside chosen stepped frames, each with a `frame`, so a press lands in an exact frame (a `{type: "repeat", count, every, events}` entry sends its events every `every` frames, to hold an action or repeat an input without a script).
+
+A key, button or action with `pressed` left out is released one frame later, an `until` met early reports `inputNotSent`, and `held` lists what is still pressed, so release it.
 
 A pause does not stop a `SceneTreeTimer` (`get_tree().create_timer()` counts on while paused) or anything whose process mode is Always: hold a scene that waits on one with `time_scale` instead.
 
@@ -168,9 +242,31 @@ One watch per game run: always `stop` the one you started.
 
 **Inspecting and changing the live game.**
 
-`inspect_node` reads a node's properties (a C# node's `[Export]` members by default; name a private field in `properties` to read it, as `set_property`, `wait_for` and `watch` do); `set_property` sets one from JSON by its declared type and reads it back (`{x, y}` for a Vector2, `"#rrggbb"` for a Color, the `.tscn` constructor text for a transform, basis, quaternion, AABB or plane, `"Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)"`, as every read returns them; a `:` path such as `material_override:albedo_color` or `position:x` reaches into a sub-resource or one vector component), putting the old value back when the read-back differs; `call_method` calls a method (C# ones too) and awaits a coroutine; `list_game_tools` lists the game's own cheat and debug methods marked `[GodotMcpTool]`, with their owner and argument schema: read it before a C# game's docs or source for a cheat, then `call_game_tool {name, args: {<parameter>: value}}` calls one by name, its arguments checked against the schema before the game is asked.
+`inspect_node` reads a node's properties (a C# node's `[Export]` members by default; name a private field in `properties` to read it, as `set_property`, `wait_for` and `watch` do).
 
-`cs_members` lists a C# node's or type's members, private ones and every overload included, that Godot's call cannot show; `cs_get` and `cs_set` read and write a C# property or field by name or dotted path (`Pending.Options[0]`), private ones and statics included, where Godot's own `get` reads null (`cs_set` reads back and puts the old value back as `set_property` does; `cs_get`'s `options.keep` returns a handle for a later `{handle}` target); `cs_call` calls a C# method or constructor (`.ctor` on a `{type}`) with JSON arguments, choosing among overloads (`options.signature` when several fit), closing generics (`options.typeArgs`) and awaiting a `Task`; `run_csharp` runs a C# method body in the game (`var t = Node<Duel>("Duel"); return t.Bind(new Update(...));`), with `Node`, `Get`/`Set`/`Call` (private members), `await` (`await ToSignal(Tree, SceneTree.SignalName.ProcessFrame)` waits a frame) `Cancellation` (the token its timeout cancels; pass it to awaits so a timed-out snippet stops) and `Log(value)` (a line kept in the run's log, returned beside the value and printed in a throw's failure text) in scope, refused when the game runs an older build than the one on disk (`restart_project`); `run_script` runs a GDScript `extends RefCounted` with `func execute(scene_tree: SceneTree) -> Variant` for anything those tools cannot say, but in a C# project a C# member Godot does not marshal (a `List<T>`, a record, a private field) is out of its reach: read it with `cs_get`, `cs_call` or `run_csharp`.
+`set_property` sets one from JSON by its declared type and reads it back (`{x, y}` for a Vector2, `"#rrggbb"` for a Color, the `.tscn` constructor text for a transform, basis, quaternion, AABB or plane, `"Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)"`, as every read returns them).
+
+A `:` path such as `material_override:albedo_color` or `position:x` reaches into a sub-resource or one vector component.
+
+`set_property` puts the old value back when the read-back differs.
+
+`call_method` calls a method (C# ones too) and awaits a coroutine.
+
+`list_game_tools` lists the game's own cheat and debug methods marked `[GodotMcpTool]`, with their owner and argument schema: read it before a C# game's docs or source for a cheat, then `call_game_tool {name, args: {<parameter>: value}}` calls one by name, its arguments checked against the schema before the game is asked.
+
+`cs_members` lists a C# node's or type's members, private ones and every overload included, that Godot's call cannot show.
+
+`cs_get` and `cs_set` read and write a C# property or field by name or dotted path (`Pending.Options[0]`), private ones and statics included, where Godot's own `get` reads null (`cs_set` reads back and puts the old value back as `set_property` does; `cs_get`'s `options.keep` returns a handle for a later `{handle}` target).
+
+`cs_call` calls a C# method or constructor (`.ctor` on a `{type}`) with JSON arguments, choosing among overloads (`options.signature` when several fit), closing generics (`options.typeArgs`) and awaiting a `Task`.
+
+`run_csharp` runs a C# method body in the game (`var t = Node<Duel>("Duel"); return t.Bind(new Update(...));`).
+
+In scope are `Node`, `Get`/`Set`/`Call` (private members), `await` (`await ToSignal(Tree, SceneTree.SignalName.ProcessFrame)` waits a frame) `Cancellation` (the token its timeout cancels; pass it to awaits so a timed-out snippet stops) and `Log(value)` (a line kept in the run's log, returned beside the value and printed in a throw's failure text).
+
+`run_csharp` is refused when the game runs an older build than the one on disk (`restart_project`).
+
+`run_script` runs a GDScript `extends RefCounted` with `func execute(scene_tree: SceneTree) -> Variant` for anything those tools cannot say, but in a C# project a C# member Godot does not marshal (a `List<T>`, a record, a private field) is out of its reach: read it with `cs_get`, `cs_call` or `run_csharp`.
 
 `get_errors` lists logged errors and warnings since a `seq` (`since` = the last call's `next`).
 
@@ -200,17 +296,41 @@ To start one on a met frame there, `wait_for` with `options.then {pause: true}`,
 
 A clip can be given a file as a still can: `options.path` on either kind of `start` (a movie's too, with no `fps`, `maxSeconds` or `audio`) names the `.mp4` it is moved to, in the project, its git checkout or, from a linked worktree, the main checkout's `.tmp` folder, and `options.overwrite` replaces one there. Read `clip.path` or `recording.clips` for where the file is, since a refused move keeps it under `.godot/godot-mcp/recordings/` and warns.
 
-A real-time recording ends with its session too: `stop_project` and `detach_project` return its clip as `recording: {mode: "realtime", clips: [path], startedSeconds, warning?}` and `restart_project` as `previousRecording`, so a recording left running is not lost (the new game after a restart does not record until you `start` again); one that ended on its own (`maxSeconds`, the game quitting) is returned once, by whichever of `record_mark stop`, `stop_project`, `detach_project` and `restart_project` comes first.
+A real-time recording ends with its session too: `stop_project` and `detach_project` return its clip as `recording: {mode: "realtime", clips: [path], startedSeconds, warning?}` and `restart_project` as `previousRecording`, so a recording left running is not lost (the new game after a restart does not record until you `start` again).
+
+A recording that ended on its own (`maxSeconds`, the game quitting) is returned once, by whichever of `record_mark stop`, `stop_project`, `detach_project` and `restart_project` comes first.
 
 A clip that could not be finished comes back as `recording.error` and does not fail the stop, restart or detach; a `start` while the session is ending is refused until the game has restarted.
 
-A real-time recording needs ffmpeg and the capture helper, records the game's own sound as an audio track unless `options.audio: false` (a muted session records no track and warns; a game that mutes itself after the start gives a silent one; the system volume and mute do not change what it records; the sound needs Windows build 20348 or later), and is refused on a quiet or headless session; keep the window unminimized, since a minimized window holds its last frame (the stop result warns, naming each span).
+A real-time recording needs ffmpeg and the capture helper, records the game's own sound as an audio track unless `options.audio: false` (a muted session records no track and warns; a game that mutes itself after the start gives a silent one; the system volume and mute do not change what it records; the sound needs Windows build 20348 or later), and is refused on a quiet or headless session.
+
+Keep the window unminimized, since a minimized window holds its last frame (the stop result warns, naming each span).
 
 **Headless scene editing** (no game runs; a live session on the folder keeps running, and sees an edit only after `restart_project`).
 
 The scene tools take a `.xscn` (godot-xaml's format) wherever they take a `.tscn`, through the project's addon. To write or hand-edit `.xscn` and `.xres` text, or read a `GX`, `GXC`, `GXP` or `GXT` code, load the `godot-xaml` skill: it owns the format.
 
-`validate` loads scripts, scenes and resources and reports errors, C# build included (a `.cs` target gets its own errors and warnings and the scenes that attach it); `get_scene_file_tree` lists a scene file's nodes (paths from its root: `.`, `Boss/Sprite`), or an imported `.glb`, `.gltf`, `.fbx`, `.blend` or `.dae` model's, importing it first when needed (the other scene tools refuse such models); `create_scene`, `save_scene` (save-as), `add_node`, `delete_nodes`, `duplicate_node`, `move_node`, `attach_script`, `load_sprite`, `set_node_properties` (a Control's anchors need `layout_mode` 1 first; `:` paths as in `set_property`), `get_node_properties`, `get_node_signals`, `connect_signal`, `disconnect_signal` edit or read one scene, an edit leaving the rest of the `.tscn` as it was (a `warning` says when it could not; `save_scene` rewrites the whole file in 4.7 form; a result's `uidFilesWritten` names `.uid` files written for scripts that had none, or for a new `.xscn`: commit them with the scene; every scene tool takes a `.xscn` where it takes a `.tscn` in a project with the godot-xaml addon, saved whole through the addon, and `validate` takes `.xres`; when no loader reads the format the error says to build the C# project and run `godot --headless --path <project> --import` once; a save of a scene that loaded with errors (a resource it could not fetch, or a script its file references that does not load) is refused and the scene file is not written, so fix what the refusal or `engineErrors` names first; a script's own `push_error` never refuses one); `stamp_uids` gives a hand-written `.tscn` or `.tres` with no header uid the uid the editor would, changing only its header line, and a `.xscn` or `.xres` with no `.uid` file beside it that file: commit the files it lists; `export_mesh_library` builds a GridMap MeshLibrary from a 3D scene; `batch_scene_operations` runs many edits on one scene in one Godot start and saves once, all or nothing.
+`validate` loads scripts, scenes and resources and reports errors, C# build included (a `.cs` target gets its own errors and warnings and the scenes that attach it).
+
+`get_scene_file_tree` lists a scene file's nodes (paths from its root: `.`, `Boss/Sprite`), or an imported `.glb`, `.gltf`, `.fbx`, `.blend` or `.dae` model's, importing it first when needed (the other scene tools refuse such models).
+
+`create_scene`, `save_scene` (save-as), `add_node`, `delete_nodes`, `duplicate_node`, `move_node`, `attach_script`, `load_sprite`, `set_node_properties` (a Control's anchors need `layout_mode` 1 first; `:` paths as in `set_property`), `get_node_properties`, `get_node_signals`, `connect_signal`, `disconnect_signal` edit or read one scene, an edit leaving the rest of the `.tscn` as it was (a `warning` says when it could not).
+
+`save_scene` rewrites the whole file in 4.7 form.
+
+A result's `uidFilesWritten` names `.uid` files written for scripts that had none, or for a new `.xscn`: commit them with the scene.
+
+Every scene tool takes a `.xscn` where it takes a `.tscn` in a project with the godot-xaml addon, saved whole through the addon, and `validate` takes `.xres`.
+
+When no loader reads the format the error says to build the C# project and run `godot --headless --path <project> --import` once.
+
+A save of a scene that loaded with errors (a resource it could not fetch, or a script its file references that does not load) is refused and the scene file is not written, so fix what the refusal or `engineErrors` names first.
+
+A script's own `push_error` never refuses one.
+
+`stamp_uids` gives a hand-written `.tscn` or `.tres` with no header uid the uid the editor would, changing only its header line, and a `.xscn` or `.xres` with no `.uid` file beside it that file: commit the files it lists.
+
+`export_mesh_library` builds a GridMap MeshLibrary from a 3D scene; `batch_scene_operations` runs many edits on one scene in one Godot start and saves once, all or nothing.
 
 `move_node` to another parent rewrites the stored `NodePath` properties of the scene's nodes that point into or out of the moved subtree so they resolve to the same node, and lists each in its `rewrittenPaths`; animation track paths and `NodePath`s inside resources are not rewritten.
 
@@ -242,7 +362,17 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
 - **Viewport coordinates everywhere** an input tool takes `x, y`. Prefer `{element}` targets (full paths from `get_ui_elements` when names repeat): an element may be a 2D or 3D world node too (an `Area2D`, a die on a table), aimed at its origin or at `offset` from it through its camera, with `aimedAt` in the result saying where; aim at the node instead of projecting it by hand or emitting its signal.
 
-  A button or a card is aimed at by the text it shows with `{text: "New Game"}` (`under` narrows it when several show it; `match: "prefix"` or `"contains"` finds a Control by the start or a part of its text, a multi-line label by its first line's opening words, and `wait_for`'s `text` condition takes it too; several matches are still refused, and `item` text always matches exactly), and a tab, a list row or a tree item with `{element: "Tabs", item: {text: "Alex"}}` (`index`, or `path` for a Tree), and a dropdown or menu entry with `{element: "Difficulty", item: {text: "Hard"}}` on the `OptionButton`, `MenuButton` or open `PopupMenu` (a `click` opens a closed popup first, `aimedAt.opened`; an entry with a submenu is only hovered until the submenu opens, and `aimedAt.item.submenu` names the `PopupMenu` to target in the next call), never by setting `current_tab` or `selected` and emitting the signal by hand, before computing its position (a `[hint]` or tooltip link in a `RichTextLabel` is `{element: "Log", item: {text: "<its tooltip text>"}}`, or `item: {index: 0}`; a `hover` that finds no tooltip over such a label names the nearest span and its index): a Button's text can differ from its name, and a miss names the node called that and what it shows.
+  A button or a card is aimed at by the text it shows with `{text: "New Game"}` (`under` narrows it when several show it; `match: "prefix"` or `"contains"` finds a Control by the start or a part of its text, a multi-line label by its first line's opening words, and `wait_for`'s `text` condition takes it too; several matches are still refused, and `item` text always matches exactly).
+
+  A tab, a list row or a tree item is aimed at with `{element: "Tabs", item: {text: "Alex"}}` (`index`, or `path` for a Tree).
+
+  A dropdown or menu entry is aimed at with `{element: "Difficulty", item: {text: "Hard"}}` on the `OptionButton`, `MenuButton` or open `PopupMenu` (a `click` opens a closed popup first, `aimedAt.opened`; an entry with a submenu is only hovered until the submenu opens, and `aimedAt.item.submenu` names the `PopupMenu` to target in the next call).
+
+  Aim at them by these targets, never by setting `current_tab` or `selected` and emitting the signal by hand, before computing its position.
+
+  A `[hint]` or tooltip link in a `RichTextLabel` is `{element: "Log", item: {text: "<its tooltip text>"}}`, or `item: {index: 0}`; a `hover` that finds no tooltip over such a label names the nearest span and its index.
+
+  A Button's text can differ from its name, and a miss names the node called that and what it shows.
 
   An element that is hidden, being freed, named by several nodes, covered at its centre by another Control, or with its centre outside the viewport is refused with nothing pressed: the error names the cover (or the viewport) and the rects, so click by `{x, y}` in the visible part, bring it into view, or wait until it clears.
 - **A condition `expression` is Godot's `Expression`, not GDScript**: no lambdas, `if`/`else`, `is`, `as` or `not in` (write `not (a in b)`), and both sides of `and` are evaluated, so guard an index with a separate wait or a method of the game's (the engine error such an index raises is kept out of `errors` and counted in `mutedErrors`).

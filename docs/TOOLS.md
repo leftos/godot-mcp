@@ -1231,7 +1231,9 @@ A `{text}` target takes `match`: `"exact"` (the default), `"prefix"` or `"contai
 
 A bad value is refused (`match is "x"; it must be "exact", "prefix" or "contains".`), and so is `match` without `text`: on an input target `match applies only to a text condition or target; this one has no text.`, on a condition with no string `equals` either `match applies only to a text condition or target, or a string equals; this one has neither.`. `match` does not reach an `item` (`item.text`, a popup item or a tooltip span): those match exactly.
 
-A text target that matches nothing is refused as `no visible Control shows 'Host'` (`no visible Control's text starts with 'Host'` for `prefix`, `no visible Control's text contains 'Host'` for `contains`), followed by up to five near misses (equal ignoring case, or containing) and each node named `Host` with what it shows (`…/Host is named 'Host' and shows 'New Game'`); one that several Controls match, in any mode, is refused listing up to ten with their rects, `narrow it with under` (there is no nth and no first match).
+A text target that matches nothing is refused as `no visible Control shows 'Host'` (`no visible Control's text starts with 'Host'` for `prefix`, `no visible Control's text contains 'Host'` for `contains`), followed by up to five near misses (equal ignoring case, or containing) and each node named `Host` with what it shows (`…/Host is named 'Host' and shows 'New Game'`).
+
+A text target that several Controls match, in any mode, is refused listing up to ten with their rects, `narrow it with under` (there is no nth and no first match).
 
 A text match is aimed at as its Control would be, and `aimedAt` gains `matched {by: "text", text}`.
 
@@ -1239,15 +1241,33 @@ A matched Control with an `owner` that does nothing on a press (one that ignores
 
 A match that acts on a press itself (a Button) and is covered is refused as covered, as is any match covered by a Control a script made with `new` outside the match's own instance (under the scene root, or under another instanced scene) or by a popup's Control.
 
-Beside `element` (or `text`), `item {text | index | path, column?}` aims at an item drawn inside an `ItemList`, a `TabBar`, a `TabContainer` (its tab bar) or a `Tree`, at the item's rect centre (a Tree's column 0, for an item that folds, past the fold arrow's indent, so it is selected, not folded, and refused when the indent fills the column; a right-to-left ItemList where Godot mirrors it): `text` is the item's text as drawn (translated as the Control's auto-translate mode says; exact, trimmed, case-sensitive; in a Tree, at any depth in `column`), `index` its index (an ItemList item or a tab; not a Tree), `path` a Tree item's column-0 texts from the first shown level down, visible items only, every branch reading a step followed (only several matches at the last step are ambiguous), `column` a Tree's cell (default 0); exactly one of `text`, `index`, `path`, and a blank `text` is refused.
+Beside `element` (or `text`), `item {text | index | path, column?}` aims at an item drawn inside an `ItemList`, a `TabBar`, a `TabContainer` (its tab bar) or a `Tree`, at the item's rect centre (a Tree's column 0, for an item that folds, past the fold arrow's indent, so it is selected, not folded, and refused when the indent fills the column; a right-to-left ItemList where Godot mirrors it).
+
+The `item` fields read as follows. `text` is the item's text as drawn (translated as the Control's auto-translate mode says; exact, trimmed, case-sensitive; in a Tree, at any depth in `column`), `index` its index (an ItemList item or a tab; not a Tree), `path` a Tree item's column-0 texts from the first shown level down, visible items only, every branch reading a step followed (only several matches at the last step are ambiguous), `column` a Tree's cell (default 0).
+
+Exactly one of `text`, `index`, `path` is given, and a blank `text` is refused.
 
 Before anything is pressed the point is checked back through the Control's own lookup (`get_item_at_position`, `get_tab_idx_at_point`, a Tree's item and column at the point); `aimedAt` then has `kind: item`, the list Control's `path` and `class`, and `item {index, text, path?, disabled?}` (a Tree item's `index` is its place among its siblings; a disabled item or tab is still pressed and says `disabled: true`).
 
-Refused with nothing pressed: another class (`… is a Label; item targets take an ItemList, TabBar, TabContainer, Tree, RichTextLabel, OptionButton, MenuButton or PopupMenu`), `path` or `column` off a Tree, `index` on a Tree, no such item (listing up to ten shown texts), several items with that text (listing each index and rect, `narrow with item.index`, or each Tree path, `narrow with item.path`; Tree siblings sharing one path are told to aim with `{x, y}` inside a listed rect), a hidden tab or Tree item (and a TabContainer whose tabs are hidden), an item under a collapsed Tree item (naming the outermost one: expand it first), an item scrolled outside its list's visible rect, which leaves out a Tree's column-title row and any visible scroll bar (both rects given: scroll the list first), an item whose point lies outside the viewport, such as a tab past a `clip_tabs`-off bar's edge (its rect, point and the viewport's size given: bring it into view first), a tab scrolled out of a clipped tab bar's drawn range (`… is scrolled out of the tab bar: tab 7 lies after the drawn tabs (0 to 2); scroll over the tab strip, scroll {target: {x, y}, direction: "down", notches: 5}, then try again`: follow it, repeating while the tab is not drawn, since a wheel notch moves the bar's offset by one tab; for a TabContainer the point is its tab strip's; a bar with `scrolling_enabled` off names its increment or decrement arrow's point and how many clicks instead), and a tab or item not laid out yet (`has no drawn rect`).
+Refused with nothing pressed: another class (`… is a Label; item targets take an ItemList, TabBar, TabContainer, Tree, RichTextLabel, OptionButton, MenuButton or PopupMenu`), `path` or `column` off a Tree, `index` on a Tree, no such item (listing up to ten shown texts), several items with that text (listing each index and rect, `narrow with item.index`, or each Tree path, `narrow with item.path`; Tree siblings sharing one path are told to aim with `{x, y}` inside a listed rect).
+
+Also refused with nothing pressed: a hidden tab or Tree item (and a TabContainer whose tabs are hidden), an item under a collapsed Tree item (naming the outermost one: expand it first), an item scrolled outside its list's visible rect, which leaves out a Tree's column-title row and any visible scroll bar (both rects given: scroll the list first).
+
+Also refused with nothing pressed: an item whose point lies outside the viewport, such as a tab past a `clip_tabs`-off bar's edge (its rect, point and the viewport's size given: bring it into view first).
+
+Also refused with nothing pressed: a tab scrolled out of a clipped tab bar's drawn range. The refusal reads `… is scrolled out of the tab bar: tab 7 lies after the drawn tabs (0 to 2); scroll over the tab strip, scroll {target: {x, y}, direction: "down", notches: 5}, then try again`.
+
+Follow it, repeating while the tab is not drawn, since a wheel notch moves the bar's offset by one tab. For a TabContainer the point is its tab strip's. A bar with `scrolling_enabled` off names its increment or decrement arrow's point and how many clicks instead.
+
+Also refused with nothing pressed: a tab or item not laid out yet (`has no drawn rect`).
 
 The press must land on the Control that draws the item (the tab bar for a TabContainer), never on one of its scroll bars.
 
-Beside an `element` (or `text`) naming an `OptionButton`, a `MenuButton` or an open `PopupMenu` (an element names a `PopupMenu` only with `item`, and `offset` there is refused: `offset aims inside a world node; <path> is a PopupMenu.`), `item {text | index}` aims at an item of its popup: `index` counts separators, as `OptionButton.selected` does; `text` matches the drawn text as above, a miss listing up to ten item texts (separators left out) and several matches listing their indices (`<popup> has 2 items reading 'Save': index 1, index 4; narrow with item.index`); `path` or `column` is refused (`<path> is a <class>; a popup item takes text or index, not item.path`).
+Beside an `element` (or `text`) naming an `OptionButton`, a `MenuButton` or an open `PopupMenu` (an element names a `PopupMenu` only with `item`, and `offset` there is refused: `offset aims inside a world node; <path> is a PopupMenu.`), `item {text | index}` aims at an item of its popup.
+
+There `index` counts separators, as `OptionButton.selected` does. `text` matches the drawn text as above, a miss listing up to ten item texts (separators left out) and several matches listing their indices (`<popup> has 2 items reading 'Save': index 1, index 4; narrow with item.index`).
+
+There `path` or `column` is refused (`<path> is a <class>; a popup item takes text or index, not item.path`).
 
 In the refusals below `<popup>` is the `PopupMenu`'s path, or `the popup of <button path>`, and an item is its text quoted, or `item <index>` when it has none. A `PopupMenu` exposes no item rect, so the point is found by real mouse motions over the popup's items, bisecting on y and reading `get_focused_item()` after each (at most 2 x ceil(log2(items)) + 4 motions); the pointer ends on the item, highlighted as a player's pointer leaves it.
 
@@ -1267,17 +1287,37 @@ Spans come only from what a player sees: the label's drawn glyphs and images ins
 
 The probe stops at 20,000 samples or 250 ms, whichever comes first, and the refusal or hover warning then ends with `the tooltip span probe of <path> stopped after <n> samples in <ms> ms, so spans past (x, y) were not looked for.`: on a very long log each sample walks the label's paragraphs, so the deepest lines may go unsearched.
 
-Refused with nothing pressed on the item: a separator (`'---' in <popup> is a separator; Godot ignores a press on it`); a disabled item (`'Load' in <popup> is disabled; Godot ignores a press on it`), since `get_focused_item()` reads -1 over it and the aim cannot be confirmed; a native popup (`<popup> is a native menu, an OS window of its own, and input events cannot reach a native menu; a popup is embedded only while gui_embed_subwindows is on (display/window/subwindows/embed_subwindows) and its force_native is off`); a `PopupMenu` named itself that is not open (`<popup> is not open; open it first`); a popup filtered by its search bar, a submenu of a filtered popup, and a popup whose hidden search bar still holds text (`<popup> filters its items by the search 'lo'; hidden items cannot be told apart, clear the search first`, naming the popup whose search filters; a search is the only thing that hides a popup item, since `PopupMenu` binds no item visibility); a disabled `OptionButton` or `MenuButton` whose popup is closed (`<path> is disabled; it cannot open its popup`); an item of a closed popup aimed by `hover`, `scroll` or a `mouse_button` move or release (`the popup of <path> is closed; click the button first`); a closed popup while another popup is open (`the popup of <path> is closed and <open popup path> is open, so the press that would open it only closes that one; close it first`); a drag from or to a popup item (`from: an item in a popup cannot start or end a drag; click it instead`); a popup that does not show (`clicking <path> did not open its popup within 1000 ms`); a probe that does not find the item (`could not find 'Save' in <popup> within 8 motions; get_focused_item read [0, 2, -1, …]`, ending `; it may lie below the popup's visible items: scroll the popup first`, or `above`, when every item read lies before it, or after it); a popup that closes while the pointer looks (`<popup> closed while the pointer looked for 'Save'`); a popup with no items inside the viewport (`<popup> draws no items inside the viewport`); and a submenu that does not show (`'Recent' in <popup> did not open its submenu <path> within 1200 ms`).
+Refused with nothing pressed on the item: a separator (`'---' in <popup> is a separator; Godot ignores a press on it`); a disabled item (`'Load' in <popup> is disabled; Godot ignores a press on it`), since `get_focused_item()` reads -1 over it and the aim cannot be confirmed.
+
+Also refused with nothing pressed on the item: a native popup (`<popup> is a native menu, an OS window of its own, and input events cannot reach a native menu; a popup is embedded only while gui_embed_subwindows is on (display/window/subwindows/embed_subwindows) and its force_native is off`).
+
+Also refused with nothing pressed on the item: a `PopupMenu` named itself that is not open (`<popup> is not open; open it first`).
+
+Also refused with nothing pressed on the item: a popup filtered by its search bar, a submenu of a filtered popup, and a popup whose hidden search bar still holds text (`<popup> filters its items by the search 'lo'; hidden items cannot be told apart, clear the search first`, naming the popup whose search filters; a search is the only thing that hides a popup item, since `PopupMenu` binds no item visibility).
+
+Also refused with nothing pressed on the item: a disabled `OptionButton` or `MenuButton` whose popup is closed (`<path> is disabled; it cannot open its popup`); an item of a closed popup aimed by `hover`, `scroll` or a `mouse_button` move or release (`the popup of <path> is closed; click the button first`).
+
+Also refused with nothing pressed on the item: a closed popup while another popup is open (`the popup of <path> is closed and <open popup path> is open, so the press that would open it only closes that one; close it first`); a drag from or to a popup item (`from: an item in a popup cannot start or end a drag; click it instead`).
+
+Also refused with nothing pressed on the item: a popup that does not show (`clicking <path> did not open its popup within 1000 ms`); a probe that does not find the item (`could not find 'Save' in <popup> within 8 motions; get_focused_item read [0, 2, -1, …]`, ending `; it may lie below the popup's visible items: scroll the popup first`, or `above`, when every item read lies before it, or after it).
+
+Also refused with nothing pressed on the item: a popup that closes while the pointer looks (`<popup> closed while the pointer looked for 'Save'`); a popup with no items inside the viewport (`<popup> draws no items inside the viewport`); and a submenu that does not show (`'Recent' in <popup> did not open its submenu <path> within 1200 ms`).
 
 A refusal that comes after the gesture opened the popup ends with `; the popup is open now`, and the popup stays open.
 
-An element is a Control, aimed at its rect's centre where it shows (through its CanvasLayer, a Camera2D's canvas transform, a `SubViewportContainer` and an embedded window's offset), or a 2D or 3D world node, aimed at its origin, or at `offset {x, y}` (a 2D node, local pixels) or `offset {x, y, z?}` (a 3D node, local units) from it, through its CanvasLayer or Camera2D, or projected through its viewport's current Camera3D; a node inside a SubViewport is carried out through its `SubViewportContainer` to the root.
+An element is a Control, aimed at its rect's centre where it shows (through its CanvasLayer, a Camera2D's canvas transform, a `SubViewportContainer` and an embedded window's offset), or a 2D or 3D world node, aimed at its origin, or at `offset {x, y}` (a 2D node, local pixels) or `offset {x, y, z?}` (a 3D node, local units) from it, through its CanvasLayer or Camera2D, or projected through its viewport's current Camera3D.
+
+A node inside a SubViewport is carried out through its `SubViewportContainer` to the root.
 
 Every element target adds `aimedAt {x, y, kind: control | node2d | node3d, path, class, viewport?}` (`viewport` when the node is not in the root viewport; a `drag` answers `aimedAt {from, to}`, a point end null).
 
 A Control whose centre lies outside the viewport is refused, nothing pressed, with its rect and centre (bring it into view, or click by `{x, y}` inside its visible part), and one whose centre lies outside its SubViewport or embedded window with that level's rect; a Control in a native window is never refused so.
 
-A world node is refused, nothing pressed, when it projects outside its viewport's visible rect or its embedded window, sits behind its camera, has no current Camera3D, lives in a SubViewport shown without a `SubViewportContainer` (only a container forwards input) or in a native window, or when an embedded window, or a Control whose mouse filter is Stop on the hovered chain, would take the event before physics picking (a `scroll` passes a Control whose `force_pass_scroll_events` is on, the default); a press, drag, scroll or `mouse_button` press or release into a SubViewport whose `gui_disable_input` is on is refused, and `hover` or a `mouse_button` move may still aim at a world node there.
+A world node is refused, nothing pressed, when it projects outside its viewport's visible rect or its embedded window, sits behind its camera, has no current Camera3D, lives in a SubViewport shown without a `SubViewportContainer` (only a container forwards input) or in a native window.
+
+A world node is also refused, nothing pressed, when an embedded window, or a Control whose mouse filter is Stop on the hovered chain, would take the event before physics picking (a `scroll` passes a Control whose `force_pass_scroll_events` is on, the default).
+
+A press, drag, scroll or `mouse_button` press or release into a SubViewport whose `gui_disable_input` is on is refused, and `hover` or a `mouse_button` move may still aim at a world node there.
 
 Physics picking needs the node's viewport to have `physics_object_picking` on: the root takes the project setting, a SubViewport defaults to off; a project with `display/window/subwindows/embed_subwindows` off picks, and tracks the hovered Control that `hover` and the aimed tools' cover check read, only once the window system has seen the pointer over the window.
 
@@ -1513,11 +1553,15 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   The clock starts in the frame the start is met, which with a call can be the call's own frame, and `start.timeoutMs` counts from after the call. `start.call` is allowed without `edge`, and `options.call` still runs after the start is met.
 
-  A change made by an earlier tool call can rise and fall before the next call's first check, since that call reaches the game 0.2 s to seconds later: put the call that causes the change in the same request (`start.call`, or `wait_for`'s `options.call`).
+  A change made by an earlier tool call can rise and fall before the next call's first check, since that call reaches the game 0.2 s to seconds later.
+
+  Put the call that causes the change in the same request (`start.call`, or `wait_for`'s `options.call`).
 
   A `start.call` the bridge refuses, or that fails, fails the capture with its error and takes no frames.
 
-  Another kind is refused: `options.start takes an exists, property, expression or signal condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale, pause, record or a mix.`).
+  Another kind is refused: `options.start takes an exists, property, expression or signal condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries)
+
+  A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale, pause, record or a mix.`).
 
   The result adds `start: {met: true, frame, args?, call?, then?, failedChecks?, mutedErrors?}`, `args` being a signal start's emission arguments, `call` being `{value}`, the start call's return value, reported when the start is met and when it times out; `frame` being `Engine.get_process_frames()` where the start was met.
 
@@ -1570,11 +1614,15 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
   In `batch_drive`, `start` and `stop` are steps like any other (a later step cannot read an earlier one's result), a `run` step holds the batch for its window inside its 300 s, and a watch the batch leaves running keeps running.
 - **Signals:** `tracks.signals: [{node, signal, stack?} | {group, signal, stack?}]` (at most 16, connecting at most 200 nodes) records every emission as `events: [[frame, gameMs, node, signal, args, at, stack?]]`, in emission order across tracks, plus `eventCounts: {"<node>:<signal>": n}` counting all of them.
 
-  A group is resolved once at start: a member without the signal is listed in `skipped` (in `start`'s reply and the timeline), and a node joining later is not followed. `start` lists `signals: [{node | group, signal, connected, stack?}]` (`stack: true` only on a track that set it); a node and signal two tracks name is connected and counted once, under the first track, so a later track can show `connected: 0`.
+  A group is resolved once at start: a member without the signal is listed in `skipped` (in `start`'s reply and the timeline), and a node joining later is not followed.
+
+  `start` lists `signals: [{node | group, signal, connected, stack?}]` (`stack: true` only on a track that set it); a node and signal two tracks name is connected and counted once, under the first track, so a later track can show `connected: 0`.
 
   A signal is stamped with the frame it fires in, so one emitted beside a value set in frame N's `_process` reads N while the value shows at sample N+1; an emission before the first sample (an `options.call`'s) is frame 0, one in a paused frame is still recorded, and a freed emitter's signals just stop.
 
-  `stack: true` on a signal track (default false) ends each of its kept events with `stack`, the call stack of the emission: up to 10 GDScript frames then up to 10 C# frames, each language's most recent first, each `"<file>:<line> in <function>"` as the error log writes a stack, from `Engine.capture_script_backtraces` with every frame of the bridge's own scripts left out; a connection that two tracks share (a group and a node naming one node) captures a stack when either asks for one (`[]` when the emission has no script frame, as in a release export).
+  `stack: true` on a signal track (default false) ends each of its kept events with `stack`, the call stack of the emission: up to 10 GDScript frames then up to 10 C# frames, each language's most recent first, each `"<file>:<line> in <function>"` as the error log writes a stack, from `Engine.capture_script_backtraces` with every frame of the bridge's own scripts left out.
+
+  A connection that two tracks share (a group and a node naming one node) captures a stack when either asks for one (`[]` when the emission has no script frame, as in a release export).
   The emitter's node path is in every event; `stack` says which code emitted it. An emission past the 300 kept is counted without one, and a track without `stack` is unchanged. A property or expression track has no stack, since it is read at the frame's start, after the write: to find who moves a value, watch its signal (`value_changed`, `item_selected`) with `stack: true`.
   `at` is the last item of every point and voice, and of an event but for its `stack`.
 
@@ -1626,15 +1674,31 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   A track keeps its first 200 and last 50 change points and counts the ones between in `dropped`; `changes` counts every change point after the first, dropped and cut ones included; `first` is the first point's value (null when nothing was sampled) and `last` the last sample's; `min`, `max`, `minAt` and `maxAt` (frames) cover every sample of a numeric track, per component for a vector (`{x, y}`).
 
-  A value over 200 characters of JSON, in a point, `first` or `last`, comes back as `{valuePreview, valueLength}`. A timeline over 40000 characters (`at` counted) loses points from the middle of its longest tracks first, each track counting its loss in `cut` and keeping at least its first and last point.
+  A value over 200 characters of JSON, in a point, `first` or `last`, comes back as `{valuePreview, valueLength}`.
 
-  A property track whose node is freed reads `{"$freed": true}` once and stops. An expression that fails reads `{"$error": "<text>"}` (`its node <path> was freed` once its node is gone), kept again only when the text changes, and goes on sampling, so it recovers when the thing comes back; its failures are not in the call's `errors`.
+  A timeline over 40000 characters (`at` counted) loses points from the middle of its longest tracks first, each track counting its loss in `cut` and keeping at least its first and last point.
 
-  An engine error raised directly by a native method an expression calls (`get_child(0)` before the child exists) is kept out of `errors` too (a `wait_for` or step-until expression is muted the same way, but counts what it dropped in `mutedErrors`), and the track reads the null the method returns; an error from game code the expression calls (a `push_error`, a script or C# error, an engine check failing inside a game method) still lands, as does any error raised outside the expression; a GDScript game's `push_error` lands only in a build that records call stacks (any debug build, or a release export with `debug/settings/gdscript/always_track_call_stacks`).
+  A property track whose node is freed reads `{"$freed": true}` once and stops.
 
-  Refused at start: a missing node, with the not-found text every tool uses; `'<path>' has no property '<name>'.`; `The expression of track '<name>' does not parse: <error>`; a `minDelta` track whose first read is neither a number nor a vector, `minDelta applies to a numeric track (an int, a float or a vector); track '<key>' reads <type>.` (so a `minDelta` expression runs once more at start); `Two tracks are keyed '<key>'; give one of them a different name.`; no track, or more than 32; `window needs exactly one of frames or gameMs.`; `stop takes no tracks, window or options: it ends the watch that runs and returns its timeline.` A `call` refused as `call_method` refuses it, or raising an error, fails the `start` or `run` and ends the watch before it samples.
+  An expression that fails reads `{"$error": "<text>"}` (`its node <path> was freed` once its node is gone), kept again only when the text changes, and goes on sampling, so it recovers when the thing comes back; its failures are not in the call's `errors`.
 
-  One watch runs per game run: `A watch is already running on this game; end it with watch {action: "stop"} before starting another.`; `The last watch's window has ended and its timeline is not collected yet; collect it with watch {action: "stop"} before starting another.`; while a `run` waits, a `start` or `stop` gets `A watch run is still running on this game; it answers when its window ends, and no other watch can start or stop until then.` A `stop` with nothing to collect says why: `No watch runs: none has started in this game run (restart_project and stop_project drop a watch); start one with watch {action: "start"}.`, `No watch runs: the last one's timeline has already been returned; …` or `No watch runs: the last one was dropped when the connection to the server ended; …`.
+  An engine error raised directly by a native method an expression calls (`get_child(0)` before the child exists) is kept out of `errors` too (a `wait_for` or step-until expression is muted the same way, but counts what it dropped in `mutedErrors`), and the track reads the null the method returns.
+
+  An error from game code the expression calls (a `push_error`, a script or C# error, an engine check failing inside a game method) still lands, as does any error raised outside the expression.
+
+  A GDScript game's `push_error` lands only in a build that records call stacks (any debug build, or a release export with `debug/settings/gdscript/always_track_call_stacks`).
+
+  Refused at start: a missing node, with the not-found text every tool uses; `'<path>' has no property '<name>'.`; `The expression of track '<name>' does not parse: <error>`; a `minDelta` track whose first read is neither a number nor a vector, `minDelta applies to a numeric track (an int, a float or a vector); track '<key>' reads <type>.` (so a `minDelta` expression runs once more at start).
+
+  Also refused at start: `Two tracks are keyed '<key>'; give one of them a different name.`; no track, or more than 32; `window needs exactly one of frames or gameMs.`; `stop takes no tracks, window or options: it ends the watch that runs and returns its timeline.`
+
+  A `call` refused as `call_method` refuses it, or raising an error, fails the `start` or `run` and ends the watch before it samples.
+
+  One watch runs per game run: `A watch is already running on this game; end it with watch {action: "stop"} before starting another.`; `The last watch's window has ended and its timeline is not collected yet; collect it with watch {action: "stop"} before starting another.`
+
+  While a `run` waits, a `start` or `stop` gets `A watch run is still running on this game; it answers when its window ends, and no other watch can start or stop until then.`
+
+  A `stop` with nothing to collect says why: `No watch runs: none has started in this game run (restart_project and stop_project drop a watch); start one with watch {action: "start"}.`, `No watch runs: the last one's timeline has already been returned; …` or `No watch runs: the last one was dropped when the connection to the server ended; …`.
 
   A `stop` that lands before a starting watch's first frame makes that `start` fail with `The watch ended before its first frame; start it again.` The deadline is the window's allowance (10 s + 100 ms a frame, or `gameMs` + 10 s, at most 600 s): a started watch holds it in real time, lengthened by the time it spends paused (up to 600 s more), and a `run` is released when it passes in load-adjusted time; either way the watch ends with what it has and `stopped: "deadline"`.
 
@@ -1646,7 +1710,11 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   `raster/*` counts 2D draws as well as 3D, and `memory/static` moves while a watch records because the watch's own buffers grow. `pipeline/compilations_*` are cumulative and stay 0 under the Compatibility renderer. A custom monitor whose first read is not a number is refused at start; a later non-number, or an id the game removed, counts in `nonNumeric`.
 
-  Refused at start: `'time/fps' is set once a second, so read per frame it repeats one value and hides which frame was slow; watch 'frame_ms' (the time between frames) or 'frame_work_ms' (the frame's own work) instead.` (and `time/process`, `time/physics_process`, `time/navigation_process`); `frame_ms measures process frames; drop options.unit "physics" or the frame_ms monitor.` (and the same for `frame_work_ms`); `options.budgetMs applies to the frame_ms monitor; add "frame_ms" to tracks.monitors or drop budgetMs.`; an unknown name, `No monitor '<name>': not one of Godot's 59 built-in monitors (such as object/nodes or raster/total_draw_calls), not frame_ms, and no custom monitor has that id; a game registers one with Performance.add_custom_monitor.`; more than 16 monitors, or one named twice.
+  Refused at start: `'time/fps' is set once a second, so read per frame it repeats one value and hides which frame was slow; watch 'frame_ms' (the time between frames) or 'frame_work_ms' (the frame's own work) instead.` (and `time/process`, `time/physics_process`, `time/navigation_process`).
+
+  Also refused at start: `frame_ms measures process frames; drop options.unit "physics" or the frame_ms monitor.` (and the same for `frame_work_ms`); `options.budgetMs applies to the frame_ms monitor; add "frame_ms" to tracks.monitors or drop budgetMs.`
+
+  Also refused at start: an unknown name, `No monitor '<name>': not one of Godot's 59 built-in monitors (such as object/nodes or raster/total_draw_calls), not frame_ms, and no custom monitor has that id; a game registers one with Performance.add_custom_monitor.`; more than 16 monitors, or one named twice.
 
   `warning` says when a reading misleads: frame_ms in a Movie Maker recording, however it was started (it measures rendering speed, not what a player sees), a `raster/*` monitor while no frame was drawn (minimized, headless or low-processor mode), and sampling that averaged over 2 ms a frame, which slows the frames it watches.
 
@@ -1656,12 +1724,20 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
 ### `wait_for`
 
-- **Does:** waits until `condition` holds, checked each frame (the server polls an output wait), exactly one of `{node, exists}`, `{node, property, equals, match?}`, `{node, signal}`, `{expression}`, `{uiChanged: true | "now"}`, `{gameMs}`, `{frames}`, `{text, match?, under?, exists?}`, `{node, stable: N, property?}`, `{node, state, equals, match?}` or `{output, stream?, after?}`: `{met, elapsedMs, frames, value}` (`args` for a signal; a met bridge wait adds `metAt`, the drive time of the frame whose check met, with `clockErrorMs`, the half-width of the clock's bounds; a session whose clock has none yet, or a bridge too old to send `ticksUsec`, reports neither; a met wait on clock bounds wider than 2 ms, or missing, first sends one clock ping, costing about one frame and up to 0.5 s when the game does not answer, and `metAt` and `clockErrorMs` still come back from the bounds held if it fails), or on timeout `{met: false, ..., last}`, which adds `wallCapped: true` when `options.maxWallMs` ended it.
+- **Does:** waits until `condition` holds, checked each frame (the server polls an output wait), exactly one of `{node, exists}`, `{node, property, equals, match?}`, `{node, signal}`, `{expression}`, `{uiChanged: true | "now"}`, `{gameMs}`, `{frames}`, `{text, match?, under?, exists?}`, `{node, stable: N, property?}`, `{node, state, equals, match?}` or `{output, stream?, after?}`.
+
+  The reply is `{met, elapsedMs, frames, value}` (`args` for a signal).
+
+  A met bridge wait adds `metAt`, the drive time of the frame whose check met, with `clockErrorMs`, the half-width of the clock's bounds. A session whose clock has none yet, or a bridge too old to send `ticksUsec`, reports neither. A met wait on clock bounds wider than 2 ms, or missing, first sends one clock ping, costing about one frame and up to 0.5 s when the game does not answer, and `metAt` and `clockErrorMs` still come back from the bounds held if it fails.
+
+  On timeout the reply is `{met: false, ..., last}`, which adds `wallCapped: true` when `options.maxWallMs` ended it.
 
   An output wait has no `frames`: its `value` is `{line, stream, lineNumber, groups, at}`, `at` the server's read time of the line on the drive clock, and its timeout `last` is `{stdout, stderr}`.
 - **Use:** after an input, to wait for its effect instead of sleeping; `timeoutMs` 0 to 120000, default 10000, load-adjusted: under load it waits longer in wall time.
 
-  So a `timeoutMs` is never a pause: to hold for a span of the game's own time (a shot 0.5 s into an effect), wait `{gameMs: N}` (1 to 120000 ms of process delta over unpaused frames, so it follows `time_scale` and load does not stretch it) or `{frames: N}` (1 to 7200 unpaused process frames), each alone, counted from the first frame after the request; `value` is the game ms (whole) or frames reached, up to one frame past N. Left out, their `timeoutMs` is N + 10000 for `gameMs` and 10 s + 100 ms a frame for `frames`, and a settled wait's is 10 s + 100 ms for each of the `stable` + 1 frames it reads, so it grows with `stable` (10200 for 1, 70100 for 600); each is at most 600000.
+  So a `timeoutMs` is never a pause: to hold for a span of the game's own time (a shot 0.5 s into an effect), wait `{gameMs: N}` (1 to 120000 ms of process delta over unpaused frames, so it follows `time_scale` and load does not stretch it) or `{frames: N}` (1 to 7200 unpaused process frames), each alone, counted from the first frame after the request.
+
+  `value` is the game ms (whole) or frames reached, up to one frame past N. Left out, their `timeoutMs` is N + 10000 for `gameMs` and 10 s + 100 ms a frame for `frames`, and a settled wait's is 10 s + 100 ms for each of the `stable` + 1 frames it reads, so it grows with `stable` (10200 for 1, 70100 for 600); each is at most 600000.
 
   `options.maxWallMs` (an integer, 1 to 120000) caps the wait's wall time: once that much real time has passed the wait ends unmet with `wallCapped: true`, however slowly the load-adjusted `timeoutMs` runs, so pass it with every long `timeoutMs` on a game that may stall. There is no default cap, and a bridge wait and an output wait take it alike.
 
@@ -1671,7 +1747,9 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   It counts wall time only, the same in a recording (where `timeoutMs` counts clip time). Refused: a value outside 1 to 120000 or not whole (`options.maxWallMs must be an integer from 1 to 120000: it caps the wait's wall time.`) and `timeoutMs: 0` with it (`timeoutMs 0 checks once, which leaves options.maxWallMs nothing to cap; drop it or give a timeout.`). `batch_drive`'s wait assertion and `frame_control`'s `until` take none.
 
-  A `gameMs`, `frames`, `exists`, `property`, `expression`, `text`, `settled`, `state` or `signal` wait takes `options.call {node, method, args?}` or `{tool, args?}`, as `capture_frames` does (a `PlayStep` name too, in `then.call` as well): the method or game tool is called in the frame the checks start (the next process frame), so a `gameMs` or `frames` count runs from the call's entry, and another wait's first check follows the call in that frame, its `frames` and `elapsedMs` counted from that check (a wait met there reports `frames: 0`).
+  A `gameMs`, `frames`, `exists`, `property`, `expression`, `text`, `settled`, `state` or `signal` wait takes `options.call {node, method, args?}` or `{tool, args?}`, as `capture_frames` does (a `PlayStep` name too, in `then.call` as well).
+
+  The method or game tool is called in the frame the checks start (the next process frame), so a `gameMs` or `frames` count runs from the call's entry, and another wait's first check follows the call in that frame, its `frames` and `elapsedMs` counted from that check (a wait met there reports `frames: 0`).
 
   A `signal` wait connects before the call, so a signal the call emits at once is caught, and it does not catch an emission from the frames before the call.
 
@@ -1715,7 +1793,11 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   `options.crop` needs `options.screenshot: true` (`options.crop needs options.screenshot: true: it crops the captured frame.`). A crop that only partly overlaps the viewport is cut to it, and one wholly outside leaves the wait met with no screenshot and `warning` "no screenshot was taken: the crop … lies outside the … viewport".
 - **A headless game:** `options.screenshot` on a headless game still returns the wait's result, with `warning` "a headless game draws no frames, so no screenshot was taken; read state with get_game_state, get_ui_elements or run_script, or run the scene windowed." and no engine error.
-- **Act in the met frame:** `options.then {call?: {node, method, args?} | {tool, args?}, timeScale?, pause?, record?: {mark, path?, overwrite?}}`, taken by every condition but `output` and by a check-once wait, runs once in the frame the condition is first found true (the met frame): `call` first, then `timeScale` (above 0, at most 100), which scales the next frame on, then `pause: true`, which pauses the game there as `frame_control pause` does and adds `paused: true` to the result's `then`; `frame_control resume` undoes it, and a `timeScale` set beside it applies on resume.
+- **Act in the met frame:** `options.then {call?: {node, method, args?} | {tool, args?}, timeScale?, pause?, record?: {mark, path?, overwrite?}}`, taken by every condition but `output` and by a check-once wait, runs once in the frame the condition is first found true (the met frame).
+
+  It runs `call` first, then `timeScale` (above 0, at most 100), which scales the next frame on, then `pause: true`, which pauses the game there as `frame_control pause` does and adds `paused: true` to the result's `then`.
+
+  `frame_control resume` undoes it, and a `timeScale` set beside it applies on resume.
 
   `record: {mark: "start" | "stop", path?, overwrite?}` places a Movie Maker record mark in the met frame, so a clip opens on the frame the wait found (a `record_mark` sent after the wait would start frames later, with idle movie frames between). A `start` includes the met frame. `path` and `overwrite` are a start's, as `record_mark start`'s options take them (`overwrite` needs `path`); a `stop` takes neither.
 
@@ -1751,7 +1833,9 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   An `under` that is missing or hidden shows nothing (a leave is met); one that several nodes share fails the check (`'<under>' names N nodes: <paths>; pass the full path.`). Each check walks the visible Controls and Label3Ds in scope, with no cache, and `edge` (a text's next appearing, or with `exists: false` its next going), `options.call`, `then`, `screenshot`, `timeoutMs: 0` and a `frame_control` `until` all compose with it.
 
-  Refused: `under` without `text` (`condition.under scopes a text condition; give text with it.`), a blank `text` (`condition.text is blank; give the text a visible Control or Label3D shows.`), a blank `under` (`condition.under is blank; name the node to scope the text to, or leave under out.`), a bad `match` value, a `match` on a condition with neither a `text` nor a string `equals` (`match applies only to a text condition or target, or a string equals; this one has neither.`) and a prefix or contains `match` on a property or state `equals` that is not a string.
+  Refused: `under` without `text` (`condition.under scopes a text condition; give text with it.`), a blank `text` (`condition.text is blank; give the text a visible Control or Label3D shows.`), a blank `under` (`condition.under is blank; name the node to scope the text to, or leave under out.`).
+
+  Also refused: a bad `match` value, a `match` on a condition with neither a `text` nor a string `equals` (`match applies only to a text condition or target, or a string equals; this one has neither.`) and a prefix or contains `match` on a property or state `equals` that is not a string.
 
   Wait for a caption with this rather than polling `run_script` or `get_ui_elements`.
 - **Wait for a layout to settle:** `{node, stable: N, property?}` waits until the node's value has held unchanged for N process frames (1 to 600), so a press lands where a sorting container or a tween left a control: `wait_for {condition: {node: "Hand", stable: 10}, options: {then: {call: {node: "Hand/Card", method: "emit_signal", args: ["pressed"]}}}}`.
@@ -1805,7 +1889,9 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
   While the game is paused only a signal wait, an output wait or a check-once wait (`timeoutMs: 0`) is accepted; a check-once wait is refused for a signal, `gameMs`, `frames` or settled wait; an output one needs `after` for it; and a pause during a `gameMs` or `frames` wait stops its count, so it runs to its timeout with `last` the progress.
   With `options.screenshot`, the condition is checked inside each frame's draw, so the image shows the state the check saw; a timed-out wait captures nothing, a check-once or signal wait captures the draw of the frame running when it is met, which in a running game can already show nodes that processed after the check (pause first for an exact image), and a frame not drawn (a minimized window, low-processor mode) answers a `warning` and no image.
 
-  A property the node lacks fails the call, as does a property path whose sub-name is missing, for a `property` and a settled wait alike (`'<node path>' has no property '<path up to the missing part>'.`); an expression that does not parse fails it, as does one with text after a complete expression, which Godot's `Expression` would otherwise ignore (`a if b else c` would read as `a`; `x is Node` as `x`): `the expression does not parse: text follows a complete expression, and Expression would ignore it`.
+  A property the node lacks fails the call, as does a property path whose sub-name is missing, for a `property` and a settled wait alike (`'<node path>' has no property '<path up to the missing part>'.`).
+
+  An expression that does not parse fails it, as does one with text after a complete expression, which Godot's `Expression` would otherwise ignore (`a if b else c` would read as `a`; `x is Node` as `x`): `the expression does not parse: text follows a complete expression, and Expression would ignore it`.
 
   That refusal, and one whose source uses GDScript syntax `Expression` lacks (`func`, `if`, `else`, `is`, `as`, `return`, `var`, `await`, `not in`), ends with `Godot's Expression is not GDScript: …`, listing what it has.
 
@@ -1928,7 +2014,13 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
 - **Does:** compiles `code`, a C# method body (statements, or one expression whose value is returned), in the server and runs it in the game on the main thread: `{value, type}` as `cs_call` answers, `type` the value's runtime full name, null for a null value. `await` works in the body, and an unfinished result is awaited up to `timeoutMs` (load-adjusted).
 
-  In scope, unqualified: `Tree` (the `SceneTree`), `Root`, `ToSignal(source, signal)` as a node's script has it (`await ToSignal(Tree, SceneTree.SignalName.ProcessFrame)` waits one frame, in a paused game too; it takes no token, so a signal that never fires holds the snippet past its timeout), `Node(path)` and `Node<T>(path)`, `Handle(id)` and `Handle<T>(id)`, `Get(target, path)` and `Get<T>`, `Set(target, path, value)`, `Call(target, method, args...)` (private and internal members included; `Type` forms of `Get`/`Set`/`Call` for statics), `Keep(value)`, which answers a handle id for a later `{handle}` target, `Cancellation`, the `CancellationToken` the call's timeout cancels, and `Log(value)`, which adds one line to the run's log (thread-safe; `null` logs as `null`; an entry is cut at 1000 characters with `… (N more characters)`; the first 200 lines are kept and the count past them comes back as `logOmitted`).
+  In scope, unqualified: `Tree` (the `SceneTree`), `Root`, `ToSignal(source, signal)` as a node's script has it (`await ToSignal(Tree, SceneTree.SignalName.ProcessFrame)` waits one frame, in a paused game too; it takes no token, so a signal that never fires holds the snippet past its timeout).
+
+  Also in scope, unqualified: `Node(path)` and `Node<T>(path)`, `Handle(id)` and `Handle<T>(id)`, `Get(target, path)` and `Get<T>`, `Set(target, path, value)`, `Call(target, method, args...)` (private and internal members included; `Type` forms of `Get`/`Set`/`Call` for statics).
+
+  Also in scope, unqualified: `Keep(value)`, which answers a handle id for a later `{handle}` target, and `Cancellation`, the `CancellationToken` the call's timeout cancels.
+
+  Also in scope, unqualified: `Log(value)`, which adds one line to the run's log (thread-safe; `null` logs as `null`; an entry is cut at 1000 characters with `… (N more characters)`; the first 200 lines are kept and the count past them comes back as `logOmitted`).
 
   A run that logged answers `log` (the entries) beside `value`, `logOmitted` when lines were dropped, and `errors` when the game raised any. Usings: `System`, `System.Linq`, `System.Collections.Generic`, `System.Threading.Tasks`, `Godot` and the game's root namespace, plus `options.usings`. `options {usings, timeoutMs, keep, maxDepth}`.
 - **Use:** what the `cs_*` tools cannot say in one call: building a record and passing it to a method (`t.Bind(new Update(...))`), a loop, several calls whose results feed each other, awaiting a game `Task`.
@@ -1952,13 +2044,29 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   `frame` is the engine's process frame count at the read; `total` counts every marked node (under `node` when given); `omitted` counts the nodes left out past `maxNodes` or the 40000-character budget of the list and names the first 20. A node's JSON keys arrive sorted. `node` reads only the marked nodes at or under it.
 
-  `options {keys, maxNodes, maxDepth}`: `keys` keeps only those keys or dotted paths of each state (`seats[0].hp`), returned flat under the key as given, a missing one left out and one cut by `maxDepth` given as its depth marker; `maxNodes` 1 to 500 (50 by default), counted in tree order before any node is read; `maxDepth` 1 to 8 (4 by default), a deeper Dictionary or Array written as `"<depth limit: Dictionary>"`; past 5000 values written for one node the walk stops: the collection it is in ends with one `"<size limit>"` (a Dictionary maps its next key to it and leaves the rest out), and so does each collection around it, so shared references cannot multiply; `keep` (false by default) also holds the read in the session for `diff_snapshots` and adds `stateId` to the result.
-- **Use:** in place of a screenshot or a sampling script, when a game opts in: a GDScript node joins the `mcp_state` group and defines `func _mcp_state() -> Dictionary` returning the few values a player would read off the screen; a C# node joins the group and defines `_McpState()`, an instance method with no parameters, of any accessibility, returning any value (a record, an anonymous type, a `Dictionary<string, object?>`), found on its type or a base up to the GodotSharp types and called by the C# helper in the same frame as the GDScript nodes, its value written as `cs_get` writes one (a Godot object as `{"$node": path}`, past `maxDepth` `"<depth limit: Type>"`, past 5000 values cut at one `"<size limit>"` the same way, a Godot collection counting once).
+  `options {keys, maxNodes, maxDepth}`: `keys` keeps only those keys or dotted paths of each state (`seats[0].hp`), returned flat under the key as given, a missing one left out and one cut by `maxDepth` given as its depth marker.
+
+  `maxNodes` 1 to 500 (50 by default), counted in tree order before any node is read.
+
+  `maxDepth` 1 to 8 (4 by default), a deeper Dictionary or Array written as `"<depth limit: Dictionary>"`.
+
+  Past 5000 values written for one node the walk stops: the collection it is in ends with one `"<size limit>"` (a Dictionary maps its next key to it and leaves the rest out), and so does each collection around it, so shared references cannot multiply.
+
+  `keep` (false by default) also holds the read in the session for `diff_snapshots` and adds `stateId` to the result.
+- **Use:** in place of a screenshot or a sampling script, when a game opts in: a GDScript node joins the `mcp_state` group and defines `func _mcp_state() -> Dictionary` returning the few values a player would read off the screen.
+
+  A C# node joins the group and defines `_McpState()`, an instance method with no parameters, of any accessibility, returning any value (a record, an anonymous type, a `Dictionary<string, object?>`), found on its type or a base up to the GodotSharp types and called by the C# helper in the same frame as the GDScript nodes.
+
+  Its value is written as `cs_get` writes one (a Godot object as `{"$node": path}`, past `maxDepth` `"<depth limit: Type>"`, past 5000 values cut at one `"<size limit>"` the same way, a Godot collection counting once).
 
   A C# node with no `_McpState` but a Godot-visible `_mcp_state` returning a Dictionary is read through it; one with both reads `_McpState` and says so in `warning`. The helper loads only when a marked C# node is within `maxNodes`. It runs in `batch_drive` and inside `frame_control` steps. A key of a state can be waited on: `wait_for {node, state, equals}`, the same key paths as `keys`.
 - **Edges:** state methods are game code and run at every read, so a side effect in one repeats.
 
-  A node's `error` says why it has no state: `in the mcp_state group but has no _mcp_state method`, `_mcp_state raised: <the error>` (also in `errors`), `_mcp_state returned a coroutine, which is not awaited`, `_mcp_state raised an error the log no longer holds` (past the error log's 200 entries), a GDScript node with only the C# name `_McpState`; for a C# node, `<Full.Type> has no _McpState() (an instance method with no parameters, any accessibility)`, `<Exception>: <message>` when the method (or writing its value) throws (a sequence whose enumeration throws is no error: its state array carries a `"<threw ...>"` item), `<Full.Type>._McpState returns a Task<int>; a state method must return its value, not a task` (never awaited), `<Type> is a C# script; its _McpState is read by the C# helper, which cannot run: <why>` (several csproj files, an unbuilt assembly, a helper that failed to load or refused), or `…, which this project has no build of`.
+  A node's `error` says why it has no state: `in the mcp_state group but has no _mcp_state method`, `_mcp_state raised: <the error>` (also in `errors`), `_mcp_state returned a coroutine, which is not awaited`, `_mcp_state raised an error the log no longer holds` (past the error log's 200 entries), a GDScript node with only the C# name `_McpState`.
+
+  For a C# node it says `<Full.Type> has no _McpState() (an instance method with no parameters, any accessibility)`, or `<Exception>: <message>` when the method (or writing its value) throws (a sequence whose enumeration throws is no error: its state array carries a `"<threw ...>"` item).
+
+  For a C# node it also says `<Full.Type>._McpState returns a Task<int>; a state method must return its value, not a task` (never awaited), `<Type> is a C# script; its _McpState is read by the C# helper, which cannot run: <why>` (several csproj files, an unbuilt assembly, a helper that failed to load or refused), or `…, which this project has no build of`.
 
   One C# node's failure never blanks the others.
 
@@ -2022,7 +2130,13 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
   The members start in listed order, each once the one before has written its request (a tool's setup request, like the C# helper's first ping, does not count; an output wait counts once its scan baseline is read), so a wait listed before a click is armed when the click lands. The group ends when all members have answered, and a failed member cancels those still running. Members count toward the 100 steps, and the group's time counts once toward the 300 s.
   The result's `startedAt` and every entry's `startMs` and `endMs` are drive-clock milliseconds since the server started, to 0.1 ms. A batch stamp is exact; a converted one, a met bridge wait's `result.metAt`, carries its `clockErrorMs`. A group entry is `{index, parallel: true, ok, startMs, endMs, members: [...]}`, each member an ordinary entry whose `index` is its place in the group, and `failedAt` is `{index, member, reason}`, the member the first to fail by completion order.
   A cancelled member reads `{index, tool | assert, session, ok: false, cancelled: true, sent, startMs, endMs}` with no `result` or `error`; `sent` says whether its request reached the game, and an input gesture once sent plays to its end (input calls get no cancel). A member whose outcome arrives after the cancel reads as cancelled when it failed and keeps its result when it succeeded. A cancelled `frame_control` step leaves its game paused.
-  Refusals before any step runs: `step <n>: give exactly one of tool, assert and parallel.`, `step <n>: a parallel group takes parallel alone; got <fields>.`, `step <n>: a parallel group takes 2 to 8 steps; got <k>.`, `step <n>: parallel steps cannot be nested; a group holds tool and assertion steps only.`, `step <n>: parallel step <m>: <fired|no_errors> cannot run in a parallel group; put it after the group.`, a member's own refusal under `step <n>: parallel step <m>: …`, and `step <n>: parallel steps <a> and <b> both address session '<name>'; each step of a group addresses its own session.` Two members that only resolve to one session fail at batch start: `{passed: false, steps: [], failedAt: {index, reason}}`.
+  Refusals before any step runs: `step <n>: give exactly one of tool, assert and parallel.`, `step <n>: a parallel group takes parallel alone; got <fields>.`, `step <n>: a parallel group takes 2 to 8 steps; got <k>.`, `step <n>: parallel steps cannot be nested; a group holds tool and assertion steps only.`
+
+  Also refused before any step runs: `step <n>: parallel step <m>: <fired|no_errors> cannot run in a parallel group; put it after the group.`
+
+  Also refused before any step runs: a member's own refusal under `step <n>: parallel step <m>: …`, and `step <n>: parallel steps <a> and <b> both address session '<name>'; each step of a group addresses its own session.`
+
+  Two members that only resolve to one session fail at batch start: `{passed: false, steps: [], failedAt: {index, reason}}`.
 - **Edges:** `property`, `expression` and `state` default to `timeoutMs: 0` (checked once, now); `wait` defaults to 10000. A `wait` with `output` is answered by the server from the session's captured run output, so it works while paused and refuses an attached session; `timeoutMs: 0` on it needs `after`, as `wait_for` does.
 
   On a process session a `wait` with `output` works, and a tool step is refused before any step runs: `{passed: false, steps: [], failedAt: {index, reason}}` with the process refusal as `reason`.
@@ -2033,7 +2147,15 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   `"all"` covers only the sessions some other step of the batch addresses (a step, a group member or a `no_errors` list), not every live session. A pass with `sessions` returns `{errors: 0, sessions: [names checked]}`, without it `{errors: 0}`; the checks and the failure blocks go in name order, for a list too.
 
-  `sessions` on any other assertion is refused (`step <n>: the <assert> assertion does not take sessions; only no_errors does.`), and so are `sessions` on a tool step (`step <n>: a tool step does not take sessions; only no_errors does.`; a group member gets the `parallel step <m>:` prefix), `session` with `sessions` (`step <n>: no_errors takes session or sessions, not both; sessions replaces its own session.`), a `sessions` that is neither `"all"` nor a list of non-empty strings (`step <n>: sessions takes "all" or a list of session names; got <json>.`), an empty list (`step <n>: sessions is empty; name at least one session, or give "all".`), a repeated name (`step <n>: sessions names '<name>' twice.`) and a process session (the process refusal after `step <n>: `, at batch start).
+  `sessions` on any other assertion is refused (`step <n>: the <assert> assertion does not take sessions; only no_errors does.`).
+
+  So is `sessions` on a tool step (`step <n>: a tool step does not take sessions; only no_errors does.`; a group member gets the `parallel step <m>:` prefix).
+
+  So is `session` with `sessions` (`step <n>: no_errors takes session or sessions, not both; sessions replaces its own session.`).
+
+  So is a `sessions` that is neither `"all"` nor a list of non-empty strings (`step <n>: sessions takes "all" or a list of session names; got <json>.`).
+
+  So are an empty list (`step <n>: sessions is empty; name at least one session, or give "all".`), a repeated name (`step <n>: sessions names '<name>' twice.`) and a process session (the process refusal after `step <n>: `, at batch start).
 
   A `no_errors` that checks one session fails with `the game raised N error(s) since the batch started or its previous no_errors:` and the summary; one that checks several fails with one block per session that raised errors, `session '<name>' raised N error(s) since the batch started or its previous no_errors:` and the summary.
 
@@ -2051,7 +2173,11 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
   A `fired` assertion checks the `fired` list of the nearest earlier tool step (assertion steps between are skipped), so it follows a `click`, `mouse_button`, `drag`, `key` or `type_text`; with no tool step before it the batch is refused at validation (`step {index}: assert 'fired' needs a tool step before it, whose fired list it checks.`).
   `node` matches an entry whose absolute node equals it or ends with `/` + it on a segment boundary: `Ready` and `Main/Ready` match `/root/Main/Ready`, `/Main/Ready` does not (no slash trimming). `signal` is the signal name.
   `equals` is a JSON array compared as JSON with the entry's whole `args` (an entry with no `args` reads as `[]`); absent or null, any args match. A non-array `equals` is refused (`equals must be an array of the emission's arguments; got {json}.`). A folded entry with `count` matches like any other, its args being the run's last.
-  A pass answers `{"fired": {node, signal, args?, frame, listeners, count?}}`, the matching entry. A failure reads `the fired assertion wanted {node}.{signal}[ with args {json}] but step {k} fired: ` then up to 10 `node.signal` entries and `, … (N more)`; an entry whose node and signal match but whose args did not shows as `{node}.{signal} with args {json}`; with none it says `nothing fired on {listenedOn}` or `nothing fired and nothing was listened on`; a checked result with `firedDropped` appends `; {firedDropped} more were dropped from the fired list`.
+  A pass answers `{"fired": {node, signal, args?, frame, listeners, count?}}`, the matching entry. A failure reads `the fired assertion wanted {node}.{signal}[ with args {json}] but step {k} fired: ` then up to 10 `node.signal` entries and `, … (N more)`.
+
+  An entry whose node and signal match but whose args did not shows as `{node}.{signal} with args {json}`. With none it says `nothing fired on {listenedOn}` or `nothing fired and nothing was listened on`.
+
+  A checked result with `firedDropped` appends `; {firedDropped} more were dropped from the fired list`.
   When the checked step's result has no fired list the assertion fails: `step {i}: the fired assertion checks step {k} ({tool}), whose result has no fired list, so there is nothing to check.`
   Fields other than `assert`, `node`, `signal`, `equals` and `session` are refused (`step {i}: the fired assertion takes node, signal and equals; got {fields}.`), `output`, `stream` and `after` included. `session` is accepted and ignored: the assertion reads the earlier step's result.
 
@@ -2078,7 +2204,13 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 ### `record_mark`
 
 - **Does:** in a session launched with `options.record` (Movie Maker), marks the `start` or `stop` of a clip at the movie frame reached: `{mark, frame, seconds, mode: "movie", destination?}`; a `start` takes only `options.path` and `options.overwrite` (see the clip destination, below), a `stop` no `options`. In any other session with a window, `start` records the window in real time and `stop` ends it (below).
-- **Use:** bracket the moment worth keeping; a mark also closes each other tool call still open at its frame, so on a `dropIdle` run a call in flight when the mark lands is kept up to it; for a start exactly on the frame a condition comes true, give `wait_for` `options.then.record` rather than a `record_mark` after the wait, which would start frames later; when the run ends (`stop_project`, the game quitting, `restart_project`) each start-stop pair is cut to its own file with ffmpeg, and a start left open clips to the end.
+- **Use:** bracket the moment worth keeping.
+
+  A mark also closes each other tool call still open at its frame, so on a `dropIdle` run a call in flight when the mark lands is kept up to it.
+
+  For a start exactly on the frame a condition comes true, give `wait_for` `options.then.record` rather than a `record_mark` after the wait, which would start frames later.
+
+  When the run ends (`stop_project`, the game quitting, `restart_project`) each start-stop pair is cut to its own file with ffmpeg, and a start left open clips to the end.
 
   A start that names a `path` has its clip moved there once it is cut.
 - **Edges:** marks alternate start, stop. A recording runs at a fixed 60 fps, so game time advances 1/60 s a frame whatever the wall clock does, and the game runs uncapped.
@@ -2120,11 +2252,19 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   A `stop` that loses a race for the clip fails with `The real-time recording's clip in session '<name>' was already returned by another call (stop_project, restart_project, detach_project or another record_mark stop).`
   The session's end ends a running capture at that call, before the game is asked to quit, and reports its clip as `recording {mode: "realtime", clips: [path], startedSeconds, warning?, error?}`: `stop_project` and `detach_project` return it as `recording`, `restart_project` as `previousRecording`, and `list_sessions` shows `{mode: "realtime", path, destination?, startedSeconds}` while it runs.
-  A clip that could not be finished is the `error`, and the stop, restart or detach goes on; the session is released. The helper gets 10 s of load-adjusted time to exit once the end has begun (a stop, restart, detach or a game that quit; `record_mark` `stop` and the server's shutdown keep their own waits), and one still running is killed with the `warning` `the capture helper did not exit within 10 s of the recording's end and was killed; the clip may end earlier or later than the recording did`. A stop, restart or detach during a `start` ends it at once and reports no recording.
+  A clip that could not be finished is the `error`, and the stop, restart or detach goes on; the session is released.
+
+  The helper gets 10 s of load-adjusted time to exit once the end has begun (a stop, restart, detach or a game that quit; `record_mark` `stop` and the server's shutdown keep their own waits), and one still running is killed with the `warning` `the capture helper did not exit within 10 s of the recording's end and was killed; the clip may end earlier or later than the recording did`.
+
+  A stop, restart or detach during a `start` ends it at once and reports no recording.
   From the moment the session's end begins until a launch, restart or attach, `start` is refused: `Session '<name>' is ending, so a real-time recording cannot start now; start it once the game has restarted.`
-  Windows.Graphics.Capture films the window's own surface, so a window covered by another or without focus records fine, but a window minimized mid-recording holds its last frame until restored, and the stop result's `warning` names each span it spent minimized on the clip's clock (a minimized one is refused at `start`), a window partly off the desktop is half stale (`start` warns, naming the window's rect and the desktop's), and a non-embedded popup is a separate OS window the clip does not hold. The yellow capture border shows on screen, not in the clip.
+  Windows.Graphics.Capture films the window's own surface, so a window covered by another or without focus records fine, but a window minimized mid-recording holds its last frame until restored, and the stop result's `warning` names each span it spent minimized on the clip's clock (a minimized one is refused at `start`).
+
+  A window partly off the desktop is half stale (`start` warns, naming the window's rect and the desktop's), and a non-embedded popup is a separate OS window the clip does not hold. The yellow capture border shows on screen, not in the clip.
   Refused: a mark other than `start` or `stop`, `fps must be 1 to 60; got <x>.`, `maxSeconds must be 1 to 600; got <x>.`, `options belong to record_mark start; stop takes none.`, `options.overwrite needs options.path`, a `path` the clip destination refuses, a session that is not running or is headless, a window that has closed (the window reader's `window <hwnd> no longer exists.`), one already recording (naming its age), or a `stop` with none running.
-  Also refused at `start`: a quiet session (a run or an attach alike: its window is on the hidden desktop or parked, which the capture cannot see; launch it with `options.quiet: false`, and `options.mute: true` to keep it silent; `options.audible` does not help, since the window stays hidden, and an off-screen clip with sound is `options.record`), no ffmpeg (`FFMPEG_PATH` naming no file included), no capture helper, an embedded window, a minimized window, the helper's probe refusing the window, the recordings folder not creatable, ffmpeg that cannot be run to test its encoders, a client area that differs from the size the helper measured (`record_mark start` again).
+  Also refused at `start`: a quiet session (a run or an attach alike: its window is on the hidden desktop or parked, which the capture cannot see; launch it with `options.quiet: false`, and `options.mute: true` to keep it silent; `options.audible` does not help, since the window stays hidden, and an off-screen clip with sound is `options.record`).
+
+  Also refused at `start`: no ffmpeg (`FFMPEG_PATH` naming no file included), no capture helper, an embedded window, a minimized window, the helper's probe refusing the window, the recordings folder not creatable, ffmpeg that cannot be run to test its encoders, a client area that differs from the size the helper measured (`record_mark start` again).
   Also refused at `start`: no frame or an encoder that does not open within 10 s of load-adjusted time (the helper and ffmpeg are stopped, and the refusal quotes both logs).
   And no working encoder (`ffmpeg at <path> has no working encoder for a <W>x<H> clip (tried …); see <log>`, naming the logs the cached verdicts came from).
   A start that does not go ahead deletes its `.deadline` and `.mkv` and keeps its logs.
@@ -2132,11 +2272,21 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
   Process loopback ignores the system volume and the system mute: a tone's clip peak was -31.15, -31.09 and -31.23 dBFS with the system volume at 0.08, at 0.50 and at 0.50 muted, so a muted machine still records the game's sound. Only the game's own mute (`options.mute`) or a quiet run silences the track.
   The video needs Windows 10 build 19041 (2004) or later and the audio build 20348 or later (Windows 11, Server 2022): on an older build `start` goes ahead with video only and the `no audio:` warning quotes the helper's `process-loopback audio needs Windows build 20348 or later`.
 
-  The three warnings lead the others (joined with `; `): `no audio: session '<name>' renders no sound (options.mute or a quiet run), so the clip has no audio track` (a muted session, `options.mute` or an attach's mute); `no audio: the game's bridge sent no process id, so the clip has no audio track`; and `no audio: {the helper's last line without its "godot-mcp-capture: " prefix and trailing periods}, so the clip has no audio track` when process-loopback audio cannot start, which never refuses the start: the recording goes on with video only.
+  The three warnings lead the others (joined with `; `).
+
+  The first is `no audio: session '<name>' renders no sound (options.mute or a quiet run), so the clip has no audio track` (a muted session, `options.mute` or an attach's mute).
+
+  The second is `no audio: the game's bridge sent no process id, so the clip has no audio track`.
+
+  The third is `no audio: {the helper's last line without its "godot-mcp-capture: " prefix and trailing periods}, so the clip has no audio track` when process-loopback audio cannot start, which never refuses the start: the recording goes on with video only.
   A game that mutes itself after the start gives `audio: true` and a silent track: that is not detected. A late audio failure at the start retries it once without audio.
 
   A helper that ends with exit 5 during the recording because nothing read the audio pipe in full fails `stop` like any failed helper: `The capture helper <how it ended> during the recording: the game's audio did not reach ffmpeg in full: <last lines of its log>. The frames recorded are kept in <the .mkv>; see <capture log> and <ffmpeg log>.`
-  Warnings: `the capture got <a> fps of <fps>: the machine was busy, so the clip repeats frames` (an average under 90% of `fps`) and `the window changed size at <t> s; the clip ends there`. A failed helper, ffmpeg or remux fails `stop` instead, naming its log and keeping the `.mkv`; the error text is the one `stop_project` and `list_sessions` show for it, and a later `stop` gets `No real-time recording is running in session '<name>'; record_mark start first.` The server's log gets one Warning line (`RealtimeFinishFailed`) for the failed finish. A `stop` that cannot write the deadline file kills the helper and returns the clip with a `warning` that it ends there.
+  Warnings: `the capture got <a> fps of <fps>: the machine was busy, so the clip repeats frames` (an average under 90% of `fps`) and `the window changed size at <t> s; the clip ends there`.
+
+  A failed helper, ffmpeg or remux fails `stop` instead, naming its log and keeping the `.mkv`; the error text is the one `stop_project` and `list_sessions` show for it, and a later `stop` gets `No real-time recording is running in session '<name>'; record_mark start first.`
+
+  The server's log gets one Warning line (`RealtimeFinishFailed`) for the failed finish. A `stop` that cannot write the deadline file kills the helper and returns the clip with a `warning` that it ends there.
   Files are in `<project>/.godot/godot-mcp/recordings/`: `<UTC yyyyMMdd-HHmmss-fff>-<session>-realtime.mkv` while recording (playable if the server dies), remuxed to `.mp4` with faststart and the `.mkv` deleted, and, per recording, the logs `<same stamp>-<session>-realtime-capture.log` and `…-realtime-ffmpeg.log` (errors and the remux's output), plus `…-realtime-probe-<guid>.log` when a probe ran.
   Ending the server ends every real-time recording and waits for its `.mp4` within the 10 s shutdown cap.
 
@@ -2217,7 +2367,11 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 ### `add_node`
 
 - **Does:** adds a node named `nodeName` of `nodeType` (a Node class, a script's `class_name`, a script path, or a scene path, a `.tscn`, `.scn` or `.xscn`, added as an instance) and saves: `{path, type, index, instance?, script?}`.
-- **Use:** `options {parent, properties, position}`: parent path from the root (default `.`), `{name: value}` set once the node is under its parent (a name may be a `:` path, as `set_node_properties` takes it), as the editor sets them (so a Control's `layout_mode` takes 0 or 1 under a Control, is 2 under a Container and 3 with no Control parent; `anchors_preset` and a non-zero `anchor_*` need `layout_mode` 1, which is applied first), and a position among its new siblings as `move_node` takes it (default last; in 2D, sibling order is draw order).
+- **Use:** `options {parent, properties, position}`: parent path from the root (default `.`).
+
+  `{name: value}` set once the node is under its parent (a name may be a `:` path, as `set_node_properties` takes it), as the editor sets them (so a Control's `layout_mode` takes 0 or 1 under a Control, is 2 under a Container and 3 with no Control parent; `anchors_preset` and a non-zero `anchor_*` need `layout_mode` 1, which is applied first).
+
+  A position among its new siblings as `move_node` takes it (default last; in 2D, sibling order is draw order).
 
   An instance of a format no loader reads ends with the no-loader hint.
 
@@ -2247,7 +2401,9 @@ A script that does not compile or does not extend a Node class is refused, and a
 
   `rewrittenPaths` lists each rewrite as `{node, property, from, to}` (`node` is the holder's path after the move, `from` and `to` the `NodePath` text, subnames kept), `[]` when none; a value held by an instance's node is saved as an override of that node, and a node inside a non-editable instance may be listed though its write is not saved. An `AnimationPlayer`'s default `..` `root_node` under the moved node is rewritten like any other and becomes a stored value.
 
-  In the file the moved node and every node under it keep their original property lines in their order; only the tag line's `parent=`, any rewritten `NodePath` line and any line whose value the move changed (a `keepGlobalTransform` position) differ: a changed line takes the saved line in place, a line only the save has goes right after the latest saved line before it (or right after the tag line), so a new engine property lands before `script =` and a new script member after it, and one only the original has is dropped.
+  In the file the moved node and every node under it keep their original property lines in their order.
+
+  Only the tag line's `parent=`, any rewritten `NodePath` line and any line whose value the move changed (a `keepGlobalTransform` position) differ: a changed line takes the saved line in place, a line only the save has goes right after the latest saved line before it (or right after the tag line), so a new engine property lands before `script =` and a new script member after it, and one only the original has is dropped.
 
   The node's `[connection]` `from=`/`to=` and `[editable path=]` change in place, so the section keeps its position. A node added in the same batch at a path the moved node left is written as Godot writes a new node, with no warning.
 
@@ -2278,7 +2434,13 @@ A script that does not compile or does not extend a Node class is refused, and a
   A built-in sub-resource the scene owns is set in place and saved once (shared by several nodes, it changes for all of them); one made local to scene from a base or instanced scene is saved as an override of the whole resource. A path whose head is an engine property a C# field hides sets the engine value. Within one call, an update whose path starts with or runs through a property another update sets on the same node is applied after it; results keep input order.
 - **Path refusals:** each is prefixed `Property '<path>' on '<node>': `.
 
-  Through a resource file the scene only references: `<reached> is <res path>, a resource file this scene only references; set <reached> to a {type: "<Class>", ...} value to give the node its own, or edit <res path>.` Through a base or instanced scene's resource: `<reached> belongs to the base scene <path>; set <reached> whole to override it.` Through a node: `<path> holds a node; set the property on that node's own path.` An empty Object: `<path> holds no object, so it has no property <next>.` An index: `property paths reach Object properties and one value component; <segment> indexes a <type>.` `resource_path` as the leaf: `<path> names a resource's file path, which a scene edit cannot change.` A missing segment: `<node> has no property <path up to the first missing segment>.`
+  Through a resource file the scene only references: `<reached> is <res path>, a resource file this scene only references; set <reached> to a {type: "<Class>", ...} value to give the node its own, or edit <res path>.`
+
+  Through a base or instanced scene's resource: `<reached> belongs to the base scene <path>; set <reached> whole to override it.` Through a node: `<path> holds a node; set the property on that node's own path.`
+
+  An empty Object: `<path> holds no object, so it has no property <next>.` An index: `property paths reach Object properties and one value component; <segment> indexes a <type>.`
+
+  `resource_path` as the leaf: `<path> names a resource's file path, which a scene edit cannot change.` A missing segment: `<node> has no property <path up to the first missing segment>.`
 - **Tab pages:** `metadata/_tab_index` is refused, here and in `add_node`'s `options.properties`: `metadata/_tab_index is set by Godot from the page's position in its TabContainer; move the node instead.` `metadata/_tab_name`, a page's custom title, stays settable.
 - **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. A non-zero `anchor_*` on a Control in Position layout (`layout_mode` 0) is refused unless the node already holds that value: set `layout_mode` 1 first (a full rect is `layout_mode` 1, `anchors_preset` 15, `grow_*` 2); the editor cannot make a Position node with anchors.
 
@@ -2318,7 +2480,11 @@ A script that does not compile or does not extend a Node class is refused, and a
 
 - **Does:** runs 1 to 100 scene edits on one scene in a single headless Godot and saves once: `{passed, steps, failedAt?, uid?}`.
 - **Use:** any change of more than one edit: each step is `{tool, args}`, `tool` one of `delete_nodes`, `attach_script`, `duplicate_node`, `move_node`, `load_sprite`, `add_node`, `set_node_properties`, `connect_signal`, `disconnect_signal`, `export_mesh_library`, `args` that tool's own arguments without `projectPath` and `scenePath`. Later steps see earlier ones (add a node, then connect its signal).
-- **Shapes:** `args` by tool (`?` marks an optional key): `delete_nodes {nodePaths: [path]}`; `attach_script {nodePath, scriptPath}`; `duplicate_node {nodePath, newName?, options?: {parent?}}`; `move_node {nodePath, options: {parent?, position?: {index}|{before}|{after}, keepGlobalTransform?} (parent, position or both)}`; `load_sprite {nodePath, texturePath}`; `add_node {nodeType, nodeName, options?: {parent?, properties?: {name: value}, position?: {index}|{before}|{after}}}`; `set_node_properties {updates: [{nodePath, property, value}]}`; `connect_signal {nodePath, signal, target: {nodePath, method, binds?: [value]}}`; `disconnect_signal {nodePath, signal, target: {nodePath, method}}`; `export_mesh_library {outputPath, meshItemNames?: [name], options?: {overwrite?}}`.
+- **Shapes:** `args` by tool (`?` marks an optional key): `delete_nodes {nodePaths: [path]}`; `attach_script {nodePath, scriptPath}`; `duplicate_node {nodePath, newName?, options?: {parent?}}`; `move_node {nodePath, options: {parent?, position?: {index}|{before}|{after}, keepGlobalTransform?} (parent, position or both)}`.
+
+  `load_sprite {nodePath, texturePath}`; `add_node {nodeType, nodeName, options?: {parent?, properties?: {name: value}, position?: {index}|{before}|{after}}}`; `set_node_properties {updates: [{nodePath, property, value}]}`.
+
+  `connect_signal {nodePath, signal, target: {nodePath, method, binds?: [value]}}`; `disconnect_signal {nodePath, signal, target: {nodePath, method}}`; `export_mesh_library {outputPath, meshItemNames?: [name], options?: {overwrite?}}`.
 
   A step with an unknown or missing top-level argument is refused with the tool's shape appended (`set_node_properties has no argument 'nodePath'; it takes: updates. Its shape: {updates: [{nodePath, property, value}]}.`).
 - **Edges:** every step is checked before Godot starts. At the first failed step nothing is saved and no library written. One Godot start for the lot, so it is much faster than the tools one by one.
@@ -2327,7 +2493,9 @@ A script that does not compile or does not extend a Node class is refused, and a
 
 A `godot-mcp.json` beside `project.godot` sets launch defaults for every `run_project` on the folder.
 
-Top-level keys: `scene`, `userArgs`, `engineArgs`, `resolution` (`WIDTHxHEIGHT`, lowercase `x`), `quiet`, `audible` (a bool: a quiet run keeps its audio driver), `env` (an object of strings, laid over the server's environment for the game), `userData` (`"real"`, `"scratch"` or `{"seed": "<folder>"}`, as `run_project`'s; scratch scenes fall back to it when `scratch.userData` is not set), `projectSettings` (as `run_project`'s, written into the run's `override.cfg`), `presets`, `prepWrapper`, `processes`.
+Top-level keys: `scene`, `userArgs`, `engineArgs`, `resolution` (`WIDTHxHEIGHT`, lowercase `x`), `quiet`, `audible` (a bool: a quiet run keeps its audio driver), `env` (an object of strings, laid over the server's environment for the game).
+
+Also top-level keys: `userData` (`"real"`, `"scratch"` or `{"seed": "<folder>"}`, as `run_project`'s; scratch scenes fall back to it when `scratch.userData` is not set), `projectSettings` (as `run_project`'s, written into the run's `override.cfg`), `presets`, `prepWrapper`, `processes`.
 
 Each preset under `presets` takes the same keys but `presets`, plus `session` and `description` (what the preset is for; an unknown `options.preset` is refused listing each preset as `name (description)`). The file may carry `//` and `/* */` comments and trailing commas, so a value can sit beside a note on why it is set.
 
@@ -2339,7 +2507,13 @@ Parsing is strict: an unknown key, a wrong type or a bad resolution refuses the 
 
 `prepWrapper` (an array of strings: a program, then its arguments) runs the prep's processes, the C# build, the import and a process's `prep`, through a project's own wrapper such as a gate script, for every tool that preps: launch, restart, preview and the headless tools. `validate`'s Compile-items listing (`dotnet msbuild`, for a `.cs` target) runs through it too, in a light slot; with no wrapper it runs dotnet directly.
 
-Each runs as the wrapper followed by the process's absolute path and arguments, from the project folder; `{log}` in any element becomes the step's log (`.godot/godot-mcp/build.log`, `import.log`), `{ceiling}` the prep's ceiling in seconds (300), `{slot}` the step's slot (`heavy` for the build, the import and a process's `prep`, `light` for the Compile-items listing) and `{cwd}` the step's own working directory, absolute with no trailing separator: the folder its command would run in unwrapped (the csproj's folder for the build and the listing, the project folder for the import, the process's `cwd` for a process `prep`), which a gate passes on as `--cd {cwd}`.
+Each runs as the wrapper followed by the process's absolute path and arguments, from the project folder.
+
+`{log}` in any element becomes the step's log (`.godot/godot-mcp/build.log`, `import.log`), `{ceiling}` the prep's ceiling in seconds (300).
+
+`{slot}` in any element becomes the step's slot (`heavy` for the build, the import and a process's `prep`, `light` for the Compile-items listing).
+
+`{cwd}` in any element becomes the step's own working directory, absolute with no trailing separator: the folder its command would run in unwrapped (the csproj's folder for the build and the listing, the project folder for the import, the process's `cwd` for a process `prep`), which a gate passes on as `--cd {cwd}`.
 
 A wrapper without `{slot}` is filled in as before and keeps its own slot for every step.
 
@@ -2369,7 +2543,11 @@ A wrapped build, import, process prep or Compile-items listing killed while its 
 
 A malformed `godot-mcp.json` refuses any prep that runs a process.
 
-The wrapper's closing verdict line from its capture log (the last `gate: passed in …` or `gate: FAILED (status …)` line, or, when the gate killed the run, its last `gate: STALLED`, `gate: TIMED OUT`, `gate: BACKSTOP` or `gate: TRANSFER …` line, never the `gate: restored …` a routed run prints after its verdict; the log is `build.wrapper.log` when the wrapper takes `{log}`, else `build.log`, the import's likewise, its second pass's when it ran twice) is reported verbatim, cut to 200 characters, as `prep.buildGate` / `prep.importGate`, and as `prep.gate` for a process's `prep`.
+The wrapper's closing verdict line from its capture log is reported verbatim, cut to 200 characters, as `prep.buildGate` / `prep.importGate`, and as `prep.gate` for a process's `prep`.
+
+The verdict line is the last `gate: passed in …` or `gate: FAILED (status …)` line, or, when the gate killed the run, its last `gate: STALLED`, `gate: TIMED OUT`, `gate: BACKSTOP` or `gate: TRANSFER …` line, never the `gate: restored …` a routed run prints after its verdict.
+
+The capture log is `build.wrapper.log` when the wrapper takes `{log}`, else `build.log`, the import's likewise, its second pass's when it ran twice.
 
 Each is left out when no prepWrapper ran or its log holds no such line; a capture log that cannot be read gives no field and a stderr warning, a missing one neither.
 
