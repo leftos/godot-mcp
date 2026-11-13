@@ -6,7 +6,11 @@ A paced scratch step that changes its scene's state, checks it and then restores
 
 ## Decision (orchestrator decision, open to the owner)
 
-A scene root may give an optional `GetStepShotUntil(int)` that returns a `wait_for` condition, in the same shape as `GetStepUntil` returns one. For a paced step that `options.capture` shoots and whose `GetStepShotUntil` returns a condition, the server plays the step as one `wait_for` with `PlayStep(i)` as its call (as an until step is played), the shot condition as its condition and `options.screenshot` set, so the frame the condition first holds is the step's shot; the step's pace still sets when the next step plays, counted from `PlayStep`. A condition that does not hold within the step's pace leaves the step unshot, as a shot that fails does: a scene warning, never a red step.
+A scene root may give an optional `GetStepShotUntil(int)` that returns a `wait_for` condition, in the same shape as `GetStepUntil` returns one.
+
+For a paced step that `options.capture` shoots and whose `GetStepShotUntil` returns a condition, the server plays the step as one `wait_for` with `PlayStep(i)` as its call (as an until step is played), the shot condition as its condition and `options.screenshot` set, so the frame the condition first holds is the step's shot; the step's pace still sets when the next step plays, counted from `PlayStep`.
+
+A condition that does not hold within the step's pace leaves the step unshot, as a shot that fails does: a scene warning, never a red step.
 
 - An until step keeps its shot at its until's met frame; its `GetStepShotUntil` is not read.
 - A step `options.capture` does not shoot never reads `GetStepShotUntil`, so the walk costs nothing extra.

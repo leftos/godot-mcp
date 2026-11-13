@@ -53,7 +53,9 @@ The full guide to every tool, with the edges that bite, is [docs/TOOLS.md](docs/
 - Windows 10 or 11 (the server is built for win-x64).
 - [Godot 4.7.2](https://godotengine.org/download), the console executable (`..._console.exe`); the .NET edition if your game uses C#.
 - The [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0); the installer offers to install it through winget when it is missing.
-- Optional: [ffmpeg](https://ffmpeg.org) 7.0 or later on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips (an older one cannot read the `dropIdle` filter scripts, so those clips fall back to `.avi` copies with the idle frames kept); real-time recordings need it. They also need the capture helper (`capture/godot-mcp-capture.exe`), which ships in the package beside the server, and Windows 10 2004 or later; the game's sound in a real-time clip needs Windows build 20348 or later (Windows 11), else the clip has video only.
+- Optional: [ffmpeg](https://ffmpeg.org) 7.0 or later on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips (an older one cannot read the `dropIdle` filter scripts, so those clips fall back to `.avi` copies with the idle frames kept); real-time recordings need it.
+
+  They also need the capture helper (`capture/godot-mcp-capture.exe`), which ships in the package beside the server, and Windows 10 2004 or later; the game's sound in a real-time clip needs Windows build 20348 or later (Windows 11), else the clip has video only.
 - An MCP client; the steps below use [Claude Code](https://claude.com/claude-code).
 
 ## Install it: tell your agent
@@ -71,11 +73,15 @@ Install the godot-mcp server for this project:
 
 After the restart, ask for anything in the list above ("run the game and click Start", "why does the inventory close when I drag an item?"). The agent loads the `godot-mcp` skill, which teaches it the drive loop.
 
-To update, run the same install line again. The install adds the new version beside the old and stops no running server itself: a server registered through the MCP front restarts on the new version between requests once none of its sessions is live, with no `/mcp`, and a server registered directly keeps its version until you run `/mcp` in its session; the install lists each session still on an older version. Two godot-mcp versions cannot drive one project folder at once, so the session that finds the other version on a folder refuses and names the `/mcp` to run in the session on the older one. `-Version X.Y.Z` installs a given release instead of the latest; `-ZipPath <file>` installs a downloaded zip offline. Every release, with what changed, is on the [releases page](https://github.com/leftos/godot-mcp/releases).
+To update, run the same install line again. The install adds the new version beside the old and stops no running server itself: a server registered through the MCP front restarts on the new version between requests once none of its sessions is live, with no `/mcp`, and a server registered directly keeps its version until you run `/mcp` in its session; the install lists each session still on an older version.
+
+Two godot-mcp versions cannot drive one project folder at once, so the session that finds the other version on a folder refuses and names the `/mcp` to run in the session on the older one. `-Version X.Y.Z` installs a given release instead of the latest; `-ZipPath <file>` installs a downloaded zip offline. Every release, with what changed, is on the [releases page](https://github.com/leftos/godot-mcp/releases).
 
 ### From source
 
-To build it yourself, you need the [.NET 10 SDK](https://dotnet.microsoft.com/download), PowerShell 7 (`pwsh`), and Visual Studio Build Tools 2022 with the C++ workload (for the C# helper's native shim). Clone the repository and run `pwsh run.ps1 install` in it: it builds the server into the same `%LOCALAPPDATA%\godot-mcp`, as a new version folder behind the launcher, and links the skill folders to that version's copy, so `git pull` and `pwsh run.ps1 install` update both. Then register it as in step 2.
+To build it yourself, you need the [.NET 10 SDK](https://dotnet.microsoft.com/download), PowerShell 7 (`pwsh`), and Visual Studio Build Tools 2022 with the C++ workload (for the C# helper's native shim).
+
+Clone the repository and run `pwsh run.ps1 install` in it: it builds the server into the same `%LOCALAPPDATA%\godot-mcp`, as a new version folder behind the launcher, and links the skill folders to that version's copy, so `git pull` and `pwsh run.ps1 install` update both. Then register it as in step 2.
 
 ## Configuration
 
