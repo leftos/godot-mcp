@@ -148,5 +148,47 @@ public sealed class ScratchBoundsTests
         );
     }
 
+    // A step's pace at the scene's time scale against its until's hang guard: the default one, equal to the pace, a step's own
+    // guard of 40 s, and a pace divided by the time scale, since the pace is game time and the guard load-adjusted wall time, so a
+    // scale above 1 shortens the pace and one below 1 lengthens it.
+    [Theory]
+    [InlineData(35.0, null, 1.0, true)]
+    [InlineData(15.0, null, 1.0, false)]
+    [InlineData(15.5, null, 1.0, true)]
+    [InlineData(35.0, 40.0, 1.0, false)]
+    [InlineData(20.0, null, 2.0, false)]
+    [InlineData(10.0, null, 0.5, true)]
+    public void AnUntilPaceAboveItsGuardIsListed(double pace, double? stepGuard, double timeScale, bool listed)
+    {
+        var walk = new ScratchWalk([new(pace, null) { Guard = stepGuard }], [0], timeScale) { UntilGuard = TimeSpan.FromSeconds(15) };
+
+        int[] above = [.. walk.UntilPacesAboveGuard([0])];
+
+        int[] expected = listed ? [0] : [];
+        Assert.Equal(expected, above);
+    }
+
+    [Fact]
+    public void AnUntilPaceAboveItsGuardIsWarnedOfWithThePaceAndTheGuard()
+    {
+        Assert.Equal(
+            "step 26 'stick-tilts-the-chase-view': its pace of 35 s is longer than its until's hang guard of 15 s of "
+                + "load-adjusted time, which ends the step in its pace's place; give the step a \"guard\" above 35 if its "
+                + "condition can take that long",
+            ScratchVerdict.UntilPaceAboveGuard(26, "stick-tilts-the-chase-view", 35, 1, 15)
+        );
+    }
+
+    [Fact]
+    public void AnUntilPaceWarningAtAnotherTimeScaleNamesTheWallTimeTheGuardMustExceed()
+    {
+        Assert.Equal(
+            "step 3 'slow': its pace of 10 s at time scale 0.5 (20 s of wall time) is longer than its until's hang guard of "
+                + "15 s of load-adjusted time, which ends the step in its pace's place; give the step a \"guard\" above 20 if "
+                + "its condition can take that long",
+            ScratchVerdict.UntilPaceAboveGuard(3, "slow", 10, 0.5, 15)
+        );
+    }
+
     private static string Seconds(double seconds) => seconds.ToString("0.#", CultureInfo.InvariantCulture);
 }

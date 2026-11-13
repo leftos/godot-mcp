@@ -2,6 +2,13 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `run_scratches` warns when an until step's pace is longer than its hang guard, naming the step, both numbers and the `guard` it needs.
+- A scratch scene's run log says why each failed step failed, right after that step's status line.
+
 ## 0.42.0 - 2026-11-12
 
 ### Added

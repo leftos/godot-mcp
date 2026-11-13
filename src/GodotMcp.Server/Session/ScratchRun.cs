@@ -302,6 +302,13 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
         return paced + guarded + (AfterSeconds / Math.Min(1, TimeScale));
     }
 
+    /// <summary>
+    /// The steps among <paramref name="steps"/>, in their order, whose pace in wall time at the scene's time scale is longer than
+    /// their until's hang guard (<see cref="GuardOf"/>): those the bridge ends in their pace's place before the pace is over.
+    /// </summary>
+    internal IEnumerable<int> UntilPacesAboveGuard(IEnumerable<int> steps) =>
+        steps.Where(step => Paces[step].Seconds / TimeScale > GuardOf(step).TotalSeconds);
+
     /// <summary>The seconds of the wait after the last step played: the exit hold, else that step's own pace.</summary>
     private double AfterSeconds => ExitHold ?? Paces[Played[^1]].Seconds;
 
@@ -2020,6 +2027,7 @@ internal sealed class ScratchRun
     /// whose GetStepShotUntil gives a condition carries it as shotWhen, so the step is shot at it (<see cref="PlayUntilStepAsync"/>);
     /// then GetStatus and the window. The bridge's refusal of either wait is judged once the step's feed entries are in
     /// (<see cref="UntilFailure"/>, <see cref="ShotWaitFailure"/>); a connection or session failure is the step's error at once.
+    /// A step that failed has why written into the run log beside its status (<see cref="RecordFailure"/>).
     /// </summary>
     private async Task<ScratchStep> PlayStepAsync(GodotSession session, int index, CancellationToken limit)
     {
@@ -2043,7 +2051,7 @@ internal sealed class ScratchRun
             : UntilFailure(index, _names[index], bridgeError, window);
         string statusLine = StatusLine(status);
         RecordStatus(session, index, statusLine);
-        return new ScratchStep(index, _names[index], gameMs)
+        var step = new ScratchStep(index, _names[index], gameMs)
         {
             Until = played.Until,
             UntilWaited = wait is not null,
@@ -2058,6 +2066,8 @@ internal sealed class ScratchRun
             Viewport = shot.Viewport,
             Warning = shot.Warning,
         };
+        RecordFailure(session, index, ScratchVerdict.StepError(step, _plan.Patterns));
+        return step;
     }
 
     /// <summary>
@@ -2086,6 +2096,19 @@ internal sealed class ScratchRun
         if (statusLine.Length > 0 && !string.Equals(statusLine, _names[index], StringComparison.Ordinal))
         {
             session.WriteToOutputLog($"[godot-mcp] step {index} {_names[index]}: {statusLine}");
+        }
+    }
+
+    /// <summary>
+    /// Writes why a step failed into the scene's whole-output log beside its status line, so a log copy alone says why the step
+    /// stopped, in the words the scene's failedAt gives it (<see cref="ScratchVerdict.StepError"/>); a step that did not fail
+    /// writes nothing. The line goes to the log file only, never into the output rings.
+    /// </summary>
+    private void RecordFailure(GodotSession session, int index, string? callError)
+    {
+        if (callError is not null)
+        {
+            session.WriteToOutputLog($"[godot-mcp] step {index} {_names[index]} failed: {callError}");
         }
     }
 
@@ -2316,7 +2339,8 @@ internal sealed class ScratchRun
     /// On a root that has GetStepUntil, reads it once for each played step before the ceiling's clock starts and keeps each
     /// answer for that step's play (<see cref="ReadUntilAsync"/>, which judges it there): the walk counts a step whose answer is
     /// neither null nor an empty dictionary at the until's hang guard, and so a step whose read failed, which is read again at
-    /// its play. Each read names its step as the one in flight, so a hang there names it.
+    /// its play. Each read names its step as the one in flight, so a hang there names it. A step whose answer is a condition is
+    /// warned of when its pace at the time scale is longer than its until's hang guard (<see cref="ScratchWalk.UntilPacesAboveGuard"/>).
     /// </summary>
     private async Task ReadUntilsAsync(GodotSession session, CancellationToken cancellationToken)
     {
@@ -2326,6 +2350,7 @@ internal sealed class ScratchRun
         }
 
         HashSet<int> untils = [];
+        List<int> conditioned = [];
         bool passedOver = false;
         foreach (int index in _walk.Played)
         {
@@ -2336,10 +2361,21 @@ internal sealed class ScratchRun
             {
                 untils.Add(index);
             }
+
+            if (_untilAnswers.TryGetValue(index, out JsonNode? answer) && answer is JsonObject { Count: > 0 })
+            {
+                conditioned.Add(index);
+            }
         }
 
         _inFlight = -1;
         _walk = _walk with { UntilSteps = untils };
+        foreach (int index in _walk.UntilPacesAboveGuard(conditioned))
+        {
+            ScratchPace pace = _walk.Paces[index];
+            _warnings.Add(ScratchVerdict.UntilPaceAboveGuard(index, _names[index], pace.Seconds, _walk.TimeScale, _walk.GuardOf(index).TotalSeconds));
+        }
+
         if (passedOver)
         {
             await PassOverReadLinesAsync(session, cancellationToken);

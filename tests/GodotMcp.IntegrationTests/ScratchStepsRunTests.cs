@@ -379,6 +379,25 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
         Assert.DoesNotContain(lines, line => line.Contains("[godot-mcp] step ", StringComparison.Ordinal));
     }
 
+    // ScratchTwoRed's first red step is red by the error it pushes inside its own window, which its call never carries: the log
+    // still says why the step stopped, in the words the scene's failedAt gives.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AStepRedByItsFeedOrAPatternWritesWhyIntoTheRunLog()
+    {
+        JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchTwoRed"], options: null, TestContext.Current.CancellationToken));
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.Equal((1, "first"), (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()));
+        int index = failedAt["index"]!.GetValue<int>();
+        string name = failedAt["name"]!.GetValue<string>();
+        string error = failedAt["error"]!.GetValue<string>();
+        using FileStream stream = new(scene["log"]!.GetValue<string>(), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using StreamReader reader = new(stream);
+        string log = await reader.ReadToEndAsync(TestContext.Current.CancellationToken);
+        Assert.Contains($"[godot-mcp] step {index} {name} failed: {error}", log, StringComparison.Ordinal);
+    }
+
     private static JsonElement Tokens(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 
     private static IEnumerable<int> Indices(JsonNode indices) => indices.AsArray().Select(index => index!.GetValue<int>());

@@ -652,6 +652,30 @@ internal static partial class ScratchVerdict
         string.Create(CultureInfo.InvariantCulture, $"the screenshot at step {index} '{step}': {letterbox}");
 
     /// <summary>
+    /// The warning of an until step whose pace in wall time at <paramref name="timeScale"/> is longer than its until's hang guard:
+    /// the guard ends the step in its pace's place, so a "guard" above the wall time the pace takes is what the step needs if its
+    /// condition can take that long. At time scale 1 the two are the pace itself, which the text then names alone.
+    /// </summary>
+    internal static string UntilPaceAboveGuard(int index, string step, double paceSeconds, double timeScale, double guardSeconds)
+    {
+        static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+
+        string pace = Number(paceSeconds);
+        string guard = Number(guardSeconds);
+        string ended = $"its until's hang guard of {guard} s of load-adjusted time, which ends the step in its pace's place";
+        if (timeScale == 1)
+        {
+            return $"step {index} '{step}': its pace of {pace} s is longer than {ended}; give the step a \"guard\" above {pace} "
+                + "if its condition can take that long";
+        }
+
+        string scale = Number(timeScale);
+        string wall = Number(paceSeconds / timeScale);
+        return $"step {index} '{step}': its pace of {pace} s at time scale {scale} ({wall} s of wall time) is longer than {ended}; "
+            + $"give the step a \"guard\" above {wall} if its condition can take that long";
+    }
+
+    /// <summary>
     /// Every step that failed, in the order played, with why cut to <paramref name="max"/> characters, then the step a kill cut
     /// off with the kill's reason; null when none did.
     /// </summary>

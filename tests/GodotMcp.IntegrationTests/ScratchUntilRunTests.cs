@@ -139,6 +139,45 @@ public sealed class ScratchUntilRunTests : IAsyncDisposable
         Assert.Equal("batch done", ScratchRunnerTests.Status(step));
         Assert.True(step["until"]!["met"]!.GetValue<bool>(), step.ToJsonString());
         Assert.InRange(step["until"]!["gameMs"]!.GetValue<int>(), 5000, int.MaxValue);
+        Assert.Null(scene["warnings"]);
+    }
+
+    // ScratchUntilNever's step paces the fixture's 1 s under a harness guard of 0.5 s, so at time scale 1 its pace is longer than
+    // its until's guard: the scene warns of it before the walk, and the step's failure is written into the run log beside its
+    // status, in the log file only.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnUntilStepPacedPastItsGuardIsWarnedAndItsHangIsWrittenIntoTheRunLog()
+    {
+        await using SessionHarness harness = new(launchesUnfocused: false, productionGraces: false, TimeSpan.FromSeconds(0.5));
+        ScratchTools scratch = new(harness.Sessions, TestCSharp.Unused());
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(scratch, ["ScratchUntilNever"], new ScratchOptions(Details: ScratchRunnerTests.FullDetails), cancellation)
+        );
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Equal(
+            "step 0 'wait': its until hung at its guard of 0.5 s of load-adjusted time (its condition never held); check the "
+                + "condition GetStepUntil gives",
+            scene["failedAt"]!["error"]!.GetValue<string>()
+        );
+        Assert.NotNull(scene["warnings"]);
+        string[] warnings = [.. scene["warnings"]!.AsArray().Select(warning => warning!.GetValue<string>())];
+        Assert.Contains(
+            warnings,
+            warning =>
+                string.Equals(
+                    warning,
+                    "step 0 'wait': its pace of 1 s is longer than its until's hang guard of 0.5 s of load-adjusted time, "
+                        + "which ends the step in its pace's place; give the step a \"guard\" above 1 if its condition can take that long",
+                    StringComparison.Ordinal
+                )
+        );
+        using FileStream stream = new(scene["log"]!.GetValue<string>(), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using StreamReader reader = new(stream);
+        string log = await reader.ReadToEndAsync(cancellation);
+        Assert.Contains("[godot-mcp] step 0 wait failed: step 0 'wait': its until hung at its guard of 0.5 s", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("[godot-mcp] step 0 wait failed", scene.ToJsonString(), StringComparison.Ordinal);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
