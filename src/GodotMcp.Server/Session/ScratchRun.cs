@@ -537,7 +537,7 @@ internal sealed class ScratchRun
         "scratch: {Label} window fell back to the runner's marker: {Why}"
     );
 
-    private static readonly TimeSpan MarkerPoll = TimeSpan.FromMilliseconds(10);
+    internal static readonly TimeSpan MarkerPoll = TimeSpan.FromMilliseconds(10);
     private static readonly LineMark EveryLine = new(long.MaxValue, long.MaxValue);
 
     private readonly SessionRegistry _registry;
@@ -1611,7 +1611,7 @@ internal sealed class ScratchRun
             await StartWatchAsync(session, cancellationToken);
             LoadDeadline deadline = _registry.Clock.Start(_walk.Ceiling, cancellationToken);
             _deadline = deadline;
-            await PlayToCeilingAsync(session, deadline);
+            await PlayToCeilingAsync(session, deadline, cancellationToken);
             await CollectWatchAsync(session, _bounds.Call, cancellationToken);
         }
 
@@ -1619,16 +1619,17 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Plays the scene's steps on a token its ceiling or its memory watch cancels, with the watch read from the game's private
-    /// memory while they play and stopped and disposed before the play ends, on every path.
+    /// Plays the scene's steps on a token its ceiling (until a derived one is released at the exit hold, <see
+    /// cref="ScratchPlayLimit"/>), the run's cancellation or its memory watch cancels, with the watch read from the game's
+    /// private memory while they play and stopped and disposed before the play ends, on every path.
     /// </summary>
-    private async Task PlayToCeilingAsync(GodotSession session, LoadDeadline deadline)
+    private async Task PlayToCeilingAsync(GodotSession session, LoadDeadline deadline, CancellationToken cancellationToken)
     {
-        using var play = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
-        ScratchMemoryWatch? memory = MemoryWatch(session, play);
+        using ScratchPlayLimit play = new(deadline, cancellationToken);
+        ScratchMemoryWatch? memory = MemoryWatch(session, play.Source);
         try
         {
-            await PlayStepsAsync(session, play.Token);
+            await PlayStepsAsync(session, play);
         }
         finally
         {
@@ -1999,10 +2000,12 @@ internal sealed class ScratchRun
     /// <summary>
     /// Plays each step to play, in ascending order, each waiting its own pace, until one fails; after the last one played,
     /// holds the scene's exit hold, else that step's pace once more, the longer of its game time and its wall time, which the
-    /// bridge measures from that step's cut (<see cref="HoldOf"/>).
+    /// bridge measures from that step's cut (<see cref="HoldOf"/>). A derived ceiling is released as the hold starts, which its
+    /// own stall guard bounds (<see cref="AwaitHoldAsync"/>); a given one is not.
     /// </summary>
-    private async Task PlayStepsAsync(GodotSession session, CancellationToken limit)
+    private async Task PlayStepsAsync(GodotSession session, ScratchPlayLimit play)
     {
+        CancellationToken limit = play.Token;
         foreach (int index in _walk.Played)
         {
             _inFlight = index;
@@ -2018,6 +2021,11 @@ internal sealed class ScratchRun
         }
 
         _inFlight = -1;
+        if (_walk.Given is null)
+        {
+            play.ReleaseCeiling();
+        }
+
         await PaceAfterAsync(session, _walk.AfterGameMs, limit);
     }
 
@@ -2533,10 +2541,12 @@ internal sealed class ScratchRun
     /// <summary>
     /// Waits for the end of the exit hold the bridge runs from the last step's cut: both "pace" end marker lines in stdout and
     /// stderr and the feed's mark, whose entries since the last window it then takes (<see cref="TakeErrors(ErrorFeed, ref long,
-    /// bool, string)"/>); null error and closed false. Bounded as a wait_for of the hold was, at its game time at the scene's time
-    /// scale plus the reply allowance, on the load clock: past it (a game paused through the hold), no entries and why the marker
-    /// never came. Ends at once, no entries, closed, with a failed wait's text, when the session's bridge connection closes first
-    /// (<see cref="Wire.BridgeConnection.Closed"/>).
+    /// bool, string)"/>); null error and closed false. A stall guard on the hold's own game clock (<see cref="ScratchHoldWait"/>):
+    /// each window of the hold's game time at the scene's time scale plus the reply allowance, on the load clock, that passes with
+    /// no markers asks the bridge for the hold's progress (its hold command), and waits on while that clock advanced; a clock
+    /// standing still a whole window (a game paused through the hold), no hold running or an unreadable report fails with why,
+    /// and a hold the bridge says ended leaves the markers' allowance. Ends at once, no entries, closed, with a failed wait's text,
+    /// when the session's bridge connection closes first (<see cref="Wire.BridgeConnection.Closed"/>).
     /// </summary>
     private async Task<(string? Error, bool Closed, IReadOnlyList<ErrorEntry>? Marked)> AwaitHoldAsync(
         GodotSession session,
@@ -2545,31 +2555,25 @@ internal sealed class ScratchRun
     )
     {
         string marker = EndMarker("pace");
-        Task closed = BridgeClosed(session);
-        TimeSpan bound = _bounds.Release(gameMs, _scene.TimeScale) + ReplyAllowance;
-        using LoadDeadline deadline = _registry.Clock.Start(bound, limit);
-        while (true)
+        HoldWaitTerms terms = new(
+            _bounds.Release(gameMs, _scene.TimeScale) + ReplyAllowance,
+            _bounds.Markers,
+            gameMs,
+            marker,
+            PaceFailed(gameMs, BridgeClosedMessage)
+        );
+        ScratchHoldWait wait = new(_registry.Clock, terms, Read, token => session.SendAsync("hold", null, _bounds.Call + ReplyAllowance, token));
+        return await wait.RunAsync(BridgeClosed(session), limit);
+
+        HoldRead Read()
         {
-            bool expired = deadline.Expired;
             (OutputPage stdout, OutputPage stderr, _) = Output(session);
-            bool printed = Markers(stdout, stderr, _mark, marker) is not null;
-            if (printed && TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed, marker) is { } marked)
+            if (Markers(stdout, stderr, _mark, marker) is not null)
             {
-                return (null, false, marked);
+                return new HoldRead(TakeErrors(session.Errors, ref _feedMark, _plan.WarningsRed, marker), true, true);
             }
 
-            if (closed.IsCompleted)
-            {
-                return (PaceFailed(gameMs, BridgeClosedMessage), true, null);
-            }
-
-            if (expired)
-            {
-                bool stdoutArrived = MarkerLine(stdout, _mark.Stdout, marker) is not null;
-                return (MarkerTimeout("pace", bound, stdoutArrived, MarkerLine(stderr, _mark.Stderr, marker) is not null), false, null);
-            }
-
-            await Task.Delay(MarkerPoll, limit);
+            return new HoldRead(null, MarkerLine(stdout, _mark.Stdout, marker) is not null, MarkerLine(stderr, _mark.Stderr, marker) is not null);
         }
     }
 

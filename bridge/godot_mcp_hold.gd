@@ -9,7 +9,9 @@ extends Node
 ## in game time whatever the server's latency; the step's reply is not held for it. With no logger
 ## then (a dormant bridge), it prints and marks nothing. One hold runs at a time: a new hold, a
 ## cancel of the request it rode on while that request is pending (drop_for) or the connection's
-## end (drop) drops it, printing nothing; it dies with the bridge.
+## end (drop) drops it, printing nothing; it dies with the bridge. The bridge's read-only hold
+## command answers report(): the running hold, else one that ended by printing (until the next
+## start or drop), else none.
 
 ## The clock this hold belongs to, its parent: its tree, frame delta, bridge and advance_game_clock.
 var time: Node:
@@ -20,6 +22,9 @@ var time: Node:
 var _hold: Dictionary = {}
 ## The tree whose process_frame ticks the running hold, or null.
 var _ticking: Object = null
+## The hold that ended by printing, {marker, seconds} (its clock's final game seconds), from the
+## moment its prints and mark are done until the next hold's start or a drop; empty otherwise.
+var _ended: Dictionary = {}
 
 
 func _init() -> void:
@@ -54,6 +59,23 @@ func clock() -> Dictionary:
 	return _hold.get("clock", {})
 
 
+## The hold command's answer, which only reads: a running hold's {state: "running", marker,
+## seconds, gameMs}, seconds its clock's game seconds from the frame after the cut, the clock it
+## ends on; else a hold that ended by printing, {state: "ended", marker, seconds} with its final
+## seconds; else {state: "none"} (no hold yet, a dropped one, or one that ended with no logger).
+func report() -> Dictionary:
+	if running():
+		return {
+			"state": "running",
+			"marker": str(_hold["marker"]),
+			"seconds": float(_hold["clock"]["seconds"]),
+			"gameMs": int(_hold["gameMs"]),
+		}
+	if not _ended.is_empty():
+		return {"state": "ended", "marker": _ended["marker"], "seconds": _ended["seconds"]}
+	return {"state": "none"}
+
+
 ## Drops the running hold when it rode on the request whose params are params (the very
 ## Dictionary), printing nothing.
 func drop_for(params: Dictionary) -> void:
@@ -61,12 +83,13 @@ func drop_for(params: Dictionary) -> void:
 		drop()
 
 
-## Drops the running hold, if any, printing nothing.
+## Drops the running hold, if any, printing nothing, and forgets the one that ended.
 func drop() -> void:
 	if _ticking != null and _ticking.process_frame.is_connected(_tick):
 		_ticking.process_frame.disconnect(_tick)
 	_ticking = null
 	_hold = {}
+	_ended = {}
 
 
 ## Advances the hold's clock by this frame and ends the hold once it reaches holdGameMs.
@@ -84,10 +107,11 @@ func reached(clock: Dictionary, game_ms: int, paused: bool, delta: float) -> boo
 	return floori(float(clock["seconds"]) * 1000.0) >= game_ms
 
 
-## Ends the hold: prints its marker to stdout and stderr and marks the bridge's logger, or with no
-## logger, nothing.
+## Ends the hold: prints its marker to stdout and stderr and marks the bridge's logger, then
+## reports it ended (report); with no logger, nothing.
 func _end() -> void:
 	var marker: String = str(_hold["marker"])
+	var seconds: float = float(_hold["clock"]["seconds"])
 	drop()
 	var logger: Variant = time.bridge.get("_logger") if time.bridge != null else null
 	if logger == null:
@@ -95,3 +119,4 @@ func _end() -> void:
 	print(marker)
 	printerr(marker)
 	logger.mark(marker)
+	_ended = {"marker": marker, "seconds": seconds}

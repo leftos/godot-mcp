@@ -9,6 +9,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` warns when an until step's pace is longer than its hang guard, naming the step, both numbers and the `guard` it needs.
 - A scratch scene's run log says why each failed step failed, right after that step's status line.
 
+### Fixed
+
+- A `run_scratches` scene whose game runs slowed no longer fails its exit hold while the game's own clock still advances.
+
 ## 0.42.0 - 2026-11-12
 
 ### Added

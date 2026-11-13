@@ -116,7 +116,7 @@ Wait with `scratch_status {projectPath, runId, waitSeconds}` (1 to 600): it hold
 
 Or wait on its log with a `Monitor` running `timeout <limit> tail -n +1 -F <logFile>` and matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`).
 
-The Monitor's limit is the scenes' paces (each divided by the time scale, an until step's hang guard (15 s unless it has a `guard`) in place of its pace, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two: a server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
+The Monitor's limit is the scenes' paces (each divided by the time scale, an until step's hang guard (15 s unless it has a `guard`) in place of its pace, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two (a game that runs slowed can outlast that sum in its exit hold, so give such a run a longer limit): a server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
 
 Never drop the `timeout`: on Windows a bare `tail -F` outlives the Monitor's shell when the Monitor ends, and runs on for good.
 

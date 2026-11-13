@@ -327,6 +327,37 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(pingGone, $"ping (pid {pingId}) was still running after the stop");
     }
 
+    // The bridge's hold command reads the exit hold a scratch step's wait started at its cut: none before any, then the running
+    // hold's marker, length and game seconds. The wait ends its window at once (an end marker) and starts a 10-minute hold.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task TheHoldCommandReportsNoneThenTheRunningHoldOfAHeldWait()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        GodotSession session = _harness.Sessions.Resolve(null);
+        const string marker = "[godot-mcp] scratch pace end test";
+        JsonObject wait = new()
+        {
+            ["gameMs"] = 1,
+            ["kind"] = "gameMs",
+            ["timeoutMs"] = 5000,
+            ["endMarker"] = "[godot-mcp] scratch step 0 end test",
+            ["holdGameMs"] = 600_000,
+            ["holdEndMarker"] = marker,
+        };
+
+        JsonNode? before = await session.SendAsync("hold", null, PingTimeout, cancellation);
+        await session.SendAsync("wait_for", wait, PingTimeout, cancellation);
+        JsonNode? held = await session.SendAsync("hold", null, PingTimeout, cancellation);
+
+        Assert.Equal("none", before?["state"]?.GetValue<string>());
+        Assert.NotNull(held);
+        Assert.Equal("running", held["state"]?.GetValue<string>());
+        Assert.Equal(marker, held["marker"]?.GetValue<string>());
+        Assert.Equal(600_000, held["gameMs"]?.GetValue<int>());
+        Assert.True(held["seconds"]?.GetValue<double>() >= 0, $"seconds: {held["seconds"]}");
+    }
+
     private LaunchRequest Request(string[]? userArgs = null, bool quiet = true, bool shutOutRealGamepads = false) =>
         ProbeRuns.Request(_probe.Directory, userArgs, quiet, shutOutRealGamepads);
 

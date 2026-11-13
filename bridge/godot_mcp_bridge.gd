@@ -141,11 +141,11 @@ var _running_requests: Dictionary = {}
 ## Every request not yet answered: id -> _process_frames() when it was read.
 var _read_in: Dictionary = {}
 ## The run_script calls whose execute is suspended at an await: id -> {instance, state, before},
-## the script's instance, the GDScriptFunctionState execute returned and the _snapshot from the
-## call's start. They are the bridge's only references to the instance and its coroutine, so
-## dropping an entry lets the coroutine go (_drop_script).
+## the script's instance, the GDScriptFunctionState execute returned and the {time_scale, paused}
+## snapshot from the call's start. They are the bridge's only references to the instance and its
+## coroutine, so dropping an entry lets the coroutine go (_drop_script).
 var _running_scripts: Dictionary = {}
-## The call_method calls still awaiting their method: id -> the _snapshot from the call's start.
+## call_method calls awaiting their method: id -> {time_scale, paused} at the call's start.
 var _running_calls: Dictionary = {}
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
@@ -622,7 +622,7 @@ func _stop_script(request: int) -> void:
 
 
 ## Drops the bridge's references to a suspended run_script's instance and coroutine, freeing an
-## instance that is not RefCounted; returns the _snapshot from its start. The instance's
+## instance that is not RefCounted; returns its {time_scale, paused} start snapshot. The instance's
 ## destructor clears each coroutine still pending on it, which then never resumes and raises no
 ## error: an await keeps only a raw pointer to the instance (modules/gdscript/gdscript_vm.cpp,
 ## OPCODE_AWAIT), and GDScriptInstance::~GDScriptInstance clears the pending states' connections
@@ -649,11 +649,6 @@ func _forget_call(request: int) -> void:
 ## than get_tree, which the bridge's unit tests cannot give a tree before the runner's root enters.
 func _scene_tree() -> SceneTree:
 	return Engine.get_main_loop() as SceneTree
-
-
-## Engine.time_scale and SceneTree.paused now, {time_scale, paused}, for _restore.
-func _snapshot() -> Dictionary:
-	return {"time_scale": Engine.time_scale, "paused": _scene_tree().paused}
 
 
 ## Puts Engine.time_scale and SceneTree.paused back to before's values and says which it changed:
@@ -689,6 +684,7 @@ func _command_handlers() -> Dictionary:
 		"frame": _handle_time.bind("frame"),
 		"wait_for": _handle_time.bind("wait_for"),
 		"frames": _handle_time.bind("frames"),
+		"hold": _handle_time.bind("hold"),
 		"compare_screenshot": _handle_compare,
 		"preview": _handle_preview,
 		"movie_frame": _handle_movie_frame,
@@ -749,7 +745,7 @@ func _handle_ui_elements(id: int, params: Dictionary) -> void:
 ## again when the method ends.
 func _handle_inspect(id: int, params: Dictionary, command: String) -> void:
 	if command == "call_method":
-		_running_calls[id] = _snapshot()
+		_running_calls[id] = {"time_scale": Engine.time_scale, "paused": _scene_tree().paused}
 	var result: Variant = await _inspect.handle(command, params)
 	_running_calls.erase(id)
 	if params.get("_cancelled", false):
@@ -861,7 +857,7 @@ func _handle_run_script(id: int, params: Dictionary) -> void:
 	var instance: Variant = _compile_script(id, str(params.get("source", "")))
 	if instance == null:
 		return
-	var before: Dictionary = _snapshot()
+	var before: Dictionary = {"time_scale": Engine.time_scale, "paused": _scene_tree().paused}
 	# Object.call runs execute to its first await and returns the GDScriptFunctionState that await
 	# made (modules/gdscript/gdscript_vm.cpp, OPCODE_AWAIT, in 4.7.2), whose completed signal
 	# carries execute's return value. A direct instance.execute() without await would not: a debug
@@ -904,8 +900,8 @@ func _on_script_completed(value: Variant, id: int) -> void:
 	_reply_ok(id, {"value": _json.to_json(value)})
 
 
-## Runs a frame, wait_for or frames (capture_frames) request on the clock child, which answers
-## {result} or {error}.
+## Runs a frame, wait_for, frames (capture_frames) or hold (Hold.report) request on the clock
+## child, which answers {result} or {error}.
 func _handle_time(id: int, params: Dictionary, command: String) -> void:
 	var outcome: Dictionary
 	match command:
@@ -913,6 +909,8 @@ func _handle_time(id: int, params: Dictionary, command: String) -> void:
 			outcome = await _time.frame_control(params)
 		"frames":
 			outcome = await _time.capture_frames(params)
+		"hold":
+			outcome = {"result": _time.get_node("Hold").report()}
 		_:
 			outcome = await _time.wait_for(params)
 	if outcome.has("error"):

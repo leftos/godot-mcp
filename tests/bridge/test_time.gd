@@ -229,6 +229,109 @@ func test_a_dropped_hold_prints_nothing() -> void:
 	_free_then_rig(rig)
 
 
+## The hold command's report (Hold.report) is none before any hold and once the hold is dropped.
+func test_the_hold_report_is_none_before_a_hold_and_after_a_drop() -> void:
+	var rig: Dictionary = _hold_rig()
+	var hold: Node = rig["time"].get_node("Hold")
+	var before: Dictionary = hold.report()
+	var params: Dictionary = _hold_params("[test] report none cut", "[test] report none end")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	var started: Dictionary = hold.report()
+	hold.drop()
+	assert_eq(before, {"state": "none"}, "no hold yet: none")
+	assert_eq(started.get("state"), "running", "a started hold runs")
+	assert_eq(hold.report(), {"state": "none"}, "a dropped hold: none")
+	_free_then_rig(rig)
+
+
+## A running hold reports its clock's game seconds, its gameMs and marker; once its clock reaches
+## gameMs and it has printed and marked, it reports ended with its final seconds, until a new hold
+## starts and runs from 0.
+func test_the_hold_report_counts_the_running_holds_game_seconds_then_names_its_end() -> void:
+	var rig: Dictionary = _hold_rig()
+	var params: Dictionary = _hold_params("[test] report cut", "[test] report end")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	var hold: Node = rig["time"].get_node("Hold")
+	var reports: Array = [hold.report()]
+	for _frame: int in 3:
+		_time_script.advance_game_clock(hold.clock(), false, 0.04)
+		rig["tree"].process_frame.emit()
+		reports.append(hold.report())
+	var again: Dictionary = _hold_params("[test] report again cut", "[test] report again end")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, again)
+	var restarted: Dictionary = hold.report()
+	hold.drop()
+	assert_eq(
+		reports[0],
+		{"state": "running", "marker": "[test] report end", "seconds": 0.0, "gameMs": 100},
+		"at the cut: running, no game time yet"
+	)
+	assert_approx(reports[1]["seconds"], 0.04, "one frame of game time")
+	assert_approx(reports[2]["seconds"], 0.08, "two frames")
+	assert_eq(reports[2]["state"], "running", "80 ms of 100: still running")
+	assert_eq(reports[3]["state"], "ended", "120 ms: ended")
+	assert_eq(reports[3]["marker"], "[test] report end", "naming its marker")
+	assert_approx(reports[3]["seconds"], 0.12, "and its clock's final seconds")
+	assert_true(not reports[3].has("gameMs"), "an ended hold reports no gameMs")
+	assert_eq(
+		restarted,
+		{"state": "running", "marker": "[test] report again end", "seconds": 0.0, "gameMs": 100},
+		"a new hold runs again from 0"
+	)
+	_free_then_rig(rig)
+
+
+## A drop after a hold ended by printing forgets it: the report is none again.
+func test_a_drop_after_a_hold_ended_reports_none() -> void:
+	var rig: Dictionary = _hold_rig()
+	var params: Dictionary = _hold_params("[test] report drop cut", "[test] report drop end")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	var hold: Node = rig["time"].get_node("Hold")
+	_time_script.advance_game_clock(hold.clock(), false, 0.12)
+	rig["tree"].process_frame.emit()
+	var ended: Dictionary = hold.report()
+	hold.drop()
+	assert_eq(ended.get("state"), "ended", "the hold ended by printing")
+	assert_eq(hold.report(), {"state": "none"}, "a drop after it: none")
+	_free_then_rig(rig)
+
+
+## A paused frame adds nothing to the seconds the hold reports.
+func test_the_hold_report_adds_nothing_in_a_paused_frame() -> void:
+	var rig: Dictionary = _hold_rig()
+	var params: Dictionary = _hold_params("[test] report paused cut", "[test] report paused end")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	var hold: Node = rig["time"].get_node("Hold")
+	_time_script.advance_game_clock(hold.clock(), false, 0.04)
+	rig["tree"].process_frame.emit()
+	var before: Dictionary = hold.report()
+	rig["tree"].paused = true
+	_time_script.advance_game_clock(hold.clock(), true, 0.5)
+	rig["tree"].process_frame.emit()
+	var after: Dictionary = hold.report()
+	hold.drop()
+	assert_eq(after.get("state"), "running", "a paused hold still runs")
+	assert_approx(after["seconds"], before["seconds"], "and reports no more game time")
+	_free_then_rig(rig)
+
+
+## A hold that ends with no logger (a dormant bridge) printed nothing, so it reports none.
+func test_a_hold_that_ends_with_no_logger_reports_none() -> void:
+	var rig: Dictionary = _hold_rig()
+	var params: Dictionary = _hold_params("[test] report dormant cut", "[test] report dormant end")
+	await rig["time"]._poll_and_capture(func() -> Array: return [true, 1], 0, params)
+	var hold: Node = rig["time"].get_node("Hold")
+	var logger: Logger = rig["bridge"]._logger
+	rig["bridge"]._logger = null
+	_time_script.advance_game_clock(hold.clock(), false, 0.12)
+	rig["tree"].process_frame.emit()
+	var report: Dictionary = hold.report()
+	rig["bridge"]._logger = logger
+	assert_true(not hold.running(), "the hold is over")
+	assert_eq(report, {"state": "none"}, "and reports none")
+	_free_then_rig(rig)
+
+
 func test_a_wait_without_an_end_marker_prints_nothing() -> void:
 	var rig: Dictionary = _then_rig()
 	var recorder := LineRecorder.new()
