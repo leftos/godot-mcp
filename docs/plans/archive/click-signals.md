@@ -86,7 +86,9 @@ listenedOn: ["/root/Main/Safe/Screens/Lobby/…/Ready"],
 warning?
 ```
 
-- `fired` lists the emissions the gesture set off on its hit chain (below), in the order the bridge's handlers ran (an emission raised inside a game handler comes before the signal that handler answered; sections 4 and 5), each with the emitter's path, the signal's name, its arguments converted by the JSON module's `to_json` (a Node as its path; omitted when there are none), `frame` (process frames since the gesture's first mouse button or wheel event, 0 for that event's own frame), and `listeners`, the Godot connections the signal had besides the bridge's (null for a C# `[Signal]`, whose `+=` handlers Godot cannot see; TOOLS.md says so).
+- `fired` lists the emissions the gesture set off on its hit chain (below), in the order the bridge's handlers ran (an emission raised inside a game handler comes before the signal that handler answered; sections 4 and 5).
+
+  Each entry has the emitter's path, the signal's name, its arguments converted by the JSON module's `to_json` (a Node as its path; omitted when there are none), `frame` (process frames since the gesture's first mouse button or wheel event, 0 for that event's own frame), and `listeners`, the Godot connections the signal had besides the bridge's (null for a C# `[Signal]`, whose `+=` handlers Godot cannot see; TOOLS.md says so).
 
   A run of the same signal on the same node in a row folds into one entry with the run's first `frame`, `count` and the last `args` (`type_text`'s `text_changed` once per character).
 - `firedDropped` is present only above 0: the entries past the first 50 plus the bridge's own overflow past 200 raw entries.
@@ -115,7 +117,11 @@ The bridge connects one variadic lambda per (node, kept signal) on the **hit cha
 
 ### Which signals of a chain node (question 3)
 
-Every signal `get_signal_list` returns (script signals included) except a fixed **noise list**, emitted by layout, drawing or the pointer's own motion on every gesture: `draw`, `item_rect_changed`, `gui_input`, `mouse_entered`, `mouse_exited`, `mouse_shape_entered`, `mouse_shape_exited`, `resized`, `minimum_size_changed`, `maximum_size_changed`, `size_flags_changed`, `theme_changed`, `pre_sort_children`, `sort_children`, `child_order_changed`, `property_list_changed`, `script_changed`, `renamed`, `ready`, `replacing_by`, `editor_description_changed`, `editor_state_changed`, and on a Window `window_input`, `nonclient_window_input`, `dpi_changed`, `title_changed`, `titlebar_changed`, `size_changed`, `output_max_linear_value_changed`.
+Every signal `get_signal_list` returns (script signals included) except a fixed **noise list**, emitted by layout, drawing or the pointer's own motion on every gesture.
+
+The noise list is `draw`, `item_rect_changed`, `gui_input`, `mouse_entered`, `mouse_exited`, `mouse_shape_entered`, `mouse_shape_exited`, `resized`, `minimum_size_changed`, `maximum_size_changed`, `size_flags_changed`, `theme_changed`, `pre_sort_children`, `sort_children`, `child_order_changed`, `property_list_changed`, `script_changed`, `renamed`, `ready`, `replacing_by`, `editor_description_changed`, `editor_state_changed`.
+
+On a Window it also holds `window_input`, `nonclient_window_input`, `dpi_changed`, `title_changed`, `titlebar_changed`, `size_changed`, `output_max_linear_value_changed`.
 
 The tree signals (`tree_entered`, `tree_exiting`, `tree_exited`, `child_entered_tree`, `child_exiting_tree`) are not listed per emission: a chain node that leaves the tree goes into `leftTree`, the topmost one only, since a screen swap would otherwise list `tree_exiting` and `tree_exited` on every ancestor.
 
@@ -129,7 +135,9 @@ The spike found that tick can fall after two process frames, so `play` awaits on
 
 ### Where it lives
 
-- **Bridge**: a new module `bridge/godot_mcp_fired.gd`, the `Fired` child of `Gestures`, created from the input module's own folder as `Targets` is (`_create_targets` in `godot_mcp_input.gd`), so `godot_mcp_bridge.gd` gains no line: the noise list, `listen(node)` (a chain, its kept signals, a lambda each, skipping nodes already listened), the `ButtonGroup` and kept-press rules, the catcher (records `[frame, path, signal, args, listeners]`, converting args with `to_json` as it records, at most 200 raw entries, then counting), `leftTree` from `tree_exiting`, and `stop()` (disconnect what is still valid, answer the raw list).
+- **Bridge**: a new module `bridge/godot_mcp_fired.gd`, the `Fired` child of `Gestures`, created from the input module's own folder as `Targets` is (`_create_targets` in `godot_mcp_input.gd`), so `godot_mcp_bridge.gd` gains no line.
+
+  The module holds the noise list, `listen(node)` (a chain, its kept signals, a lambda each, skipping nodes already listened), the `ButtonGroup` and kept-press rules, the catcher (records `[frame, path, signal, args, listeners]`, converting args with `to_json` as it records, at most 200 raw entries, then counting), `leftTree` from `tree_exiting`, and `stop()` (disconnect what is still valid, answer the raw list).
 
   The input module's `play` starts and stops it around the gestures in scope and calls `listen` after the aim motion and each press or motion, and the key path after each key event: a small set of hooks that leaves the input module at 948 lines of gdlint's 1000.
 - **Server**: `src/GodotMcp.Server/Tools/FiredSignals.cs` shapes the raw list in `SendInputAsync` (`SendInputAsync` in `RuntimeTools.Input.cs`) before `ErrorReport.AddTo`: folds runs into `count`, keeps the first 50 entries with `firedDropped`, cuts an argument over 200 characters to `{valuePreview, valueLength}`, the watch's per-value cut. The tool descriptions gain one shared note (a `FiredNote` beside `TargetNote`).
@@ -172,12 +180,26 @@ The spike found that tick can fall after two process frames, so `play` awaits on
 
 Each step lands on its own with its tests, docs (TOOLS.md, SKILL.md, ARCHITECTURE.md, the glossary, README for the new capability, a `CHANGELOG.md` `## Unreleased` bullet) and passes `pwsh run.ps1 build`, `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` (with `gdlint` and `gdcomplexity`), its itest class with `pwsh run.ps1 itest -Filter "*<Class>"`, then `pwsh run.ps1 itest -Since origin/main`.
 
-1. **Spike** (landed; no bridge edit; `pwsh run.ps1 drive -Calls <file.json>` on InputProbe and CsProbe copies, catchers installed by `run_script`): (i) the connect-plus-disconnect cost of a 20-deep chain with every non-noise signal, in µs, and the count of kept signals per class; (ii) the list for a click on a plain Button, a toggle, a toggle in a `ButtonGroup`, a disabled Button, a `TabBar` tab, an `OptionButton` item (opened by click, then the item: needs popup items landed, else probe by `{x, y}`), Enter in a `LineEdit`, and an `Area2D` under the root, each confirmed inside the two settle frames; (iii) a nested emission's order; (iv) a C# `[Signal]`'s `get_signal_connection_list` entries, and how the `EventSignalCallable` is told apart.
+1. **Spike** (landed; no bridge edit; `pwsh run.ps1 drive -Calls <file.json>` on InputProbe and CsProbe copies, catchers installed by `run_script`).
+
+   (i) The connect-plus-disconnect cost of a 20-deep chain with every non-noise signal, in µs, and the count of kept signals per class.
+
+   (ii) The list for a click on a plain Button, a toggle, a toggle in a `ButtonGroup`, a disabled Button, a `TabBar` tab, an `OptionButton` item (opened by click, then the item: needs popup items landed, else probe by `{x, y}`), Enter in a `LineEdit`, and an `Area2D` under the root, each confirmed inside the two settle frames.
+
+   (iii) A nested emission's order.
+
+   (iv) A C# `[Signal]`'s `get_signal_connection_list` entries, and how the `EventSignalCallable` is told apart.
 
    Results into section 2.
 2. **Click and `mouse_button`** (landed): `bridge/godot_mcp_fired.gd`, the input module's calls for `click` and `mouse_button` (the kept press chain), `FiredSignals.cs`, the descriptions.
 
-   Tests: gdtest `tests/bridge/test_fired.gd` (chain building, the noise list, `ButtonGroup` buttons, bridge nodes left out, `leftTree` keeping the topmost, the 200 cap; signals emitted by hand in a headless tree); unit `tests/GodotMcp.Tests/Tools/FiredSignalsTests.cs` (folding, the 50 cap and `firedDropped`, the 200-character cut, order kept); itest `FiredSignalsTests` (a new class in the `input` group of `run.ps1` `$itestGroups`, with a `src/GodotMcp.Server/Tools/FiredSignals.cs` rule mapping to `input` in `$itestRules`): widgets built by `run_script` on the shared InputProbe session, as `WorldTargetTests` builds its own; a Button, a toggle with one listener, a disabled Button and its warning, a `ButtonGroup`, a `TabBar` item, a text target on a card-like Label beside a Button with a script signal on their root, a world `Area2D`'s `input_event`, a press-then-release `mouse_button` pair, a paused game's warning.
+   Tests: gdtest `tests/bridge/test_fired.gd` (chain building, the noise list, `ButtonGroup` buttons, bridge nodes left out, `leftTree` keeping the topmost, the 200 cap; signals emitted by hand in a headless tree).
+
+   Unit `tests/GodotMcp.Tests/Tools/FiredSignalsTests.cs` (folding, the 50 cap and `firedDropped`, the 200-character cut, order kept).
+
+   Itest `FiredSignalsTests` (a new class in the `input` group of `run.ps1` `$itestGroups`, with a `src/GodotMcp.Server/Tools/FiredSignals.cs` rule mapping to `input` in `$itestRules`).
+
+   Its widgets are built by `run_script` on the shared InputProbe session, as `WorldTargetTests` builds its own: a Button, a toggle with one listener, a disabled Button and its warning, a `ButtonGroup`, a `TabBar` item, a text target on a card-like Label beside a Button with a script signal on their root, a world `Area2D`'s `input_event`, a press-then-release `mouse_button` pair, a paused game's warning.
 
    `McpServerSmokeTests` is unchanged (no new tool).
 3. **`drag`, `key` and `type_text`** (landed): the drop target's chain and the focus-owner chain, refreshed per key event; `FiredSignalsTests` gains a drag onto a drop target, Enter in a LineEdit (`text_submitted`), `type_text` folding `text_changed`, and Tab moving focus to a second LineEdit.
@@ -189,7 +211,9 @@ Each step lands on its own with its tests, docs (TOOLS.md, SKILL.md, ARCHITECTUR
 
 ## 7. Open questions
 
-Ruled by the owner: 1 (a), always on with no new argument; 2 (a), the hit chain plus the target's chain, `ButtonGroup` buttons, the focus chain for keys and the root's `gui_focus_changed`; 3 (a), every signal but the noise list, tree signals folded into `leftTree`; 4 (a), `click`, `mouse_button`, `drag`, `key` and `type_text`; 5 (a), the settle frames, with one physics tick awaited first when none has run since the last button or wheel event; 6 (a), Godot connections counted less the bridge's own and the engine's `callable_mp` wiring, null for a C# `[Signal]`; 7 (a), the key `fired`; 8 (a), a `fired` assertion in `batch_drive`.
+Ruled by the owner: 1 (a), always on with no new argument; 2 (a), the hit chain plus the target's chain, `ButtonGroup` buttons, the focus chain for keys and the root's `gui_focus_changed`; 3 (a), every signal but the noise list, tree signals folded into `leftTree`; 4 (a), `click`, `mouse_button`, `drag`, `key` and `type_text`.
+
+The owner also ruled: 5 (a), the settle frames, with one physics tick awaited first when none has run since the last button or wheel event; 6 (a), Godot connections counted less the bridge's own and the engine's `callable_mp` wiring, null for a C# `[Signal]`; 7 (a), the key `fired`; 8 (a), a `fired` assertion in `batch_drive`.
 
 Every question is ruled.
 

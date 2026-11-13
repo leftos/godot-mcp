@@ -8,7 +8,11 @@ A game's cheats and debug hooks are ordinary C# methods today, and an agent reac
 
 **delve-the-dungeon.**
 
-Its cheats are public methods of `NetClient` (`src/Delve.Client/Scripts/Net/NetClient.cs` L37, a `Node`), the `Net` autoload (`src/Delve.Client/project.godot` L24: `Net="*res://Scripts/Net/NetClient.cs"`): `ForceEnemyAim(int enemy, int seat)` L759, `ForceAllEnemiesAim` L773, `DownPartyMember(int seat)` L787, `FellPartyMember` L800, `PutPartyMemberFirst` L813, `SetHp(bool enemy, int index, int hp)` L855, `SetMaxHp` L871, `SetSpeed` L887, `SetStatus(bool enemy, int index, string kind, int magnitude, int turns)` L905, `ClearStatus` L923, `JumpToRoom(int x, int y)` L937, `JumpToRoomOfKind(string kind)` L951, `JumpToEncounter` L983, `WinFight` L995, `StillBots` L1000, `SetTrapped` L1021, `OpenBoard` L1031, `GrantXp` L1054, `SetLevel` L1067, `SetAbilityLevel` L1084, `TeachAbility` L1106, `TeachAbilityAt` L1131, and the `internal` `SetRewardChoice` L1164.
+Its cheats are public methods of `NetClient` (`src/Delve.Client/Scripts/Net/NetClient.cs` L37, a `Node`), the `Net` autoload (`src/Delve.Client/project.godot` L24: `Net="*res://Scripts/Net/NetClient.cs"`).
+
+The cheats are `ForceEnemyAim(int enemy, int seat)` L759, `ForceAllEnemiesAim` L773, `DownPartyMember(int seat)` L787, `FellPartyMember` L800, `PutPartyMemberFirst` L813, `SetHp(bool enemy, int index, int hp)` L855, `SetMaxHp` L871, `SetSpeed` L887, `SetStatus(bool enemy, int index, string kind, int magnitude, int turns)` L905, `ClearStatus` L923.
+
+The list goes on with `JumpToRoom(int x, int y)` L937, `JumpToRoomOfKind(string kind)` L951, `JumpToEncounter` L983, `WinFight` L995, `StillBots` L1000, `SetTrapped` L1021, `OpenBoard` L1031, `GrantXp` L1054, `SetLevel` L1067, `SetAbilityLevel` L1084, `TeachAbility` L1106, `TeachAbilityAt` L1131, and the `internal` `SetRewardChoice` L1164.
 
 The same class carries non-cheat public members an agent must not mistake for cheats: `Send` L636, `Submit(Seat?, GameCommand)` L666, `IsInFlight` L1224, `IsAnythingInFlight` L1227. The game's own dev console (`src/Delve.Client/Scripts/Components/DevConsole.cs` L7-14) sends "through the same `NetClient` methods a scripted drive calls", with a help list of every cheat, its arguments and when a server takes it (`DevConsoleText.cs` L260-305).
 
@@ -76,7 +80,11 @@ Two ordinary runtime tools, not dynamic MCP tools:
 
 ### Argument schemas from C# signatures
 
-Built in Core from `ParameterInfo`, one JSON Schema property per parameter: `bool` → `boolean`; integral types → `integer` with the type's range; `float`/`double`/`decimal` → `number`; `string` → `string`; an enum → `string` with `enum` its names (a number is still accepted, as `cs_set` accepts it, TOOLS.md L282); a nullable or a parameter with a default → not `required`, with `default` written; `string[]`, `List<T>` → `array` of the element's schema; a record or class → `object` with the constructor's or settable properties' schemas, one level, deeper levels as `{type: "object", "x-csharp": "<type>"}`; a `Node`-derived type → `{"$node": path}`.
+Built in Core from `ParameterInfo`, one JSON Schema property per parameter.
+
+The mappings are `bool` → `boolean`; integral types → `integer` with the type's range; `float`/`double`/`decimal` → `number`; `string` → `string`; an enum → `string` with `enum` its names (a number is still accepted, as `cs_set` accepts it, TOOLS.md L282); a nullable or a parameter with a default → not `required`, with `default` written.
+
+Collections and objects: `string[]`, `List<T>` → `array` of the element's schema; a record or class → `object` with the constructor's or settable properties' schemas, one level, deeper levels as `{type: "object", "x-csharp": "<type>"}`; a `Node`-derived type → `{"$node": path}`.
 
 `description` from the parameter's `[Description]`, and `x-csharp` always carries the C# type name as `cs_members` spells it (`Signatures.ParameterType`, `src/GodotMcp.Dotnet.Core/Signatures.cs` L32-33). A parameter the value reader cannot fill (`out`, `ref`, pointers, `Span`-like, delegates, generic methods) makes the tool `available: false` with the reason, rather than an entry that always fails.
 
@@ -209,7 +217,13 @@ Settled for step 2 from the spike and the code:
 
 - `ToolSchema.Describe(MethodInfo, Func<Type, bool> isNode)` returns a `ToolSignature(JsonObject? Arguments, string? Unavailable, string Returns)`, exactly one of the first two set; `NamedArguments.Bind(MethodInfo, JsonObject, IValueResolver)` returns the `OverloadChoice` `Calls` already invokes, and throws `OverloadException` for its refusals. `OverloadResolver`'s private `Unpassable` moves to a shared internal class the three use, so they agree on what cannot be passed.
 - `ToolMark.Read(MethodInfo)` in Core reads the mark by name into `(Description, Name, When, ReadOnly)` with the defaults above, unit-tested with a sample attribute.
-- Schemas: each converter-supported type as its JSON type (integers with their width's `minimum`/`maximum`; enum names as `enum`; a `[Flags]` enum as `{type: string, "x-flags": [names]}` taking comma-joined names; `Nullable<T>` and a defaulted parameter not required, the default written; `params` a non-required array; collections `array`, a set with `uniqueItems`; `Dictionary<string, V>` an object with `additionalProperties`; a record, class or struct one level deep with the union of its public constructors' parameters and settable members, `required` only with exactly one public constructor, `additionalProperties: false` as `ObjectReader` refuses unknown keys, deeper levels `{type: object, "x-csharp"}`; a `Node` `{type: object, properties: {"$node": {type: string}}, required: ["$node"]}`; an interface or abstract type an object noting `$handle`/`$node`; `object` `{}`); every property carries `x-csharp` spelled as `cs_members` spells it and `description` from `[Description]`.
+- Schemas: each converter-supported type as its JSON type: integers with their width's `minimum`/`maximum`; enum names as `enum`; a `[Flags]` enum as `{type: string, "x-flags": [names]}` taking comma-joined names; `Nullable<T>` and a defaulted parameter not required, the default written; `params` a non-required array; collections `array`, a set with `uniqueItems`.
+
+  Further: `Dictionary<string, V>` an object with `additionalProperties`; a record, class or struct one level deep with the union of its public constructors' parameters and settable members, `required` only with exactly one public constructor, `additionalProperties: false` as `ObjectReader` refuses unknown keys, deeper levels `{type: object, "x-csharp"}`.
+
+  Last: a `Node` `{type: object, properties: {"$node": {type: string}}, required: ["$node"]}`; an interface or abstract type an object noting `$handle`/`$node`; `object` `{}`.
+
+  Every property carries `x-csharp` spelled as `cs_members` spells it and `description` from `[Description]`.
 - A `CancellationToken` parameter is left out of the schema and bound to `CancellationToken.None`; `in` converts like a plain value; `ref`, `out`, pointers, by-ref-like types, delegates, generic method definitions, `IReadOnlyCollection<>`, `ISet<>`, non-string-keyed dictionaries and `nint`/`nuint` make the tool unavailable.
 - Names match ordinally, with a case hint. Refusal texts: unknown `SetHp has no parameter 'hitpoints'; it takes enemy, index, hp.` (plus `did you mean 'hp'?` when only case differs); missing `SetHp needs 'hp' (int); list_game_tools shows its schema.`; wrong type `parameter 'hp': expected an int, got "six"` (`OverloadResolver`'s form); unavailable `parameter 'value' is out int, which a game tool cannot pass`.
 - For step 3: the helper keeps the walked methods in a static for the game process's life and recomputes each tool's owner and availability per call, so no server cache and no drop points (question 4's "kept per game process"); a tool unavailable for its signature is listed `available: false` with `reason` and no `args`, one unavailable for its owner keeps `args`; two tools on one name are both listed, each naming the other's `on`.

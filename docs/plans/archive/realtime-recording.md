@@ -19,7 +19,9 @@ Under Movie Maker, game time advances 1/60 s a frame whatever the wall clock doe
   The spike (section 8) found Movie Maker off the wall clock in both directions, not only faster: delve's `FightDiceScratch` at 1080p Forward+ ran at 41 to 43 fps under it and read the 0.35 s flight as about 0.5 s. The need is a recording at real time.
 - **The clip is not what a player sees.** A hitch, a dropped frame or a slow first draw never shows: every frame lasts 1/60 s in the clip however long it took. delve L105: "A clip for the user is recorded with the user-level `video-capture` skill (`/video-capture`: the real window, in real time, through Windows.Graphics.Capture), never Movie Maker (`--write-movie`). Movie Maker renders faster than real time, so what it shows is not what a player sees".
 
-**The workaround written by hand.** delve L106 records "the windowed client while it plays, the game untouched" with `~/.claude/skills/video-capture/scripts/Record-Window.ps1 -Title 'Delve the Dungeon (DEBUG)' -Seconds 50 -Out .tmp/<name>.mp4 -Sheet`, outside the server: the agent finds the window by title (which carries `(DEBUG)` only when the client runs from `Godot_console.exe --path`), guesses a fixed length up front, starts the drive "five seconds after the recording", and crops the title bar off by hand (`-vf crop=1920:1080:1:31`, since the capture is 1922 × 1112 for a 1920 × 1080 client).
+**The workaround written by hand.** delve L106 records "the windowed client while it plays, the game untouched" with `~/.claude/skills/video-capture/scripts/Record-Window.ps1 -Title 'Delve the Dungeon (DEBUG)' -Seconds 50 -Out .tmp/<name>.mp4 -Sheet`, outside the server.
+
+The agent finds the window by title (which carries `(DEBUG)` only when the client runs from `Godot_console.exe --path`), guesses a fixed length up front, starts the drive "five seconds after the recording", and crops the title bar off by hand (`-vf crop=1920:1080:1:31`, since the capture is 1922 × 1112 for a 1920 × 1080 client).
 
 The same line records why the two ffmpeg routes were dropped: "`ddagrab` records whatever is on top of that part of the screen (two recordings of the app covering the game), and `gdigrab` gives black for the Vulkan window". L107 adds that `PrintWindow` of a GPU-drawn window "that is off screen or minimized comes back black".
 
@@ -160,7 +162,23 @@ Each route against what a real-time recording needs, on Windows.
 
 Each step lands with its tests, docs and changelog bullet, and passes `pwsh run.ps1 build`, `pwsh run.ps1 test`, `pwsh run.ps1 gdtest`, its itest class through `pwsh run.ps1 itest -Filter`, then `pwsh run.ps1 itest -Since origin/main`.
 
-1. **Done: spike** (results in section 8; no landing; results into a section 8 of this file and section 2's Status column), with the skill's `WgcCapture` against InputProbe and CsProbe copies, and a delve client: (i) WGC on a window on the server's hidden desktop, on one parked off-screen, covered, unfocused and minimized; (ii) the capture's size against `DWMWA_EXTENDED_FRAME_BOUNDS` and the client rectangle, at 100% and 150% scaling; (iii) the game's `frame_ms` (`wait_for {frames: 600}`'s `elapsedMs`, or the watch once it lands) with no capture, with an NVENC capture and with a `libx264` one, quiet-capped at 60 fps and uncapped; (iv) helper start to first frame; (v) bitrate at 30 and 60 fps; (vi) the 0.35 s `FightScratch` flight measured on a run without `record`, under a real-time capture and under Movie Maker; (vii) process loopback on a visible run, a muted one and a quiet one (silence expected from source); (viii) the yellow border from an unpackaged exe with `IsBorderRequired = false`.
+1. **Done: spike** (results in section 8; no landing; results into a section 8 of this file and section 2's Status column), with the skill's `WgcCapture` against InputProbe and CsProbe copies, and a delve client.
+
+   (i) WGC on a window on the server's hidden desktop, on one parked off-screen, covered, unfocused and minimized.
+
+   (ii) The capture's size against `DWMWA_EXTENDED_FRAME_BOUNDS` and the client rectangle, at 100% and 150% scaling.
+
+   (iii) The game's `frame_ms` (`wait_for {frames: 600}`'s `elapsedMs`, or the watch once it lands) with no capture, with an NVENC capture and with a `libx264` one, quiet-capped at 60 fps and uncapped.
+
+   (iv) Helper start to first frame.
+
+   (v) Bitrate at 30 and 60 fps.
+
+   (vi) The 0.35 s `FightScratch` flight measured on a run without `record`, under a real-time capture and under Movie Maker.
+
+   (vii) Process loopback on a visible run, a muted one and a quiet one (silence expected from source).
+
+   (viii) The yellow border from an unpackaged exe with `IsBorderRequired = false`.
 
    Proving: the table, and the questions it settles (3 especially) brought back to the owner.
 2. **Done: the helper in the repo** (the itest class `CaptureHelperTests` is in a `capture` group on the visible desktop, not the `recording` group, since Windows.Graphics.Capture cannot see the hidden desktop the other groups run on): `src/GodotMcp.Capture/` ported from `WgcCapture` with `--crop`, published into `capture/` by `run.ps1 publish`, required by `tools/package.ps1`, found by `Installation.FindCaptureHelper`.
@@ -179,7 +197,9 @@ Each step lands with its tests, docs and changelog bullet, and passes `pwsh run.
 
 ## 7. Open questions
 
-Ruled by the owner: 1 (a), the Windows.Graphics.Capture helper piped into ffmpeg; 2 (a), `record_mark` on any session not launched with `options.record`; 3 (a), quiet sessions allowed if the spike shows WGC sees the hidden desktop, else refused with the fix; 4 (a), the game process's own audio; 5 (a), Movie Maker kept as it is; 6 (a), a separate `godot-mcp-capture.exe` in the package; 7 (a), NVENC, else libx264 ultrafast, else h264_mf; 8 (a), 30 fps by default, `options.fps` 1 to 60; 9 (a), cropped to the client area.
+Ruled by the owner: 1 (a), the Windows.Graphics.Capture helper piped into ffmpeg; 2 (a), `record_mark` on any session not launched with `options.record`; 3 (a), quiet sessions allowed if the spike shows WGC sees the hidden desktop, else refused with the fix; 4 (a), the game process's own audio.
+
+The owner also ruled: 5 (a), Movie Maker kept as it is; 6 (a), a separate `godot-mcp-capture.exe` in the package; 7 (a), NVENC, else libx264 ultrafast, else h264_mf; 8 (a), 30 fps by default, `options.fps` 1 to 60; 9 (a), cropped to the client area.
 
 Every question is ruled.
 

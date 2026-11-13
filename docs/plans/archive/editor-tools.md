@@ -1,6 +1,8 @@
 # Editor-driving tools (GMCP-407)
 
-An agent opens a project in the Godot editor and drives it the way it drives a game: it reads the editor's Control tree, clicks, drags and types into any editor window, screenshots it, reads the editor's output and errors, and opens, saves, plays and builds through `EditorInterface`. godot-xaml asked for it to check `.xscn` scenes in the editor (open from the FileSystem dock and the Open dialog, edit, save, F6, instance, move, rename, survive a C# rebuild), and the owner widened it to "click anything in a godot window".
+An agent opens a project in the Godot editor and drives it the way it drives a game: it reads the editor's Control tree, clicks, drags and types into any editor window, screenshots it, reads the editor's output and errors, and opens, saves, plays and builds through `EditorInterface`.
+
+godot-xaml asked for it to check `.xscn` scenes in the editor (open from the FileSystem dock and the Open dialog, edit, save, F6, instance, move, rename, survive a C# rebuild), and the owner widened it to "click anything in a godot window".
 
 This replaces [DECISIONS.md](../DECISIONS.md) decision 17 ("No editor bridge") once the first phase lands. The Non-negotiable stands: nothing enters the project's tracked files.
 

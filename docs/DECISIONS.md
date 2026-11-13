@@ -107,7 +107,11 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       The batch tool runs existing tools by name plus assertions (`property`, `expression`, `no_errors`, `wait`) server-side in order, stops at the first failed assertion or tool error, and returns every step's result with screenshots as paths.
 
-      Settled at build time (user, 2026-09-26): the batch calls tools through the SDK's tool collection; `property` and `expression` assertions check once (a new `wait_for` `timeoutMs: 0`, allowed while paused); `no_errors` looks back to the previous `no_errors` or the batch start; a `screenshot` assertion needs `compare_screenshot`'s `match`; at most 100 steps and 300 s. Profiles: the top level applies to every run, a preset replaces `scene`, `resolution` and `quiet` and appends arguments, explicit arguments win, and parsing is strict.
+      Settled at build time (user, 2026-09-26): the batch calls tools through the SDK's tool collection; `property` and `expression` assertions check once (a new `wait_for` `timeoutMs: 0`, allowed while paused); `no_errors` looks back to the previous `no_errors` or the batch start.
+
+      A `screenshot` assertion needs `compare_screenshot`'s `match`; at most 100 steps and 300 s.
+
+      Profiles: the top level applies to every run, a preset replaces `scene`, `resolution` and `quiet` and appends arguments, explicit arguments win, and parsing is strict.
 12. **The headless scene tools** (user, 2026-09-26, each the recommended option of a ranked choice; the rest settled from the explorer's probes). The remaining tools are 14: the reference's ninth node tool is `get_scene_tree`, shipped here as `get_scene_file_tree`.
     - **Values out.** A Node reads out as its path from the scene root (`.` for the root, null outside the scene). A Resource reads out, in the shared `bridge/godot_mcp_json.gd` so runtime `inspect_node` gains it too, as `{resource, uid?, class}` when external and `{class, subResource?, properties}` (its non-default stored properties) when built-in or unsaved.
 
@@ -388,7 +392,11 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
       A profile row is a number for both modes or `{headless?, windowed?}`, read for the run's mode (`options.windowed`), so a row sized for the one-step headless run does not kill a windowed capture run of the same scene; the mode the object leaves out derives its ceiling.
 
       One batch's ceiling is the call's array entry, else the call's value for the scene, else the profile's row for the mode, else derived. The CLI writes the array as `--ceiling <scene>#<batch>=<seconds|derived>` (0-based, split at the last `#`), and `<scene>=derived` for `null`. Rejected: one ceiling sized for the largest batch (it lets a hung small batch run long), and a profile row per batch (the batches are a call's choice, the profile's row is the scene's standing one).
-    - **A scene can be played as several batches, each in a fresh game, in one call** (GMCP-483; an orchestrator decision): an `options.steps` map value given as an array of lists plays the scene once per list, each its own scene plan and result entry (`batch`, `batches`) and its own session `<Scene>.batch<i>`, so a batch's output stays readable after the next batch runs; at most 100 batches a scene, since each is one fresh game run in turn and one entry in a result that stays near 40 KB at 100 green entries (`ScratchView` shrinks only details and watch), the whole result also being written to `scratch-result-*.json`.
+    - **A scene can be played as several batches, each in a fresh game, in one call** (GMCP-483; an orchestrator decision): an `options.steps` map value given as an array of lists plays the scene once per list, each its own scene plan and result entry (`batch`, `batches`) and its own session `<Scene>.batch<i>`, so a batch's output stays readable after the next batch runs.
+
+      At most 100 batches a scene, since each is one fresh game run in turn and one entry in a result that stays near 40 KB at 100 green entries (`ScratchView` shrinks only details and watch).
+
+      The whole result is also written to `scratch-result-*.json`.
 
       Rejected: restarting the game inside one scene entry (a ceiling and a verdict spanning two games), and listing a scene twice in `scenes` (every name-keyed option would apply to both copies alike).
     - **A scene's memory can be bounded too** (GMCP-483; an orchestrator decision): `options.memoryCeilings` and `scratch.memoryCeilings` `{<scene>: megabytes}`, the call's winning, read the game process's private bytes about once a second while the steps play and kill the scene past it, its reason naming the ceiling, the reading and what set it.
@@ -433,7 +441,13 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       A wait that ends with under half its guard of game time at the scene's time scale played reports the game's clock standing still. A scene's ceiling counts an until step at its own guard plus 10 s in place of its pace.
 
-      `GetStepUntil` is read once for each played step before the first step plays, before the ceiling's clock starts, then cached; a read that failed or logged an error is not cached and is read again at that step's play, and what such an early read logged or printed goes to stderr as warnings and is also kept per step (`_earlySkipped` in `ScratchRun`): at the step's play, the entries its own read does not log again (a multiset match on type, message, file, line and function, `ScratchRun.Unreproduced`) join that step's errors (`WithUnreproducedEarly`) and fail it, so an error from another thread or a timer is never lost; the step's failure text is judged on its own window only, so an early entry never replaces an unmet until's text.
+      `GetStepUntil` is read once for each played step before the first step plays, before the ceiling's clock starts, then cached; a read that failed or logged an error is not cached and is read again at that step's play.
+
+      What such an early read logged or printed goes to stderr as warnings and is also kept per step (`_earlySkipped` in `ScratchRun`).
+
+      At the step's play, the entries its own read does not log again (a multiset match on type, message, file, line and function, `ScratchRun.Unreproduced`) join that step's errors (`WithUnreproducedEarly`) and fail it, so an error from another thread or a timer is never lost.
+
+      The step's failure text is judged on its own window only, so an early entry never replaces an unmet until's text.
 
       Rejected: charging them to the first played step or to the boot, which is judged before the reads run. A step that hangs, or whose until is refused, is red and stops the scene even under `keepGoing`, since the next `PlayStep` would start on a step still running.
 
@@ -470,7 +484,9 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       `frame_work_ms` is `process_frame` to `RenderingServer.frame_pre_draw`, since `frame_post_draw` follows the swap that vsync blocks and the engine's iteration start is not bound to scripts. Ruled out: a separate monitor tool, per-viewport render times (the watch would change a rendering setting) and the `time/*` monitors as they are.
     - **`watch` is destructive with a `read` class override**, since expressions, custom monitors and `options.call` run game code.
-    - **Settled for its first landing**: a track kind and its result key arrive with the step that implements them; a `stop` with no watch is refused; `start` with `options.call` answers after the first frame, carrying the call's value or failure; a start on a paused game is accepted; the bridge holds a started watch's deadline (`deadlineMs`); a detach drops a running watch; a track is keyed by its `name`, else its node and property, and two tracks on one key are refused; `minDelta` applies to numbers and vectors only; a watch outlives the `batch_drive` that started it.
+    - **Settled for its first landing**: a track kind and its result key arrive with the step that implements them; a `stop` with no watch is refused; `start` with `options.call` answers after the first frame, carrying the call's value or failure; a start on a paused game is accepted.
+
+      The bridge holds a started watch's deadline (`deadlineMs`); a detach drops a running watch; a track is keyed by its `name`, else its node and property, and two tracks on one key are refused; `minDelta` applies to numbers and vectors only; a watch outlives the `batch_drive` that started it.
     - **Every kept item ends with `at`, its drive time** (GMCP-47, question 8 (a) of [plans/archive/multi-process-drives.md](./plans/archive/multi-process-drives.md); the clock is decision 36). A property, expression or monitor point is `[frame, gameMs, value, at]`, a signal event `[frame, gameMs, node, signal, args, at]` and an audio voice `[frame, gameMs, event, path, info, at]`.
 
       `at` is null when its tick cannot be converted, so every item keeps its length, and the timeline carries one `clockErrorMs` beside `gameMs` and `wallMs`, left out when nothing converted. Monitor spikes and `heard` ranges stay frame-only.
@@ -492,7 +508,9 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       Ruled out for the conditions: `Engine.print_error_messages = false` (a global that also mutes the bridge's own logger, `core/io/logger.cpp` L258-265, losing real game errors in the same frame); splitting `and`/`or` in the bridge (`Expression` exposes no tree); and a null-safe helper input (new API surface).
 
-    - **A run-time failure that can never change ends the condition at once** (GMCP-502; an orchestrator decision): an expression whose failure is `Invalid named index '<name>' for base type Object` on the `node` input itself (`node.<name>` in the source), where that node has a script, no `_get`, and no such property, method or signal, ends the wait with an error, for every condition sharing the expression (`frame_control` `until`, `capture_frames` `options.start`, `batch_drive` waits, a scratch scene's until).
+    - **A run-time failure that can never change ends the condition at once** (GMCP-502; an orchestrator decision): an expression whose failure is `Invalid named index '<name>' for base type Object` on the `node` input itself (`node.<name>` in the source), where that node has a script, no `_get`, and no such property, method or signal, ends the wait with an error.
+
+      This holds for every condition sharing the expression (`frame_control` `until`, `capture_frames` `options.start`, `batch_drive` waits, a scratch scene's until).
 
       Only `node.<name>` on an Object base counts, since the failure is then fixed by the node's script alone; a failure on any other base (a null, a Dictionary, a child) can change with the game, and stays not met.
 
@@ -634,7 +652,11 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
     - The audio is the game process's own, through process loopback; a quiet or muted session gets no track and a warning. Ruled out: an `AudioEffectCapture` on the Master bus, which changes the game's bus layout while it records and puts PCM on the wire.
     - Quiet sessions are allowed, since the capture sees the hidden desktop; a quiet run's clip is silent and the warning says so.
     - The encoder is `h264_nvenc` when a one-frame test encode passes, else `libx264 -preset ultrafast`, else `h264_mf`, probed once per server and cached per ffmpeg path. Ruled out: always `libx264`, which spends CPU on a machine with a hardware encoder.
-    - Frames are stamped on arrival (`-use_wallclock_as_timestamps 1`), so an encoder that stalls over the stop or the deadline lengthens the clip's real span and loses no frame. nvenc runs without B-frames (`-bf 0`, in the encode and in the encoder's test encode): with them, decode order trails display order by two frames, an .mp4 track's duration is built from decode-order steps, and a gap among the clip's last two frames dropped out of the length ffprobe reads (measured). libx264 (`ultrafast`) and `h264_mf` use no B-frames.
+    - Frames are stamped on arrival (`-use_wallclock_as_timestamps 1`), so an encoder that stalls over the stop or the deadline lengthens the clip's real span and loses no frame.
+
+      nvenc runs without B-frames (`-bf 0`, in the encode and in the encoder's test encode): with them, decode order trails display order by two frames, an .mp4 track's duration is built from decode-order steps, and a gap among the clip's last two frames dropped out of the length ffprobe reads (measured).
+
+      libx264 (`ultrafast`) and `h264_mf` use no B-frames.
     - The default is 30 fps, `options.fps` taking 1 to 60, and the clip is cropped to the client area, the size `run_project` reports, so a clip's coordinates and a screenshot's agree. `stop` waits for the encoder before it returns the clip, which is written under `<project>/.godot/godot-mcp/recordings/`.
 36. **Drives across several processes** (GMCP-47; each the recommended option; the design and its spike are archived in [plans/archive/multi-process-drives.md](./plans/archive/multi-process-drives.md)). A networked game is driven as several sessions of one server: a host and a headless guest are two `run_project` sessions on one folder, beside a server that is not a Godot game.
     - **A second client is a session.** `run_project` with `engineArgs: ["--headless", "--resolution", "<the viewport size>"]` and its own `options.session` starts it, with its output captured and every runtime tool reaching it. Both sessions on the folder agree on `quiet` and `shutOutRealGamepads` (decision 10); a headless `run_project` stays bound by it, only `run_scratches` sessions are exempt.

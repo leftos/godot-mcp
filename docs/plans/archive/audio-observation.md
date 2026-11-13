@@ -161,17 +161,41 @@ The game runs uncapped and `gameMs` is clip time (TOOLS.md Recording), so voice 
 
 Each step lands with its tests, docs and changelog bullet, and passes the build, `gdlint`, `gdcomplexity`, `gdtest`, the unit tests and its itest class. Steps 2 and 3 reuse the summary and budget code of the watch's step 4 (monitor tracks, 42f1184).
 
-1. **Spike** (landed; no bridge edit; copies of InputProbe through `run.ps1 drive`, sampler nodes installed by `run_script`, sounds built in the script as `AudioStreamWAV` PCM tones on a bus added with `AudioServer.add_bus`): (i) in a quiet run, a 250 ms and a 50 ms tone: the frame `has_stream_playback` turns true and false against the tone's length, `finished`, and how many frames read Effects above -60 dB; the Dummy thread's burst period and drift over 60 s; (ii) the same in a watched run with `mute: true` (Master at -200, Effects reading); (iii) the same in a recording: end frames exact to one frame, peaks per frame; (iv) `frame_control` pause, a 1-frame and a 10-frame step, resume: `playing`, `stream_paused` and position each frame, and a `PROCESS_MODE_ALWAYS` player beside; (v) a `max_polyphony = 2` player played twice 100 ms apart: the playback id changes and `playing` does not; (vi) cost a frame of polling 200 idle and 20 playing players and 16 buses; (vii) a 2D player beyond `max_distance`; (viii) a fire-and-forget player added by `node_added`.
+1. **Spike** (landed; no bridge edit; copies of InputProbe through `run.ps1 drive`, sampler nodes installed by `run_script`, sounds built in the script as `AudioStreamWAV` PCM tones on a bus added with `AudioServer.add_bus`).
+
+   (i) In a quiet run, a 250 ms and a 50 ms tone: the frame `has_stream_playback` turns true and false against the tone's length, `finished`, and how many frames read Effects above -60 dB; the Dummy thread's burst period and drift over 60 s.
+
+   (ii) The same in a watched run with `mute: true` (Master at -200, Effects reading).
+
+   (iii) The same in a recording: end frames exact to one frame, peaks per frame.
+
+   (iv) `frame_control` pause, a 1-frame and a 10-frame step, resume: `playing`, `stream_paused` and position each frame, and a `PROCESS_MODE_ALWAYS` player beside.
+
+   (v) A `max_polyphony = 2` player played twice 100 ms apart: the playback id changes and `playing` does not.
+
+   (vi) Cost a frame of polling 200 idle and 20 playing players and 16 buses.
+
+   (vii) A 2D player beyond `max_distance`.
+
+   (viii) A fire-and-forget player added by `node_added`.
 
    Results into section 2's Status column, and the 93 ms and 81 ms figures of section 3 replaced by measured ones.
 2. **Voice tracks** (**Done**): `tracks.audio.players` with `under`, discovery and following (per question 3), the voice poll, `start`/`pause`/`resume`/`end` with reasons, paused-frame reads (per question 5), the start snapshot, `voiceCounts`, the fair-share budget.
 
-   Tests: `tests/bridge/test_watch_audio.gd` (gdtest with stub players only: `has_stream_playback`, `get_stream_playback()` returning a fresh RefCounted per play, `stream_paused` and a `finished` signal, since gdtest runs inside `_initialize` before the root is in the tree and a real player cannot play, `scene_tree.cpp` L586-591; polyphonic restart and the revert to an older voice; a freed player's `freed`; a paused player's `pause` without `end`; the real tone's `start` and `end` are proven by the itest); unit `WatchAudioValidationTests` (shape, `under` without `players`, ranges) and `WatchAudioTimelineTests` (fair shares, counts, the cut); itest `WatchAudioTests` on the shared InputProbe session (a tone played by `click` on a button whose handler plays it, `start` then `click` then `stop`; a pause across `frame_control`; a removed bus restored in cleanup), in the `time` group of `run.ps1` `$itestGroups` (`bridge/**` already maps to every group in `$itestRules`, first match, so the new module needs no row).
+   Tests: `tests/bridge/test_watch_audio.gd`, a gdtest with stub players only: `has_stream_playback`, `get_stream_playback()` returning a fresh RefCounted per play, `stream_paused` and a `finished` signal, since gdtest runs inside `_initialize` before the root is in the tree and a real player cannot play (`scene_tree.cpp` L586-591).
+
+   The test covers polyphonic restart and the revert to an older voice, a freed player's `freed` and a paused player's `pause` without `end`; the real tone's `start` and `end` are proven by the itest.
+
+   Unit `WatchAudioValidationTests` (shape, `under` without `players`, ranges) and `WatchAudioTimelineTests` (fair shares, counts, the cut).
+
+   Itest `WatchAudioTests` on the shared InputProbe session (a tone played by `click` on a button whose handler plays it, `start` then `click` then `stop`; a pause across `frame_control`; a removed bus restored in cleanup), in the `time` group of `run.ps1` `$itestGroups` (`bridge/**` already maps to every group in `$itestRules`, first match, so the new module needs no row).
 
    Docs: TOOLS.md's watch section (audio tracks, the offsets, the quiet-run caveat), the "Which tool for which job" row "Check that a sound played", SKILL.md, ARCHITECTURE.md (the Bridge row, the watch's row), the glossary terms below, README (a new capability), CHANGELOG.
 3. **Bus tracks** (**Done**): `buses`, `thresholdDb`, the peak summary and `heard` ranges, `volumeDb` and `mute` as `{first, last, changes}`, the Master-under-mute warning (`bridgeMuted`, `driver` and `mixRate` shipped with step 2, so this is the Master warning only), the `time_scale` warning.
 
-   Tests: gdtest `tests/bridge/test_watch_buses.gd` for the bus module (peaks fed through the `bus_peak` seam, since gdtest mixes nothing; the `heard` ranges are built in the bridge, so they are proven here), `WatchAudioValidationTests` (the bus checks), `WatchAudioTimelineTests` (only the server's `heard` cut), `WatchAudioTests` (an added bus heard while a tone plays, unheard at -80 dB and when muted, Master under `mute`), and a recording case in `RecordingTests` (the `recording` group: a 500 ms tone's `start` and `end` 30 frames apart, give or take one, and its `heard` range).
+   Tests: gdtest `tests/bridge/test_watch_buses.gd` for the bus module (peaks fed through the `bus_peak` seam, since gdtest mixes nothing; the `heard` ranges are built in the bridge, so they are proven here).
+
+   The other tests are `WatchAudioValidationTests` (the bus checks), `WatchAudioTimelineTests` (only the server's `heard` cut), `WatchAudioTests` (an added bus heard while a tone plays, unheard at -80 dB and when muted, Master under `mute`), and a recording case in `RecordingTests` (the `recording` group: a 500 ms tone's `start` and `end` 30 frames apart, give or take one, and its `heard` range).
 4. **Done: the rulings archived**: the rulings moved into DECISIONS.md decision 29 and this file moved to the archive. delve already reads sound through the watch (`docs/development/scratch-scenes.md` L11); the muted-Master note and the suggestion to replace `FightSoundsScratch`'s and `MusicScratch`'s samplers went to delve-the-dungeon by inbox request.
 
 ## 7. Open questions

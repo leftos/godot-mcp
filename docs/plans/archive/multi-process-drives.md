@@ -93,7 +93,17 @@ A process a project needs beside its games (a .NET server, a mock backend) is de
 - **What reaches it**: `list_sessions` (kind `process`, `processId`, `live`), `get_debug_output`, `stop_project` (the job terminated at once: `{session, projectPath, kind: "process", exitCode, killed, alreadyExited}`), `restart_project` (stopped, started again with its stored command and arguments, `ready` waited on again), and `wait_for {output}` (part C).
 
   It writes no `override.cfg` and holds no folder reference. `SessionRegistry.Shutdown` ends it with the runs. A stopped process stays listed as a stopped run does.
-- **Refusals**: no `godot-mcp.json`: `No godot-mcp.json beside project.godot in <path>: run_process starts only the processes its "processes" section declares.`; an unknown name: `<path>/godot-mcp.json has no process 'srv'; it declares: server (the game server; pass --port <n> as args).`; a live session of that name: as `run_project`'s; an exit before ready: `The process 'server' exited (code 1) before a line matched 'Now listening on'; its last stderr lines: …` (up to 20); a ready timeout: `The process 'server' printed no line matching 'Now listening on' within 120 s of load-adjusted time, so it was stopped; its last output lines: …`; a runtime tool other than `wait_for {output}` on a process session: `Session 'server' is a process (dotnet), not a Godot game: only wait_for with an output condition, get_debug_output, restart_project, stop_project and list_sessions reach it.`
+- **Refusals**: no `godot-mcp.json`: `No godot-mcp.json beside project.godot in <path>: run_process starts only the processes its "processes" section declares.`
+
+  An unknown name: `<path>/godot-mcp.json has no process 'srv'; it declares: server (the game server; pass --port <n> as args).`
+
+  A live session of that name: as `run_project`'s.
+
+  An exit before ready: `The process 'server' exited (code 1) before a line matched 'Now listening on'; its last stderr lines: …` (up to 20).
+
+  A ready timeout: `The process 'server' printed no line matching 'Now listening on' within 120 s of load-adjusted time, so it was stopped; its last output lines: …`
+
+  A runtime tool other than `wait_for {output}` on a process session: `Session 'server' is a process (dotnet), not a Godot game: only wait_for with an output condition, get_debug_output, restart_project, stop_project and list_sessions reach it.`
 - **Annotations**: as `run_project` (neither read-only nor destructive, the `drive` class), so every agent that launches a game can launch its server.
 
 **Step 4's rulings** (orchestrator decisions under the autonomy rule; reversible here):
@@ -186,7 +196,9 @@ The server starts the members in listed order, each one's request written before
 - **What a group holds**: tool steps and the `wait`, `property`, `expression`, `state` and `screenshot` assertions. `fired` (it reads the nearest earlier tool step) and `no_errors` (step 7 changes its sessions) are refused in a group, and a group's tool members do not become the "earlier tool step" a later `fired` reads.
 - **One session twice**: checked statically on the names given (a member with no `session` counts as the batch's default) and again at run time on the resolved sessions, both with the design's sentence.
 - **Deadline**: the batch's one deadline; a group's time counts once.
-- **Refusals** (with the design's one-session-twice sentence): `step <n>: a parallel group takes 2 to 8 steps; got <k>.`, `step <n>: parallel steps cannot be nested; a group holds tool and assertion steps only.`, `step <n>: give exactly one of tool, assert and parallel.`, `step <n>: a parallel group takes parallel alone; got <fields>.`, `step <n>: parallel step <m>: <the member's own refusal>`, and for `fired`/`no_errors`, `step <n>: parallel step <m>: <assert> cannot run in a parallel group; put it after the group.`
+- **Refusals** (with the design's one-session-twice sentence).
+
+  The refusals read `step <n>: a parallel group takes 2 to 8 steps; got <k>.`, `step <n>: parallel steps cannot be nested; a group holds tool and assertion steps only.`, `step <n>: give exactly one of tool, assert and parallel.`, `step <n>: a parallel group takes parallel alone; got <fields>.`, `step <n>: parallel step <m>: <the member's own refusal>`, and for `fired`/`no_errors`, `step <n>: parallel step <m>: <assert> cannot run in a parallel group; put it after the group.`
 - **`{uiChanged: "now"}`** is accepted wherever `uiChanged` is, and takes its baseline when the wait's probe is built, replacing any baseline a gesture left pending. The refusal lives in `bridge/godot_mcp_conditions.gd` (`NO_UI_BASELINE`, `_ui_changed_probe`) and the baseline in `bridge/godot_mcp_input.gd`, not in `godot_mcp_time.gd`.
 - **Tests**: run order, the cancel and entry shapes in `BatchDispatchTests` with fake tools; the group checks in `BatchValidationTests`; the two-session cases in `MultiSessionTests`, since `BatchTests`' fixture holds one session: a failing host member cancelling a guest's 10 s wait (6a), and the guest's one-frame label armed before the host's click (6b), for which `net_probe.gd` gains a label shown for one frame.
 
@@ -283,12 +295,34 @@ So "the guest showed the host's lock-in 46 ms after the host's click step began"
 
 Each step lands with its tests, docs (TOOLS.md, SKILL.md, ARCHITECTURE.md, README.md for a new capability, the glossary's new terms) and changelog bullet, and passes the build, `gdlint`, `gdcomplexity`, `gdtest`, the unit tests and its itest class.
 
-1. **Done: spike** (no product code; results in section 2 and GMCP-47's comment; (v) left unmeasured, since an agent cannot make its client send two calls at once): (i) a headless InputProbe session takes `click`, `drag` and `get_ui_elements`, and the hit check names the right Control; (ii) ping round trips at 60 fps quiet, visible and headless, the minimum over five and over fifty, and the offset's spread over a minute; (iii) two InputProbe sessions networked through a throwaway `TCPServer` scene: the time from a host click to the guest's label, and whether a guest `wait_for` sent just before the host's click (two `run.ps1 drive` processes) ever misses a one-frame label; (iv) `dotnet run` of a throwaway console app in a kill-on-close job: its child ends with the job, and the server's kill takes it; (v) whether Claude Code runs two calls to one MCP server at once (delve L71's open question).
-2. **Done: a networked fixture and the second client as a session** (part A): `tests/fixtures/InputProbe/NetProbe.tscn` with a script that listens (`--net-host=<port>`) or connects (`--net-join=<port>`) over `StreamPeerTCP`, prints `[net] joined` and mirrors a button's press count into a label on the other game; itest `MultiSessionTests` (the `lifecycle` group): a host run and a `--headless --resolution <viewport size>` guest run on one folder, a `batch_drive` clicking in the host and waiting in the guest; TOOLS.md worked drive "Drive a host and a headless client", SKILL.md's Sessions paragraph; the glossary's session entry and TOOLS.md's profile example corrected (delve's server is not a Godot run).
+1. **Done: spike** (no product code; results in section 2 and GMCP-47's comment; (v) left unmeasured, since an agent cannot make its client send two calls at once).
+
+   (i) A headless InputProbe session takes `click`, `drag` and `get_ui_elements`, and the hit check names the right Control.
+
+   (ii) Ping round trips at 60 fps quiet, visible and headless, the minimum over five and over fifty, and the offset's spread over a minute.
+
+   (iii) Two InputProbe sessions networked through a throwaway `TCPServer` scene: the time from a host click to the guest's label, and whether a guest `wait_for` sent just before the host's click (two `run.ps1 drive` processes) ever misses a one-frame label.
+
+   (iv) `dotnet run` of a throwaway console app in a kill-on-close job: its child ends with the job, and the server's kill takes it.
+
+   (v) Whether Claude Code runs two calls to one MCP server at once (delve L71's open question).
+2. **Done: a networked fixture and the second client as a session** (part A): `tests/fixtures/InputProbe/NetProbe.tscn` with a script that listens (`--net-host=<port>`) or connects (`--net-join=<port>`) over `StreamPeerTCP`, prints `[net] joined` and mirrors a button's press count into a label on the other game.
+
+   Itest `MultiSessionTests` (the `lifecycle` group): a host run and a `--headless --resolution <viewport size>` guest run on one folder, a `batch_drive` clicking in the host and waiting in the guest.
+
+   The docs: TOOLS.md worked drive "Drive a host and a headless client", SKILL.md's Sessions paragraph; the glossary's session entry and TOOLS.md's profile example corrected (delve's server is not a Godot run).
 3. **Done: `wait_for {output}`** (part C): `WaitCondition` and the server-side wait in `RuntimeTools.Time.cs` sharing the polling of `ScratchRun.WaitForMarkersAsync`; unit `WaitOutputValidationTests` (one stream, `after`, the refusals, the regex timeout); itest in `TimeTests` on InputProbe printing lines from `run_script`, and in `MultiSessionTests` on the NetProbe guest's `[net] joined` (that class owns NetProbe); the batch `wait` assertion.
-4. **Done: process sessions** (part B, start and stop): `ProjectProfile` `processes` (strict parse; `ProjectProfileTests`), `RuntimeTools`-free `ProcessTools.cs` (`run_process`), `Session/ProcessSession.cs` (a `GodotSession` kind with no bridge, or a sibling the registry lists), the kill-on-close job, `list_sessions` kind, `stop_project`, `get_debug_output`, the runtime-tool refusal; unit `RunProcessValidationTests`; itest `ProcessSessionTests` (a new class in the `sessions` group) with a `pwsh -NoProfile -File ticker.ps1` fixture process under InputProbe printing a line a second and starting a child; `McpServerSmokeTests` and `ToolClassesTests` counts.
+4. **Done: process sessions** (part B, start and stop): `ProjectProfile` `processes` (strict parse; `ProjectProfileTests`), `RuntimeTools`-free `ProcessTools.cs` (`run_process`), `Session/ProcessSession.cs` (a `GodotSession` kind with no bridge, or a sibling the registry lists), the kill-on-close job, `list_sessions` kind, `stop_project`, `get_debug_output`, the runtime-tool refusal.
+
+   Unit `RunProcessValidationTests`.
+
+   Itest `ProcessSessionTests` (a new class in the `sessions` group) with a `pwsh -NoProfile -File ticker.ps1` fixture process under InputProbe printing a line a second and starting a child; `McpServerSmokeTests` and `ToolClassesTests` counts.
 5. **Done: process sessions** (ready and restart): `ready` at launch and from the call, the exit-before-ready and timeout refusals, `restart_project` on a process session; tests in `ProcessSessionTests` (a ticker that never prints the line, one that exits 1).
-6. **Done: parallel groups** (part D; 6a, the groups; 6b, `{uiChanged: "now"}`, whose UI change in the itest is the NetProbe guest's hidden `Flash` label appearing for one frame, since the UI snapshot compares visible Controls, not label text): `BatchStep.Parallel`, the checks (`BatchValidationTests`: sizes, one session twice, nesting), the run (members started in order, the cancel on a failure), entries and `failedAt.member`, `startMs`/`endMs` and `startedAt` from the drive clock; `{uiChanged: "now"}` in `godot_mcp_conditions.gd` with a gdtest in `tests/bridge/`; the run in `BatchDispatchTests`, and itest in `MultiSessionTests` (a failing member cancelling a 10 s wait; the NetProbe guest's one-frame label armed before the host's click).
+6. **Done: parallel groups** (part D; 6a, the groups; 6b, `{uiChanged: "now"}`, whose UI change in the itest is the NetProbe guest's hidden `Flash` label appearing for one frame, since the UI snapshot compares visible Controls, not label text).
+
+   `BatchStep.Parallel`, the checks (`BatchValidationTests`: sizes, one session twice, nesting), the run (members started in order, the cancel on a failure), entries and `failedAt.member`, `startMs`/`endMs` and `startedAt` from the drive clock.
+
+   `{uiChanged: "now"}` in `godot_mcp_conditions.gd` with a gdtest in `tests/bridge/`; the run in `BatchDispatchTests`, and itest in `MultiSessionTests` (a failing member cancelling a 10 s wait; the NetProbe guest's one-frame label armed before the host's click).
 
    Two commits, 6a and 6b (part D's rulings).
 7. **Done: errors elsewhere** (part E): `MarkErrorFeeds` over every named session, `errorsElsewhere` on entries, `no_errors {sessions}`; unit tests on the shaping; itest in `MultiSessionTests` (a host click whose message makes the guest `push_error`).
@@ -298,7 +332,9 @@ Each step lands with its tests, docs (TOOLS.md, SKILL.md, ARCHITECTURE.md, READM
 
 ## 7. Open questions
 
-Settled by the recommended option under CLAUDE.md's autonomy rule: 1 (a), processes declared in `godot-mcp.json` `processes` and started by name with `run_process`, amending decision 11; 2 (a), no process stop inside a batch; 3 (a), `{parallel: [...]}` groups of 2 to 8 steps, one per session; 4 (a), the members still running are cancelled when one fails; 5 (a), `errorsElsewhere` on each step plus `no_errors {sessions}`; 6 (a), an output wait sees lines after the call starts, with `after` to look back; 7 (a), `{uiChanged: "now"}`; 8 (a), the server's clock with per-session offsets, adding a fourth element to watch points (amending decision 29's point shape).
+Settled by the recommended option under CLAUDE.md's autonomy rule: 1 (a), processes declared in `godot-mcp.json` `processes` and started by name with `run_process`, amending decision 11; 2 (a), no process stop inside a batch; 3 (a), `{parallel: [...]}` groups of 2 to 8 steps, one per session; 4 (a), the members still running are cancelled when one fails.
+
+The rest settled the same way: 5 (a), `errorsElsewhere` on each step plus `no_errors {sessions}`; 6 (a), an output wait sees lines after the call starts, with `after` to look back; 7 (a), `{uiChanged: "now"}`; 8 (a), the server's clock with per-session offsets, adding a fourth element to watch points (amending decision 29's point shape).
 
 Every question is ruled. Steps 2 to 9 land on `main` one by one, with no feature branch, each with its own docs and changelog lines.
 

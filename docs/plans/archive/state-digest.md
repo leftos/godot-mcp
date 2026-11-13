@@ -80,11 +80,17 @@ A node's `error` says why it has no state: in the group with no state method, th
 
 The bridge answers a new command `state` in a new module, `bridge/godot_mcp_state.gd` (the `State` child). In one handler, with no `await`: it takes `get_nodes_in_group("mcp_state")`, keeps those under `node` and outside the bridge, and for each one calls `_mcp_state()` when `has_method` finds it and converts the value with the JSON module's `to_json`, cutting at `maxDepth` itself (the JSON module's own depth counts built-in resources only, `bridge/godot_mcp_json.gd` L70-71).
 
-The nodes whose script is a C# script and whose GDScript-visible methods have no `_mcp_state` are collected by instance id, and, when the server's request carries the helper's `extension` path (it does for a project with a C# assembly, as every `dotnet` request does), the handler calls the helper's `state` op once, in the same frame, through the `Dotnet` module's loaded callable, and puts the helper's reply string into its own reply untouched: GDScript's JSON parser would turn every number into a float (`bridge/godot_mcp_dotnet.gd` L4-6).
+The nodes whose script is a C# script and whose GDScript-visible methods have no `_mcp_state` are collected by instance id.
+
+When the server's request carries the helper's `extension` path (it does for a project with a C# assembly, as every `dotnet` request does), the handler calls the helper's `state` op once, in the same frame, through the `Dotnet` module's loaded callable, and puts the helper's reply string into its own reply untouched.
+
+The string stays untouched because GDScript's JSON parser would turn every number into a float (`bridge/godot_mcp_dotnet.gd` L4-6).
 
 The server parses both halves, merges them by path into tree order, applies `keys`, and enforces the size budget.
 
-The helper's `state` op (`{op: "state", ids, maxDepth}`) resolves each id with `GodotObject.InstanceFromId`, finds `_McpState` on the object's type (cached per type: an instance method with no parameters, any accessibility, declared on the game's type or a base up to the first GodotSharp type, as `cs_members` walks them), invokes it and writes the value with Core's `ValueWriter` through `GodotFormatter`, so a Godot object reads as `{"$node": path}` and a nested level past `maxDepth` as `"<depth limit: Type>"`, as `cs_get` writes them.
+The helper's `state` op (`{op: "state", ids, maxDepth}`) resolves each id with `GodotObject.InstanceFromId`, finds `_McpState` on the object's type (cached per type: an instance method with no parameters, any accessibility, declared on the game's type or a base up to the first GodotSharp type, as `cs_members` walks them), invokes it and writes the value with Core's `ValueWriter` through `GodotFormatter`.
+
+So a Godot object reads as `{"$node": path}` and a nested level past `maxDepth` as `"<depth limit: Type>"`, as `cs_get` writes them.
 
 ### Size bounds
 
@@ -160,14 +166,22 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot`, read t
 
   Unit tests in `tests/GodotMcp.Tests/Dotnet/StateMethodsTests.cs` over sample types in `DotnetSamples.cs`: private, internal, inherited, overridden, generic (refused), with parameters (refused), returning `Task` (read as an error).
 - **Helper** (`src/GodotMcp.Dotnet/`): `States.cs`, the `state` op (ids to objects, method, invoke, `ValueWriter` through `GodotFormatter`, one entry per id with `state` or `error`), added to `Helper.Dispatch` (`Helper.cs` L76-88).
-- **Server**: `src/GodotMcp.Server/Tools/RuntimeTools.State.cs`, `get_game_state` (`Destructive = true`, `ReadOnly = false`, `OpenWorld = false`) with `StateOptions` beside it; it sends `state` with the `extension` path when `CSharpBridge` finds a built C# assembly (the check the `cs_*` tools make, without refusing a project that has none), merges the helper's reply into the bridge's, applies `keys` and the budgets, and with `keep` flattens and stores; `SnapshotStore.cs`'s `Snapshot` gains its kind and `RuntimeTools.Snapshot.cs`'s `DiffSnapshotsAsync` re-reads by kind.
+- **Server**: `src/GodotMcp.Server/Tools/RuntimeTools.State.cs`, `get_game_state` (`Destructive = true`, `ReadOnly = false`, `OpenWorld = false`) with `StateOptions` beside it.
+
+  It sends `state` with the `extension` path when `CSharpBridge` finds a built C# assembly (the check the `cs_*` tools make, without refusing a project that has none), merges the helper's reply into the bridge's, applies `keys` and the budgets, and with `keep` flattens and stores.
+
+  `SnapshotStore.cs`'s `Snapshot` gains its kind and `RuntimeTools.Snapshot.cs`'s `DiffSnapshotsAsync` re-reads by kind.
 
   `ToolClasses.Overrides` gains the tool with its reason. Unit tests in `tests/GodotMcp.Tests/Tools/StateValidationTests.cs` (options ranges, empty keys, a bad `node`), `StateMergeTests.cs` (tree order across the two halves, the budgets, `omitted`, the preview cut, the flattening) and `SnapshotDiffTests.cs` (a state read against a subtree snapshot refused); `McpServerSmokeTests` gains the name and its annotations, and the agent-sweep tests its class.
 - **gdtests** (`tests/bridge/test_state.gd`, headless): nodes built in the test tree: group members with and without `_mcp_state`, a subtree filter, the bridge's own node in the group, a raising method, a coroutine, nested dictionaries past `maxDepth`, a cyclic Dictionary, C# nodes collected by id with the `Dotnet` child's callable replaced by a stub (its `meta_host` and `load_extension` are injectable, `godot_mcp_dotnet.gd` L35-39).
-- **itests**: a `StateTests` class on the shared InputProbe session, building its marked GDScript nodes with `run_script` (a `GDScript.new()` with its source set, attached to new nodes) so the fixture scene stays unchanged, asserting the read, `keys`, `maxNodes` and `omitted`, `keep` with `diff_snapshots` after a `set_property`, a read inside `frame_control` steps, and `batch_drive` running the tool; it joins the `reads` group (timing lane), which `RuntimeTools.State*.cs` already selects through the `RuntimeTools*.cs` rule (`run.ps1` L214).
+- **itests**: a `StateTests` class on the shared InputProbe session, building its marked GDScript nodes with `run_script` (a `GDScript.new()` with its source set, attached to new nodes) so the fixture scene stays unchanged, asserting the read, `keys`, `maxNodes` and `omitted`, `keep` with `diff_snapshots` after a `set_property`, a read inside `frame_control` steps, and `batch_drive` running the tool.
+
+  It joins the `reads` group (timing lane), which `RuntimeTools.State*.cs` already selects through the `RuntimeTools*.cs` rule (`run.ps1` L214).
 
   The C# half: `tests/fixtures/CsProbe` gains `CsState.cs` (a private `_McpState` returning a record, an internal one returning `Godot.Collections.Dictionary`, one throwing, one returning a `Task`) and one GDScript node in the group, and a `CSharpStateTests` class joins the `csharp` group (`run.ps1` L154), heavy as it builds CsProbe.
-- **Docs, each in its landing step's commit**: `docs/TOOLS.md` (a `get_game_state` section under "Inspect and change the running game", and a "Which tool for which job" row: see a game's state without a screenshot, instead of a sampling `run_script` or reading numbers off a shot), `skills/godot-mcp/SKILL.md` (read the game's state before a screenshot when it opts in; the convention, what to return and what not), `docs/ARCHITECTURE.md` (the tool table, the Bridge row's `State` child, the helper row's op list, `Snapshot`'s kinds under Session lifecycle), `docs/README.md` glossary (**State digest**, **State method**), `README.md` (a new capability), `CHANGELOG.md` `## Unreleased`.
+- **Docs, each in its landing step's commit**: `docs/TOOLS.md` (a `get_game_state` section under "Inspect and change the running game", and a "Which tool for which job" row: see a game's state without a screenshot, instead of a sampling `run_script` or reading numbers off a shot), `skills/godot-mcp/SKILL.md` (read the game's state before a screenshot when it opts in; the convention, what to return and what not).
+
+  The commit also covers `docs/ARCHITECTURE.md` (the tool table, the Bridge row's `State` child, the helper row's op list, `Snapshot`'s kinds under Session lifecycle), `docs/README.md` glossary (**State digest**, **State method**), `README.md` (a new capability), `CHANGELOG.md` `## Unreleased`.
 - **Game side, after the release**: delve marks `Combat` (turn, phase, the question, each seat's and enemy's hit points and statuses from `ShownView`) and the `Net` autoload (session settings such as `FightAnimationSpeed`, what is in flight); opening-hand gives `ScratchScene` an `_McpState` (step index, step count, status line) and `OverworldScratch` its cell and facing. Both through each repo's own plan and the `godot-mcp-docs-sync` pass; this repo only files the suggestion.
 
 ## 6. Open questions for the user
@@ -216,7 +230,11 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
    If question 2 picks (b) or (c), also count delve's fight-screen nodes read-only (`get_scene_tree`'s `total` on a running client) and time a walk over them. Results into section 3.
 2. **Landed: GDScript read**: the `State` module, the `state` command, `get_game_state` with `node`, `keys`, `maxNodes`, `maxDepth`, the budgets, `frame`, per-node errors and the hint; `test_state.gd`, `StateValidationTests`, `StateMergeTests`, `StateTests`; TOOLS.md, SKILL.md, ARCHITECTURE.md, glossary, README, changelog.
 3. **Landed: C# read** (every marked C# node goes to the helper, a `missing` answer falls back to Godot's `_mcp_state` in the same frame, a 5000-value budget per node, `csharpError` when the project has C# the helper cannot serve, the helper copy cached per build): `StateMethods`, the helper's `state` op, `call_now` on the `Dotnet` child, the inline call and the merge (question 7); the CsProbe fixture's `CsState.cs`, `StateMethodsTests`, `CSharpStateTests`; docs for the C# convention.
-4. **Landed: kept reads and diffs** (the flattener is the server's `StateFlatten.cs`, no Core file, since the helper never needs it; `$` keys a whole state that is not a non-empty Dictionary or Array; an errored node is the one leaf `error`; the mixed-kind refusal is `CheckSameKind`, unit-tested in `SnapshotDiffTests`; `diff_snapshots` became destructive with a `read` override, user 2026-09-30, since its live re-read runs state methods): `options.keep`, the flattening, `Snapshot`'s kind and the live re-read in `diff_snapshots`, the mixed-kind refusal; `StateFlattenTests`, `SnapshotDiffTests`, `StateTests` and `CSharpStateTests` additions.
+4. **Landed: kept reads and diffs** (the flattener is the server's `StateFlatten.cs`, no Core file, since the helper never needs it; `$` keys a whole state that is not a non-empty Dictionary or Array; an errored node is the one leaf `error`; the mixed-kind refusal is `CheckSameKind`, unit-tested in `SnapshotDiffTests`).
+
+   `diff_snapshots` became destructive with a `read` override, user 2026-09-30, since its live re-read runs state methods.
+
+   The step adds `options.keep`, the flattening, `Snapshot`'s kind and the live re-read in `diff_snapshots`, the mixed-kind refusal; `StateFlattenTests`, `SnapshotDiffTests`, `StateTests` and `CSharpStateTests` additions.
 5. **Done: waiting on a state key** (question 8): the `wait_for` state condition and its `batch_drive` assertion.
 6. **Done: the game repos told**: delve opts in (`Combat`, `Lobby`, `Rewards`, `ZoneMap`, `McpState.cs`); opening-hand's opt-in (`ScratchScene` and `OverworldScratch`) went to opening-hand by inbox request. The rulings are in DECISIONS.md decision 27 and this file moved to the archive.
 

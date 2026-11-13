@@ -10,7 +10,9 @@ Steps A2 to A5 are done: `until` and `input` on a step landed under GMCP-44 (Ste
 
 ### What an agent cannot do today
 
-The time tools are `frame_control` (pause, resume, step N drawn frames and stay paused, time scale; TOOLS.md L229-233), `wait_for` (a condition checked each frame on a running game, a frame-exact `options.screenshot`, and `options.call` at the start of a `gameMs` or `frames` wait only; L247-251), `capture_frames` (L235-239), `batch_drive` (a list of steps run server-side, stopping at the first failure; L355-359) and the `watch` of [timeline-watch.md](./timeline-watch.md) (decision 29), which records how values, signals and monitors move over a window and runs beside every other tool, steps included.
+The time tools are `frame_control` (pause, resume, step N drawn frames and stay paused, time scale; TOOLS.md L229-233), `wait_for` (a condition checked each frame on a running game, a frame-exact `options.screenshot`, and `options.call` at the start of a `gameMs` or `frames` wait only; L247-251), `capture_frames` (L235-239) and `batch_drive` (a list of steps run server-side, stopping at the first failure; L355-359).
+
+The last of them is the `watch` of [timeline-watch.md](./timeline-watch.md) (decision 29): it records how values, signals and monitors move over a window and runs beside every other tool, steps included.
 
 Checked against that set, four things had no tool; the first now has `wait_for` `options.then` (step A1):
 
@@ -38,7 +40,11 @@ What `batch_drive` already gives, and this design does not replace: `pause`, a `
 
 Neither repo writes a visibility probe by hand.
 
-What they do write: delve L95 compares renderers by passing `engineArgs: ["--rendering-driver", "vulkan"]` and measures a first-draw hitch as "the longest gap between two `process_frame`s" (the watch's `frame_ms`); delve L101 projects a die's mesh points "through the tray's `Camera3D.unproject_position`" in a `run_script` to measure a numeral's angle, an orientation question, not a visibility one; delve L93 notes the headless renderer "never triangulates", so a failed polygon logs nothing headless. opening-hand (2D) reads detail at 2x through `--resolution` (L53).
+What they do write: delve L95 compares renderers by passing `engineArgs: ["--rendering-driver", "vulkan"]` and measures a first-draw hitch as "the longest gap between two `process_frame`s" (the watch's `frame_ms`).
+
+Delve L101 projects a die's mesh points "through the tray's `Camera3D.unproject_position`" in a `run_script` to measure a numeral's angle, an orientation question, not a visibility one.
+
+Delve L93 notes the headless renderer "never triangulates", so a failed polygon logs nothing headless. opening-hand (2D) reads detail at 2x through `--resolution` (L53).
 
 The survey's own fit line (L128) names the cheapest step: the `--debug-collisions` family already passes through `engineArgs`, undocumented. The world-node aim of [input-targets.md](./input-targets.md) (decision 25) already explains why a node's origin is not on screen when an input tool aims at it: off-screen with the point and the rect, behind the camera, no current camera, hidden, not drawn by any viewport.
 
@@ -123,7 +129,11 @@ options.input: [{frame?: k, type: "key" | "mouse_button" | "mouse_motion" | "pan
 - With `until` met early, the events of later frames are not sent; the result adds `inputNotSent` (their count, a press-and-release entry counting as two) and, when anything is pressed, `held: {keys, mouseButtons, padButtons, actions}`.
 
   A pad event on a connected real pad adds `simulate_input`'s warning as `warning`. A failed step whose input leaves something held ends its error with `; held: <JSON>`. The schedule advances only with counted (drawn) frames. An unknown event type is refused with `simulate_input`'s `events[<i>] has type …` text.
-- Refusals: `options.input rides process frames; it cannot be used with unit physics.`; `options.input[<i>].frame is <k>, past the step's last frame <count - 1>.`; `options.input[<i>] presses and releases (pressed left out), so its release lands at frame <k + 1>, past the step's last frame <count - 1>; pass pressed: true and a release event, or raise count.`; `options.input[<i>] is a wait: a step's input is placed by frame; give the event a frame instead.`; `options.input[<i>] is click_element, a gesture that plays over frames of its own; in a step send mouse_button and mouse_motion events with x, y.`
+- Refusals: `options.input rides process frames; it cannot be used with unit physics.`; `options.input[<i>].frame is <k>, past the step's last frame <count - 1>.`.
+
+  Next: `options.input[<i>] presses and releases (pressed left out), so its release lands at frame <k + 1>, past the step's last frame <count - 1>; pass pressed: true and a release event, or raise count.`.
+
+  Last: `options.input[<i>] is a wait: a step's input is placed by frame; give the event a frame instead.`; `options.input[<i>] is click_element, a gesture that plays over frames of its own; in a step send mouse_button and mouse_motion events with x, y.`
 
 ### 3.4 How it sits with the other tools
 
@@ -144,11 +154,17 @@ options.input: [{frame?: k, type: "key" | "mouse_button" | "mouse_motion" | "pan
 ### 3.6 Render diagnosis
 
 - **Documentation first.** A TOOLS.md subsection "See why something is not drawn" under "See the game", with a line in SKILL.md:
-  - Collision shapes, paths, navigation and avoidance are launch flags: `run_project {engineArgs: ["--debug-collisions"]}` (also `--debug-paths`, `--debug-navigation`, `--debug-avoidance`, and `--debug-canvas-item-redraw` for what redraws in low-processor mode), or a `godot-mcp.json` preset (`"collisions": {"engineArgs": ["--debug-collisions"], "description": "collision shapes drawn"}`); they cannot be turned on mid-run (SceneTree.xml L266-276), so a running session needs `stop_project` then `run_project` with the flag.
+  - Collision shapes, paths, navigation and avoidance are launch flags: `run_project {engineArgs: ["--debug-collisions"]}` (also `--debug-paths`, `--debug-navigation`, `--debug-avoidance`, and `--debug-canvas-item-redraw` for what redraws in low-processor mode), or a `godot-mcp.json` preset (`"collisions": {"engineArgs": ["--debug-collisions"], "description": "collision shapes drawn"}`).
+
+    They cannot be turned on mid-run (SceneTree.xml L266-276), so a running session needs `stop_project` then `run_project` with the flag.
   - Draw modes are `Viewport.debug_draw` on the root: `set_property {node: "/root", property: "debug_draw", value: 3}` (overdraw), back to 0 afterwards; lighting and overdraw replace custom shaders, wireframe under Compatibility shows nothing unless the game generates wireframes before its meshes load, normal buffer needs Forward+ (`engineArgs: ["--rendering-method", "forward_plus"]` to try it on a Compatibility project).
   - A world node's on-screen point, or why it has none, comes from the input tools' world aim (`aimedAt`, or the off-screen, behind-camera, no-camera and hidden refusals); a `hover` reports it, and moves the pointer.
   - A screenshot baseline taken in one draw mode fails in another.
-- **A read tool, ruled out** (question 8, decision 31: it waits for a game repo to need one): `render_probe {node, session}` answering why a `CanvasItem` or `GeometryInstance3D` is not drawn: the visibility chain (the first hidden ancestor), the product of `modulate` alphas, `visibility_layer` against the viewport's `canvas_cull_mask` (2D) or `layers` against the camera's `cull_mask` (3D), the global AABB against the camera's frustum, near and far, the visibility range against the camera distance, and the projected rect against the viewport; read-only, no game code, reusing `godot_mcp_targets.gd`'s projection and viewport chain.
+- **A read tool, ruled out** (question 8, decision 31: it waits for a game repo to need one): `render_probe {node, session}` answering why a `CanvasItem` or `GeometryInstance3D` is not drawn.
+
+  The answer is the visibility chain (the first hidden ancestor), the product of `modulate` alphas, `visibility_layer` against the viewport's `canvas_cull_mask` (2D) or `layers` against the camera's `cull_mask` (3D), the global AABB against the camera's frustum, near and far, the visibility range against the camera distance, and the projected rect against the viewport.
+
+  It is read-only, no game code, reusing `godot_mcp_targets.gd`'s projection and viewport chain.
 
   No game repo writes such a probe by hand today (section 1).
 
@@ -189,24 +205,42 @@ Two independent halves; the step-until steps (A) and the render step (R) touch n
 2. **Done: A2, the step moves out** (GMCP-44): `bridge/godot_mcp_step.gd` takes L138-333 of `godot_mcp_time.gd` with no behaviour change, as input targets' step 1 moved target resolution. Tests: `test_time.gd`'s step tests move to `tests/bridge/test_step.gd` unchanged; itest `TimeTests` stays green unchanged; gdlint's line counts.
 3. **Done: A3, `options.until` on step** (GMCP-44): `StepOptions.Until`, the default count of 1000 with it, the `frames` and non-step refusals; the probe at each counted frame's draw (process) or re-pause tick (physics); `met`, `value`/`last`; `frame` on every step result.
 
-   Tests: unit `TimeValidationTests` (the refusals, the default count); gdtest `test_step.gd` (the check order: never before the first frame, at least one frame, met ends the loop at the draw that met); itest `TimeTests`: from paused, a counter node stepped until it reaches N stops with `processFrames` the frames it took and an `inspect_node` after reads N; from running; never met answers `met: false` after `count` frames, paused; a signal until; `screenshot` on the met frame; inside a `watch`, the watch's frames end at the step's `frame`.
+   Tests: unit `TimeValidationTests` (the refusals, the default count); gdtest `test_step.gd` (the check order: never before the first frame, at least one frame, met ends the loop at the draw that met).
+
+   Itest `TimeTests`: from paused, a counter node stepped until it reaches N stops with `processFrames` the frames it took and an `inspect_node` after reads N; from running; never met answers `met: false` after `count` frames, paused; a signal until; `screenshot` on the met frame; inside a `watch`, the watch's frames end at the step's `frame`.
    - Ruling: a signal until reports `args` (and no `last`), as a signal wait does.
    - Ruling: `godot_mcp_time.gd` keeps the running mark, the deadline (`_begin`, `_next`), `cancel` and the guard against a second step; `godot_mcp_step.gd`, its `Step` child, runs every step.
    - Ruling: the `signal_probe` that `wait_for` builds is shared by the step's until, so a signal condition is connected and released the same way in both.
 4. **Done: A4, `options.input` on step** (GMCP-44, GMCP-134): the event list with `frame`, its expansion and checks, the input gate; the per-frame schedule through `dispatch`, `_gesture_playing`, the capture, the `uiChanged` baseline, `inputNotSent`, `held`.
 
-   Tests: unit `StepInputValidationTests` (every refusal, the omitted-`pressed` expansion, the 100-event cap); gdtest `test_step.gd` (the schedule by frame, events left unsent after an early `until`); itest `StepInputTests` (`time` group) with a `run_script`-built node recording, per frame, `is_action_just_pressed("probe_jump")` in `_process`, `_input` arrivals of a P key and a physics-tick just-pressed: a `probe_jump` action riding frame 3 of a 6-frame step is just-pressed in the stepped frame 3's `_process` and in the next frame's first tick; the control case, the action sent by `simulate_action` while paused and then a step, is never just-pressed (the engine fact of section 2, kept as a test); `until: {uiChanged: true}` with a riding key whose handler (a `run_script`-built node) shows a panel stops on the frame the panel is drawn.
+   Tests: unit `StepInputValidationTests` (every refusal, the omitted-`pressed` expansion, the 100-event cap); gdtest `test_step.gd` (the schedule by frame, events left unsent after an early `until`).
+
+   Itest `StepInputTests` (`time` group) with a `run_script`-built node recording, per frame, `is_action_just_pressed("probe_jump")` in `_process`, `_input` arrivals of a P key and a physics-tick just-pressed.
+
+   A `probe_jump` action riding frame 3 of a 6-frame step is just-pressed in the stepped frame 3's `_process` and in the next frame's first tick.
+
+   The control case, the action sent by `simulate_action` while paused and then a step, is never just-pressed (the engine fact of section 2, kept as a test).
+
+   The last case: `until: {uiChanged: true}` with a riding key whose handler (a `run_script`-built node) shows a panel stops on the frame the panel is drawn.
 5. **Done: A5, the rulings archived**: the rulings moved into DECISIONS.md decisions 22 and 38 and this file moved to the archive; delve's slow-motion poll script already reads as `options.then` (`docs/development/driving-the-client.md` L267-271), so no request went to it.
 6. **R1, render docs** (open, carried on in [render-diagnosis.md](../render-diagnosis.md)): the TOOLS.md subsection, the SKILL.md line and the preset example of section 3.6, proven by a drive (`pwsh run.ps1 drive -Calls .tmp/drive-debug-draw.json`) on an InputProbe copy: a launch with `--debug-collisions` and a `run_script`-built `Area2D` against a launch without, compared through `compare_screenshot` (changed pixels in the shape's rect).
 
    Then `set_property {node: "/root", property: "debug_draw", value: 3}` read back and screenshotted under Compatibility, and again with `--rendering-method forward_plus`; whether a node added after start draws its collision shape.
 
    The drive's findings replace section 2's unverified note before the docs land. No code, no itest.
-7. **R2, `render_probe`: dropped**, since question 8 ruled documentation only (decision 31); kept for the record of what it would have been: `bridge/godot_mcp_render.gd` (the `Render` child), `RuntimeTools.Render.cs`, `ReadOnly = true` (it reads engine state and runs no game code, so the read-only agents get it at the next sweep); gdtest `tests/bridge/test_render.gd` for the 2D chain and, if the headless display server allows a `Camera3D` projection (input targets' gdtests check the same), the frustum math; itest `RenderProbeTests` in the `reads` group (a hidden ancestor, a layer the camera culls, a node behind the camera, outside the far plane, past its visibility range, a zero alpha); `McpServerSmokeTests` and `BatchValidationTests` counts.
+7. **R2, `render_probe`: dropped**, since question 8 ruled documentation only (decision 31).
+
+   It is kept for the record of what it would have been: `bridge/godot_mcp_render.gd` (the `Render` child), `RuntimeTools.Render.cs`, `ReadOnly = true` (it reads engine state and runs no game code, so the read-only agents get it at the next sweep).
+
+   Gdtest `tests/bridge/test_render.gd` for the 2D chain and, if the headless display server allows a `Camera3D` projection (input targets' gdtests check the same), the frustum math.
+
+   Itest `RenderProbeTests` in the `reads` group (a hidden ancestor, a layer the camera culls, a node behind the camera, outside the far plane, past its visibility range, a zero alpha); `McpServerSmokeTests` and `BatchValidationTests` counts.
 
 ## 7. Open questions for the owner
 
-Ruled by the owner: 1 (a), options on `frame_control` step and `wait_for`; 2 (b), pausing on a condition both in the step's `until` and in `wait_for`'s `then.pause` (GMCP-100 builds the second); 3 (a), `then` carries `call` and `timeScale`, and `pause` with 2 (b); 4 (a), a failing `then.call` fails the wait and leaves `timeScale` unset; 5 (a), riding input sent at the stepped frame's `process_frame`; 6 (a), no report on the met frame; 7 (a), `batch_drive`'s `wait` assertion unchanged; 8 (a), render diagnosis as documentation only (decision 31); 9 (a), GMCP-7 first as step A1, then step-until and render docs as two issues.
+Ruled by the owner: 1 (a), options on `frame_control` step and `wait_for`; 2 (b), pausing on a condition both in the step's `until` and in `wait_for`'s `then.pause` (GMCP-100 builds the second).
+
+The owner also ruled: 3 (a), `then` carries `call` and `timeScale`, and `pause` with 2 (b); 4 (a), a failing `then.call` fails the wait and leaves `timeScale` unset; 5 (a), riding input sent at the stepped frame's `process_frame`; 6 (a), no report on the met frame; 7 (a), `batch_drive`'s `wait` assertion unchanged; 8 (a), render diagnosis as documentation only (decision 31); 9 (a), GMCP-7 first as step A1, then step-until and render docs as two issues.
 
 Every question is ruled.
 

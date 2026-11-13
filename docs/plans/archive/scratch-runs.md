@@ -80,7 +80,11 @@ From the map of `src/GodotMcp.Server/Session/ScratchRun.cs` and `Tools/ScratchTo
 
 ## 4. Steps
 
-1. **GMCP-181**: `GetStepUntil` (part A), and `wait_for {signal}` with `options.call` in `bridge/godot_mcp_time.gd` and the server's refusal; a gdtest for the signal-with-call wait; tests in `ScratchVerdictTests`/`ScratchRunOrderTests` where pure, itest `ScratchRunnerTests` with new fixture scenes (GDScript scenes whose steps end on a signal and on an expression, green well under their pace; one whose until is never met; one whose until is refused; a C# one in CsProbe), and a `TimeTests` case for the signal-with-call wait; TOOLS.md (run_scratches and wait_for), SKILL.md, ARCHITECTURE.md, the glossary's Pace and Scratch protocol, DECISIONS.md decision 28.
+1. **GMCP-181**: `GetStepUntil` (part A), and `wait_for {signal}` with `options.call` in `bridge/godot_mcp_time.gd` and the server's refusal; a gdtest for the signal-with-call wait.
+
+   Tests in `ScratchVerdictTests`/`ScratchRunOrderTests` where pure, itest `ScratchRunnerTests` with new fixture scenes (GDScript scenes whose steps end on a signal and on an expression, green well under their pace; one whose until is never met; one whose until is refused; a C# one in CsProbe), and a `TimeTests` case for the signal-with-call wait.
+
+   The docs are TOOLS.md (run_scratches and wait_for), SKILL.md, ARCHITECTURE.md, the glossary's Pace and Scratch protocol, DECISIONS.md decision 28.
 
    Reply to opening-hand and delve-the-dungeon by inbox.
 2. **GMCP-200**: background runs and `scratch_status` (part B); unit tests on the status writer and the remaining-time figure; itest in `ScratchRunnerTests` (a run started in the background, its status read mid-run, its completion line, a stop); TOOLS.md, SKILL.md, ARCHITECTURE.md (tool table, session lifecycle at shutdown), README.md, the glossary (background run, run id, status file, completion line), a new DECISIONS.md entry. Reply to delve-the-dungeon by inbox.

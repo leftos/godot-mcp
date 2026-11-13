@@ -29,7 +29,9 @@ Build after GMCP-552 lands (both edit `ScratchRun.cs`; no shared function).
 
 ## Explorer's map
 
-PROTOCOL: 1 overlay: none (docs/agents/explore.md absent), read CLAUDE.md rules via the harness (.claude/rules/tool-docs.md seen); 2 README: not re-read (the earlier map's read stands; unmeasured); 3 Task Index: row "A scratch step's feed window" (ARCHITECTURE.md:79) found and used, no row for the line windows or the early reads; 4 design docs: DECISIONS.md grep only (no window or marker decision found), plans/ not read; 5 source: done (ScratchRun.cs, ErrorFeed.cs, bridge time/logger/bridge/signal_wait, Godot 4.7.2 logger.cpp, print_string.cpp, os.cpp, error_macros.cpp); 6 search: used for tests, fixtures, docs; stated below.
+PROTOCOL: 1 overlay: none (docs/agents/explore.md absent), read CLAUDE.md rules via the harness (.claude/rules/tool-docs.md seen); 2 README: not re-read (the earlier map's read stands; unmeasured); 3 Task Index: row "A scratch step's feed window" (ARCHITECTURE.md:79) found and used, no row for the line windows or the early reads.
+
+PROTOCOL, continued: 4 design docs: DECISIONS.md grep only (no window or marker decision found), plans/ not read; 5 source: done (ScratchRun.cs, ErrorFeed.cs, bridge time/logger/bridge/signal_wait, Godot 4.7.2 logger.cpp, print_string.cpp, os.cpp, error_macros.cpp); 6 search: used for tests, fixtures, docs; stated below.
 
 All paths under X:\dev\godot-mcp (main, HEAD dac19dcc, includes GMCP-537(a) and GMCP-545). Line numbers are for this commit; the gmcp-552 tree moves ScratchRun.cs lines slightly.
 
@@ -61,7 +63,11 @@ Errors:
 
 # 2. What the bridge knows when the pace's wait is met
 
-- `wait_for` (bridge/godot_mcp_time.gd:474-496): fires `_on_godot_mcp_wait_started(kind)` on the group at the start (:477), then kind gameMs goes `_wait_for_game_time` (:545): a clock ticked in `process_frame` (`_tick_game_clock` :580, `advance_game_clock` :589: `seen` is the game time through the PREVIOUS frame, because SceneTree::process emits process_frame before the frame's nodes, timers and tweens, per the comment :585-588 citing scene/main/scene_tree.cpp L712-728), polled by `_poll_capturing` (:610) -> `_poll_and_capture` (:648) -> `_poll` (:681).
+- `wait_for` (bridge/godot_mcp_time.gd:474-496): fires `_on_godot_mcp_wait_started(kind)` on the group at the start (:477), then kind gameMs goes `_wait_for_game_time` (:545).
+
+  It is a clock ticked in `process_frame` (`_tick_game_clock` :580, `advance_game_clock` :589: `seen` is the game time through the PREVIOUS frame, because SceneTree::process emits process_frame before the frame's nodes, timers and tweens, per the comment :585-588 citing scene/main/scene_tree.cpp L712-728).
+
+  The clock is polled by `_poll_capturing` (:610) -> `_poll_and_capture` (:648) -> `_poll` (:681).
 
   The check that meets runs in the process_frame emission of frame N after the tick (the tick connected first at :554, before the poll's await at :686). Signal and probe waits go through the same `_poll_capturing` (signal_wait.gd:46) and `_poll` (:69 is the signal "start" poll, not an end).
 - At that point the bridge has: `Engine.get_process_frames()` (used by `_frames_of`, bridge.gd:981-990, and in then.call, time.gd:831), the wait's game ms (`clock["seen"]`, `_add_game_ms` :637 only with limitGameMs), `ticksUsec` (:696). The result is returned to `wait_for` then `_reply_ok` -> `_flush_errors` -> send, all in that frame unless a screenshot capture awaits (`_with_capture` :660) or `then` runs (`_finish_then`).
@@ -175,8 +181,18 @@ Count: 27 sites, 15 changing (1, 3, 5-11, 18, 23, 25 and the new test fixtures n
 # 6. Tests
 
 Existing tests that pin the split (all must still pass; none asserts a wall-clock figure):
-- Itest: `ScratchRunnerTests.ALateLineFailsTheStepItPrintedIn` (ScratchRunnerTests.cs:282, fixture scratch_late_line.gd: line in the first process frame after PlayStep of step 1, step 1's pace not yet elapsed: stays step 1); `AnErrorInThePaceAfterTheLastStepIsRedInTheExit` (:217, scratch_late_error.gd, 0.5 s timer from the hold's start: exit); `AStepThatPushesAnErrorIsTheFailedStepAndTheRestNeverPlay` (:262); `ScratchPaceRunTests.TheWaitAfterTheLastStepIsThatStepsOwnPace` (:97), `AnExitHoldIsTheWaitAfterTheLastStepInPlaceOfItsPace` (:118), `ASceneThatQuitsWithCodeZeroInsideItsExitHoldIsGreen` (:137); `ScratchRunnerTests` quit test at :326 (scratch_quit.gd) and `ScratchStepsRunTests` :72; `ScratchExpectRunTests` :32 (exit line); the whole `ScratchUntilRunTests` (36 references to the window functions); `ScratchLookRunTests`.
-- Unit: `ScratchVerdictTests.AStepsWindowEndsAtEachStreamsMarkerNotAtTheOtherStreamsCount` (:1013), `AMarkerBeforeTheWindowsStartOrFromAnotherWindowIsNotItsEnd` (:1043), `OnlyThisRunsMarkersAreDroppedFromAWindow` (:1058), `AnErrorFlushedBetweenTwoWindowsLandsInExactlyTheNextOne` (:1072), `TakingErrorsWithWarningsOffLeavesTheMarkAtTheLastErrorTaken` (:151), `TakingErrorsWithWarningsOnTakesBothAndMovesTheMarkPastBoth` (:188), `AMissingStdoutMarkerPointsAtBuffering` (:1111); `ScratchUntilTests` `Unreproduced` tests (:534-576); `ScratchBoundsTests.cs:39` MarkerTimeout.
+- Itest: `ScratchRunnerTests.ALateLineFailsTheStepItPrintedIn` (ScratchRunnerTests.cs:282, fixture scratch_late_line.gd: line in the first process frame after PlayStep of step 1, step 1's pace not yet elapsed: stays step 1).
+
+  `AnErrorInThePaceAfterTheLastStepIsRedInTheExit` (:217, scratch_late_error.gd, 0.5 s timer from the hold's start: exit); `AStepThatPushesAnErrorIsTheFailedStepAndTheRestNeverPlay` (:262).
+
+  `ScratchPaceRunTests.TheWaitAfterTheLastStepIsThatStepsOwnPace` (:97), `AnExitHoldIsTheWaitAfterTheLastStepInPlaceOfItsPace` (:118), `ASceneThatQuitsWithCodeZeroInsideItsExitHoldIsGreen` (:137).
+
+  `ScratchRunnerTests` quit test at :326 (scratch_quit.gd) and `ScratchStepsRunTests` :72; `ScratchExpectRunTests` :32 (exit line); the whole `ScratchUntilRunTests` (36 references to the window functions); `ScratchLookRunTests`.
+- Unit: `ScratchVerdictTests.AStepsWindowEndsAtEachStreamsMarkerNotAtTheOtherStreamsCount` (:1013), `AMarkerBeforeTheWindowsStartOrFromAnotherWindowIsNotItsEnd` (:1043), `OnlyThisRunsMarkersAreDroppedFromAWindow` (:1058).
+
+  `AnErrorFlushedBetweenTwoWindowsLandsInExactlyTheNextOne` (:1072), `TakingErrorsWithWarningsOffLeavesTheMarkAtTheLastErrorTaken` (:151), `TakingErrorsWithWarningsOnTakesBothAndMovesTheMarkPastBoth` (:188), `AMissingStdoutMarkerPointsAtBuffering` (:1111).
+
+  `ScratchUntilTests` `Unreproduced` tests (:534-576); `ScratchBoundsTests.cs:39` MarkerTimeout.
 - Change: none needs rewriting if `TakeErrors` keeps its signature and the labelled take is an overload. Fixture comments (scratch_late_error.gd:3-6 etc.) updated to say the margin is gone.
 New tests (no sleeps, no wall-clock; each waits on events or asserts on the order of lines/entries):
 - gdtest `test_time.gd`: `test_a_wait_with_an_end_marker_prints_it_to_stdout_and_stderr_and_marks_the_logger_when_it_ends` (stand-in tree, the logger's pending list holds a mark entry after the entries logged before the met check and before the entries logged after it); `test_an_unmet_wait_still_prints_its_end_marker`; `test_a_shot_wait_met_before_its_limit_prints_no_marker` (endMarkerAtGameMs); `test_a_wait_without_an_end_marker_prints_nothing`; `test_the_result_says_endMarked`.
@@ -191,7 +207,11 @@ New tests (no sleeps, no wall-clock; each waits on events or asserts on the orde
 
 # 7. Docs
 
-- docs/TOOLS.md `run_scratches`: add the rule in the paragraph at :602 (it says "since the step began" and "in the step's window" with no rule for what lies between steps): "A step owns every stdout or stderr line and every error in the error feed up to the moment its pace wait saw the pace elapsed (the first frame whose process_frame check finds the clock at the pace, before that frame's `_process` calls, timers and tweens); what the game prints or raises after it, including from `GetStatus`, belongs to the next step, or the exit for the last.
+- docs/TOOLS.md `run_scratches`: add the rule in the paragraph at :602 (it says "since the step began" and "in the step's window" with no rule for what lies between steps).
+
+  The rule reads: "A step owns every stdout or stderr line and every error in the error feed up to the moment its pace wait saw the pace elapsed (the first frame whose process_frame check finds the clock at the pace, before that frame's `_process` calls, timers and tweens).
+
+  What the game prints or raises after it, including from `GetStatus`, belongs to the next step, or the exit for the last.
 
   A line or error from another thread in that same instant may fall on either side." Add the exit hold and `until` cut sentences. Keep the note at :810 (stdout buffering) and add that the marker is printed by the bridge.
 - docs/ARCHITECTURE.md: Task Index row at :79 (add `bridge/godot_mcp_time.gd` `_poll_and_capture`, `godot_mcp_logger.gd` `mark`, `ErrorFeed.Receive`, new test names); the errors-frame paragraph at :223 (frame may carry a "mark" entry; `wait_for`'s new `endMarker`/`endMarkerAtGameMs` params and `endMarked` result); describe the window closing wherever the run_scratches runner is described (not located by line in this run; long lines omitted by Grep: unmeasured).
@@ -225,7 +245,13 @@ New tests (no sleeps, no wall-clock; each waits on events or asserts on the orde
 - docs/ARCHITECTURE.md:79 Task Index row lacks `ReadUntilEarlyAsync`, `WithUnreproducedEarly` (the earlier map's drift; still open).
 
 # TASK INDEX GAP
-- Task "a line or error lands in the wrong step / the step's window ends too late or too early": `src/GodotMcp.Server/Session/ScratchRun.cs` (`PlayStepAsync`, `PlayPacedAsync`, `PlayToShotAsync`, `PlayInsideUntilAsync`, `WaitAsync`, `PaceAfterAsync`, `CloseWindowAsync`, `WaitForMarkersAsync`, `TakeErrors`), `Session/ErrorFeed.cs` (`Receive`, `Add`, `Parse`), `bridge/godot_mcp_time.gd` (`wait_for`, `_poll_and_capture`, `_poll`), `bridge/godot_mcp_logger.gd` (`_log_error`), `bridge/godot_mcp_bridge.gd` (`_flush_errors`, `_reply_ok`), fixtures `scratch_probe.gd`, `scratch_late_line.gd`, `scratch_late_error.gd`; tests ScratchVerdictTests, ScratchRunnerTests, ScratchPaceRunTests, tests/bridge test_time.gd, test_logger.gd.
+- Task "a line or error lands in the wrong step / the step's window ends too late or too early": `src/GodotMcp.Server/Session/ScratchRun.cs` (`PlayStepAsync`, `PlayPacedAsync`, `PlayToShotAsync`, `PlayInsideUntilAsync`, `WaitAsync`, `PaceAfterAsync`, `CloseWindowAsync`, `WaitForMarkersAsync`, `TakeErrors`), `Session/ErrorFeed.cs` (`Receive`, `Add`, `Parse`).
+
+  The bridge side: `bridge/godot_mcp_time.gd` (`wait_for`, `_poll_and_capture`, `_poll`), `bridge/godot_mcp_logger.gd` (`_log_error`), `bridge/godot_mcp_bridge.gd` (`_flush_errors`, `_reply_ok`).
+
+  Fixtures `scratch_probe.gd`, `scratch_late_line.gd`, `scratch_late_error.gd`.
+
+  Tests ScratchVerdictTests, ScratchRunnerTests, ScratchPaceRunTests, tests/bridge test_time.gd, test_logger.gd.
 
   This answer took about 35 reads and searches beyond the Task Index row and one doc.
 

@@ -4,7 +4,9 @@ Design draft for the plan item "One timeline watch over several properties and s
 
 ## 1. Problem
 
-An agent that wants to know how a game moved over a stretch of time (when a dialog went, where the focus landed, when a beat started, whether a frame hitched) has four tools today, each for one thing: `monitor_property` samples one property of one node for up to 600 frames and is refused while the game is paused or a step runs (TOOLS.md L232-236); `wait_for {signal}` catches one emission of one signal (L238-242); `capture_frames` saves images at set moments (L226-230); a recording keeps a video (L368-372).
+An agent that wants to know how a game moved over a stretch of time (when a dialog went, where the focus landed, when a beat started, whether a frame hitched) has four tools today, each for one thing.
+
+They are `monitor_property` samples one property of one node for up to 600 frames and is refused while the game is paused or a step runs (TOOLS.md L232-236); `wait_for {signal}` catches one emission of one signal (L238-242); `capture_frames` saves images at set moments (L226-230); a recording keeps a video (L368-372).
 
 Anything wider is a hand-written `run_script` that loops over `process_frame`, and while it runs no other tool call can reach the game.
 
@@ -26,7 +28,9 @@ Anything wider is a hand-written `run_script` that loops over `process_frame`, a
 
 **The monitor half** has little direct evidence, as MAIN.md says. Issue #6 (closed) found quiet runs drawing at about 240 fps by reading a `wait_for`'s `frames` against its `elapsedMs` (720 frames in 3004 ms), which led to the 60 fps cap (DECISIONS.md L39). delve's frame gaps above are the rest, and its `docs/godot-feature-audit.md` L749-757 and L910 propose `Performance.add_custom_monitor` for `net/messages_queued`, `net/commands_in_flight` and `combat/events_pending`, "not used" today.
 
-The survey's source servers: satelliteoflove's `watch_start`/`watch_collect` (a 200-event budget shared fairly per signal, per-field summaries of start, end, min, max, mean and slope, a time-sorted timeline) and Godot MCP Pro's `watch_signals` (a callable per signal per node; five or more arguments dropped) for idea 3; satelliteoflove's `godot_profiler` (a ring of 300 frames, whole-run aggregates, spike detection), gda's `perf monitors --frames` with budget verdicts and Godot MCP Pro's `get_performance_monitors` for idea 2 (survey L105-113).
+The survey's source servers: satelliteoflove's `watch_start`/`watch_collect` (a 200-event budget shared fairly per signal, per-field summaries of start, end, min, max, mean and slope, a time-sorted timeline) and Godot MCP Pro's `watch_signals` (a callable per signal per node; five or more arguments dropped) for idea 3.
+
+For idea 2: satelliteoflove's `godot_profiler` (a ring of 300 frames, whole-run aggregates, spike detection), gda's `perf monitors --frames` with budget verdicts and Godot MCP Pro's `get_performance_monitors` (survey L105-113).
 
 The survey's "Not verified" list names no engine question for either idea.
 
@@ -93,7 +97,9 @@ A signal is stamped with `Engine.get_process_frames()` at its emission. A value 
 - `startFrame` is `Engine.get_process_frames()` at the first sample, so the timeline lines up with `get_game_state`'s `frame` and a `frame_control` reply's `processFrames`; every other `frame` counts from 0 there. `gameMs` on each point is game time since the first sample, the clock delta L93 asks for; `wallMs` is the whole window's wall time.
 - A track's `points` are its change points: a sample kept only when it differs from the last kept one (numbers within 1e-6, `monitor_property`'s `changesOnly` rule, `_repeats`, L407), the first always kept. `first`, `last` and `changes` cover every sample; `min`, `max` and the frame of each only for a numeric track (a `Vector2`'s per component). delve's "lowest point a die reaches" is `min` and `minAt`.
 - `events` is one list across every signal track in emission order, so the moment a dialog's `visibility_changed` fired sits beside the moment `StartedBeatCount` moved.
-- The bridge applies the budgets as it records (each track's first 200 and last 50 change points with `dropped`, a bounded event list with full counts, values converted to JSON when kept) and sends monitor series summarised or as packed arrays, since the spike (section 8) measured an unbounded 16-monitor, 7200-frame series holding the game's main thread about 200 ms through `to_json`; the server shapes the result, the fair share of events and the 40000-character cut, where they are unit-testable in C#.
+- The bridge applies the budgets as it records (each track's first 200 and last 50 change points with `dropped`, a bounded event list with full counts, values converted to JSON when kept) and sends monitor series summarised or as packed arrays, since the spike (section 8) measured an unbounded 16-monitor, 7200-frame series holding the game's main thread about 200 ms through `to_json`.
+
+  The server shapes the result, the fair share of events and the 40000-character cut, where they are unit-testable in C#.
 
 Budgets (question 8); the point and event caps are the bridge's, as it records, and the rest the server's:
 
@@ -110,7 +116,9 @@ A monitor is a track of the same watch, so a hitch sits on the same frame number
 - **`frame_ms`**: the wall time between this frame's `process_frame` and the last one's, read with `Time.get_ticks_usec()`: the measure delve takes by hand (L93, "the longest gap between two `process_frame`s").
 
   It covers physics, process, draw and the frame cap's wait, so a 60 fps quiet run floors at about 16.7 ms and a 420 ms pipeline compile reads as one frame of about 420 ms. `options.budgetMs` (default 1000 / the project's target fps: `Engine.max_fps`, else 60) gives `over: {budget, count, frames}`.
-- **Built-in monitors read per frame** with `Performance.get_monitor`, named by 4.7.2's `get_monitor_name` strings (`object/nodes`, `object/objects`, `object/orphan_nodes`, `raster/total_draw_calls`, `raster/total_objects_drawn`, `raster/total_primitives_drawn`, `video/video_mem`, `pipeline/compilations_draw`, …; `main/performance.cpp` L165-237), which the bridge maps from the `Performance.Monitor` enum (`ClassDB.class_get_enum_constants`) through a table of its own, since `get_monitor_name` is not bound to scripts.
+- **Built-in monitors read per frame** with `Performance.get_monitor`, named by 4.7.2's `get_monitor_name` strings (`object/nodes`, `object/objects`, `object/orphan_nodes`, `raster/total_draw_calls`, `raster/total_objects_drawn`, `raster/total_primitives_drawn`, `video/video_mem`, `pipeline/compilations_draw`, …; `main/performance.cpp` L165-237).
+
+  The bridge maps them from the `Performance.Monitor` enum (`ClassDB.class_get_enum_constants`) through a table of its own, since `get_monitor_name` is not bound to scripts.
 - **`time/fps`, `time/process` and `time/physics_process` are refused** with a pointer to `frame_ms`: the engine sets them once a second, `time/process` to the longest frame of the last second (section 3), so read per frame they repeat one value for a second and hide which frame was slow.
 - **Custom monitors** by id, each read with `Performance.get_custom_monitor`, which calls the game's callable: game code, once a frame (question 13).
 
@@ -172,7 +180,11 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot`, read t
 
   The C# half: `tests/fixtures/CsProbe` gains a `[Signal]` with arguments and a non-exported field, and a `CSharpWatchTests` class joins the `csharp` group.
 - **Removing `monitor_property`** (question 11 (a)), in the step that lands `run`: `MonitorPropertyAsync` and its `[McpServerTool]` attribute in `RuntimeTools.Time.cs`, `MonitorOptions.cs`, the `monitor` command and its guard kind in `godot_mcp_time.gd` (`MONITORING_REFUSAL`, `MONITOR_STALLED`, `monitor`, `_monitor_refusal`), and its TimeTests, whose pause-mid-monitor flake (GMCP-28) goes with them.
-- **Docs, each in its landing step's commit**: `docs/TOOLS.md` (a `watch` section under "Time", the "Which tool for which job" rows "Watch a value change over frames" (now `watch`, instead of a sampling `run_script` or a loop of `inspect_node`) and "Find the frame that hitched" (`watch` with `frame_ms`)), `skills/godot-mcp/SKILL.md`, `docs/ARCHITECTURE.md` (the tool table, the Bridge row's `Watch` child, the cancel list), `docs/README.md` glossary (**Watch**, **Track**, **Change point**, **Frame time**), `README.md` (a new capability), `CHANGELOG.md` `## Unreleased`; `docs/DECISIONS.md` gets the rulings when the last step lands.
+- **Docs, each in its landing step's commit**: `docs/TOOLS.md` (a `watch` section under "Time", the "Which tool for which job" rows "Watch a value change over frames" (now `watch`, instead of a sampling `run_script` or a loop of `inspect_node`) and "Find the frame that hitched" (`watch` with `frame_ms`)), `skills/godot-mcp/SKILL.md`.
+
+  The commit also covers `docs/ARCHITECTURE.md` (the tool table, the Bridge row's `Watch` child, the cancel list), `docs/README.md` glossary (**Watch**, **Track**, **Change point**, **Frame time**), `README.md` (a new capability), `CHANGELOG.md` `## Unreleased`.
+
+  `docs/DECISIONS.md` gets the rulings when the last step lands.
 - **Game side, after the release**: delve's L70 and L93 sampling-script and `monitor_property` prose, and its L93 frame-gap recipe, are rewritten through `godot-mcp-docs-sync`; the custom monitors of its feature audit (L910) are the game's own choice, filed as a suggestion.
 
 ## 6. Open questions for the user
@@ -227,7 +239,19 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot`, read t
 
 Each step lands on its own with its tests, docs and changelog bullet, and passes the build, `gdlint`, `gdcomplexity`, `gdtest`, the unit tests and its itest class.
 
-1. **Done: spike** (results in section 8): in InputProbe and CsProbe, through `run.ps1 drive` with sampler nodes `run_script` installed: (i) the per-frame cost of 32 property and expression tracks, 200 signal connections and 16 monitors at 60 fps, in µs a frame; (ii) `frame_ms` against a known `OS.delay_msec(300)` frame, quiet and visible, and what it reads when the window cannot draw; (iii) which built-in monitors change per frame, whether `pipeline/compilations_*` are cumulative, and what `render/draw_calls` reads for a 2D-only screen; (iv) a C# `[Signal]` with 0, 3 and 6 arguments caught by a variadic GDScript lambda, and a non-exported C# field sampled per frame; (v) a 7200-frame, 16-monitor series sent over the bridge's socket, its size and time; (vi) a property set and a signal emitted in the same `_process`, sampled at `process_frame` and at `frame_post_draw`, confirming question 6's offset.
+1. **Done: spike** (results in section 8): in InputProbe and CsProbe, through `run.ps1 drive` with sampler nodes `run_script` installed.
+
+   (i) The per-frame cost of 32 property and expression tracks, 200 signal connections and 16 monitors at 60 fps, in µs a frame.
+
+   (ii) `frame_ms` against a known `OS.delay_msec(300)` frame, quiet and visible, and what it reads when the window cannot draw.
+
+   (iii) Which built-in monitors change per frame, whether `pipeline/compilations_*` are cumulative, and what `render/draw_calls` reads for a 2D-only screen.
+
+   (iv) A C# `[Signal]` with 0, 3 and 6 arguments caught by a variadic GDScript lambda, and a non-exported C# field sampled per frame.
+
+   (v) A 7200-frame, 16-monitor series sent over the bridge's socket, its size and time.
+
+   (vi) A property set and a signal emitted in the same `_process`, sampled at `process_frame` and at `frame_post_draw`, confirming question 6's offset.
 
    Results into section 3's Status column.
 2. **Done: property and expression tracks**: the `Watch` module, `watch` with `start`, `stop` and `run`, the window and paused frames, `options.call`, change points, summaries, the budgets, `frame`/`gameMs` stamps; `test_watch.gd`, `WatchValidationTests`, `WatchTimelineTests`, `WatchTests`; TOOLS.md, SKILL.md, ARCHITECTURE.md, glossary, README, changelog. Decided at briefing (2026-09-30), where the rulings left it open:

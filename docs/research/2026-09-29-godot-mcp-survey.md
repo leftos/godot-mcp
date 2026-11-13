@@ -4,7 +4,9 @@ Surveyed 2026-09-29. Stars and last-push dates from the GitHub API that day; too
 
 ## Scope and method
 
-- Found through `gh search repos "godot mcp"`, `gh search repos godot-mcp` and `"godot model context protocol"` (about 90 distinct repos, most of them forks of Coding-Solo/godot-mcp or experiments under 20 stars), the Godot Asset Library API (`filter=mcp`, 18 addons for 4.7), and Exa searches for comparison posts (Erodenn's [comparison.md](https://github.com/Erodenn/godot-mcp-runtime/blob/main/docs/comparison.md), the [Flockbay comparison](https://flockbay.com/blog/best-godot-mcp-server/) of 2026-09-28, and a practitioner write-up on [saschb2b.com](https://www.saschb2b.com/blog/godot-mcp-ai-game-creation)).
+- Found through `gh search repos "godot mcp"`, `gh search repos godot-mcp` and `"godot model context protocol"` (about 90 distinct repos, most of them forks of Coding-Solo/godot-mcp or experiments under 20 stars), the Godot Asset Library API (`filter=mcp`, 18 addons for 4.7), and Exa searches for comparison posts.
+
+  The posts are Erodenn's [comparison.md](https://github.com/Erodenn/godot-mcp-runtime/blob/main/docs/comparison.md), the [Flockbay comparison](https://flockbay.com/blog/best-godot-mcp-server/) of 2026-09-28, and a practitioner write-up on [saschb2b.com](https://www.saschb2b.com/blog/godot-mcp-ai-game-creation).
 - Our baseline: `README.md` and the 65 `### tool` headings with their **Does:** lines in `docs/TOOLS.md`; `docs/DECISIONS.md` decision 17 (no editor bridge) and `docs/plans/MAIN.md` line 23 (profiler, autoload-editing and file-parsing tools "if a need shows up") were read so the ideas below do not re-propose settled or already-listed items without saying so.
 - Tool counts are the vendors' own and are not audited. Where code was read to confirm a claim, the file and lines are given.
 
@@ -106,7 +108,9 @@ Ranked by what an agent driving the user's games would reach for, against the co
 
 2. **Performance monitors over a frame window, with spike and budget verdicts.**
    - What: FPS, frame/process/physics time, draw calls, objects, nodes, memory, sampled over N frames with percentiles, frames over budget and spikes.
-   - Who: [satelliteoflove](https://github.com/satelliteoflove/godot-mcp/blob/main/docs/tools/profiler.md) `godot_profiler` `start`/`get_data` (a ring of the last 300 frames plus whole-run aggregates, histogram, spike detection); [gda](https://github.com/aigengame/godot-agent#live-commands--via-gda-daemon-godot-46-macoslinux) `perf monitors --frames` "with statistics and budget verdicts"; Godot MCP Pro `get_performance_monitors` (addon code read: `pro_inspector.gd` `_cmd_get_performance_monitors` L1761).
+   - Who: [satelliteoflove](https://github.com/satelliteoflove/godot-mcp/blob/main/docs/tools/profiler.md) `godot_profiler` `start`/`get_data` (a ring of the last 300 frames plus whole-run aggregates, histogram, spike detection).
+
+     Also [gda](https://github.com/aigengame/godot-agent#live-commands--via-gda-daemon-godot-46-macoslinux) `perf monitors --frames` "with statistics and budget verdicts"; Godot MCP Pro `get_performance_monitors` (addon code read: `pro_inspector.gd` `_cmd_get_performance_monitors` L1761).
    - Fit: a bridge command reading `Performance.get_monitor` each frame, shaped like `monitor_property` and run by the same time module; cheap, and it answers "did my change drop frames" without the full profiler.
 
 3. **Watch several values and signals over a window, returned as one timeline.**
@@ -128,7 +132,9 @@ Ranked by what an agent driving the user's games would reach for, against the co
    - What: `render_probe` walks the visibility chain, world AABB, frustum, far plane and visibility range, layers against the camera's `cull_mask`, per-surface material cull mode and the winding the camera sees; `set_debug_draw` switches the viewport to unshaded, lighting, overdraw, wireframe or normal buffer for the next screenshot.
 
      `godot_validate_meshes` finds inside-out winding, dropped triangles, degenerate UVs and NaN normals in ArrayMesh surfaces; `godot_scene3d` returns global transforms and AABBs.
-   - Who: [Beckett](https://github.com/beckettlab/beckett-godot-mcp) (code read: `addons/beckett/tools/runtime_observe_tools.gd` L150-167, `addons/beckett/runtime/mcp_runtime.gd` L1802-1858 maps names to `Viewport.DEBUG_DRAW_*` and notes Compatibility ignores wireframe); [satelliteoflove](https://github.com/satelliteoflove/godot-mcp/blob/main/docs/tools/validate-meshes.md) `godot_validate_meshes` and [`godot_scene3d`](https://github.com/satelliteoflove/godot-mcp/blob/main/docs/tools/scene3d.md).
+   - Who: [Beckett](https://github.com/beckettlab/beckett-godot-mcp) (code read: `addons/beckett/tools/runtime_observe_tools.gd` L150-167, `addons/beckett/runtime/mcp_runtime.gd` L1802-1858 maps names to `Viewport.DEBUG_DRAW_*` and notes Compatibility ignores wireframe).
+
+     Also [satelliteoflove](https://github.com/satelliteoflove/godot-mcp/blob/main/docs/tools/validate-meshes.md) `godot_validate_meshes` and [`godot_scene3d`](https://github.com/satelliteoflove/godot-mcp/blob/main/docs/tools/scene3d.md).
    - Fit: read-only bridge commands; `Viewport.debug_draw` is one property, so `set_property` on the root viewport may already reach it (to test). The cheapest step is documentation: `--debug-collisions`, `--debug-paths`, `--debug-navigation`, `--debug-avoidance` (4.7.2 `main/main.cpp` L670-673) already pass through `engineArgs`.
 
 7. **Aim input at 2D and 3D world nodes, not only Controls.**
@@ -213,7 +219,9 @@ From its [docs/tools.md](https://github.com/Erodenn/godot-mcp-runtime/blob/main/
 
 ## Where we are already ahead
 
-For balance, what no surveyed server matched: C# runtime access (`cs_members`, `cs_get`, `cs_set`, `cs_call`, `run_csharp`) beyond IvanMurzak's reflection calls; MP4 recordings with marks and idle drop; quiet runs that keep real input out; arming a folder and joining a game already running; `stress_input` with seeded replay; tooltip reading through `hover`; pad injection on a free device id; errors riding on every runtime result (godot-ai's `new_errors_since_last_call` doorbell is the nearest, and only a count); scene edits that keep the file's own text; load-adjusted timeouts.
+For balance, what no surveyed server matched: C# runtime access (`cs_members`, `cs_get`, `cs_set`, `cs_call`, `run_csharp`) beyond IvanMurzak's reflection calls.
+
+Also: MP4 recordings with marks and idle drop; quiet runs that keep real input out; arming a folder and joining a game already running; `stress_input` with seeded replay; tooltip reading through `hover`; pad injection on a free device id; errors riding on every runtime result (godot-ai's `new_errors_since_last_call` doorbell is the nearest, and only a count); scene edits that keep the file's own text; load-adjusted timeouts.
 
 ## Hype and thin wrappers
 
