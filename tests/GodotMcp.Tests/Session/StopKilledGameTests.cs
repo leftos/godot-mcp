@@ -625,7 +625,7 @@ public sealed class StopKilledGameTests : IAsyncDisposable
 
         Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
         await AnswerAsync(bridge, "ping", new JsonObject { ["pong"] = true });
-        await AnswerAsync(bridge, "shutdown", new JsonObject());
+        await AnswerAsync(bridge, "shutdown", []);
         await wrapper.StandardInput.WriteLineAsync("exit".AsMemory(), cancellation);
         StopResult result = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
 
@@ -820,7 +820,7 @@ public sealed class StopKilledGameTests : IAsyncDisposable
     private static async Task QuitAsync(FakeBridge bridge, Process game, bool withItsChildren)
     {
         await AnswerAsync(bridge, "ping", new JsonObject { ["pong"] = true });
-        await AnswerAsync(bridge, "shutdown", new JsonObject());
+        await AnswerAsync(bridge, "shutdown", []);
         game.Kill(entireProcessTree: withItsChildren);
         Assert.True(await ProcessExit.WaitUntilGoneAsync(game, RegistryHarness.HangGuard), "the quitting game was not gone");
     }
