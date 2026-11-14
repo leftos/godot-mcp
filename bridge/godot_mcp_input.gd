@@ -109,11 +109,12 @@ func _exit_tree() -> void:
 	get_tree().scene_changed.disconnect(_arm_repick)
 
 
-## Hands the hover back to the real cursor on a real mouse motion while no injected input is in
-## play. window_input carries every event the window receives but the engine's internal ones,
-## before push_input hands it on, so no game node's _input can stop it first (window.cpp
-## L2022-2030, scene_tree.cpp L1461 in 4.7.2).
+## Notes every event for the tooltip reader, then hands the hover back to the real cursor on a
+## real mouse motion while no injected input is in play. window_input carries every event the
+## window receives but the engine's internal ones, before push_input hands it on, so no game
+## node's _input can stop it first (window.cpp L2022-2030, scene_tree.cpp L1461 in 4.7.2).
 func _on_window_input(event: InputEvent) -> void:
+	_hover.note_input(event)
 	if bridge._gesture_playing or bridge._held_mask != 0:
 		return
 	if event is InputEventMouseMotion and event.device != bridge.INJECTED_DEVICE:
@@ -122,15 +123,16 @@ func _on_window_input(event: InputEvent) -> void:
 
 
 ## Puts the hover back on the injected pointer while the drive owns it. Godot's re-picks
-## (update_mouse_cursor_state, which games call, a drop's end, a scene change) pick at the OS
-## cursor, unreadable on a quiet run's hidden desktop (window.cpp L935-950, viewport.cpp
-## L1483-1500, L2459, scene_tree.cpp L1692 in 4.7.2). frame_pre_draw follows the whole SceneTree
-## process (scene_tree.cpp L713-729), so no later re-pick in the frame undoes it. The motion is
-## internal: no _input, _unhandled_input or Control gui_input in game scripts sees it (node.cpp
-## L3565-3567, control.cpp L2523-2533); a physics input_event (CollisionObject2D/3D) sees it as it
-## sees the engine's own passive hover pick. It skips Input and a capture, and a re-pick on the
-## hovered Control restarts no tooltip timer (viewport.cpp L2138).
+## (update_mouse_cursor_state, a drop's end, a scene change) pick at the OS cursor, unreadable on a
+## quiet run's hidden desktop (window.cpp L935-950, viewport.cpp L1483-1500, L2459, scene_tree.cpp
+## L1692 in 4.7.2). frame_pre_draw follows the whole SceneTree process (scene_tree.cpp L713-729),
+## so no later re-pick undoes it. The motion is internal: no _input, _unhandled_input or Control
+## gui_input in game scripts sees it (node.cpp L3565-3567, control.cpp L2523-2533); a physics
+## input_event (CollisionObject2D/3D) sees it as the engine's passive hover pick. It skips Input and
+## a capture, and the re-pick restarts the tooltip timer once the engine cancelled one (viewport.cpp
+## L2138), the reader dropping the tooltip that timer shows while the pointer stays put.
 func _repick() -> void:
+	_hover.drop_rearmed_tooltip()
 	if not _take_repick():
 		return
 	var point: Vector2 = to_viewport(bridge._pointer)

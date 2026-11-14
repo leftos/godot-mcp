@@ -20,7 +20,7 @@ public class SharedProbeSession : IAsyncLifetime
     // and its raw event player's held actions) through the bridge, so a step's held is empty after a reset, then any other
     // still pressed in Input. The mouse buttons and pad buttons and axes the bridge holds are returned, for ResetAsync to
     // release through simulate_input. The bridge's pointer goes back to the origin, since a raw mouse_motion with no
-    // relative takes its step from it.
+    // relative takes its step from it, and the tooltip reader's cancel mark is cleared so no test inherits one.
     private const string ResetScript = """
         extends RefCounted
 
@@ -34,6 +34,7 @@ public class SharedProbeSession : IAsyncLifetime
         	_reset_audio(root)
         	_release_keys_and_actions(root)
         	root.get_node("GodotMcpBridge").set("_pointer", Vector2.ZERO)
+        	root.get_node("GodotMcpBridge/Gestures/Hover")._clear_mark()
         	root.get_node("GodotMcpBridge/Gestures").set("_ui_baseline", {})
         	for child: Node in root.get_children():
         		if not ProjectSettings.has_setting("autoload/" + child.name):

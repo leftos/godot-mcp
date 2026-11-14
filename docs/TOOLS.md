@@ -1427,6 +1427,10 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   The hover stays on the injected pointer, from `hover`, `mouse_button` or a `drag`'s end, through the game's own `update_mouse_cursor_state`, a drop's end and a scene change, until a real mouse motion hands it back; a game that re-picks every frame sees one `mouse_exited`/`mouse_entered` pair per frame, and a physics `input_event` sees the bridge's re-pick motions as it sees the engine's own hover pick.
 
+  The re-pick starts no tooltip the engine cancelled: after an Escape (`ui_cancel`) press, a mouse-button press or a gesture, a tooltip the re-pick re-arms is hidden before it is drawn while the pointer stays on the same Control, as for a still hand. A `hover` that moves the pointer more than 5 px, or onto another Control, arms it again (a motion with a button held does not); a `hover` at the same point shows none.
+
+  A game whose own `_input` handles the Escape keeps a tooltip already showing, as in plain Godot. `repickHover: false` is not needed for an Escape-over-tooltip check. A game's own `cancel_tooltip()` call is not seen.
+
   With `run_project`'s `options.repickHover: false` the bridge no longer re-picks every frame, so only the game's own re-picks (which pick at the OS cursor, unreadable on a quiet run's hidden desktop), a scene change and the end of a GUI drag (a drop or a cancel) move the hover. The bridge then re-picks at the injected pointer once after a scene change and once at the end of a GUI drag, and still only when it owns the pointer with no gesture playing, no button held and the mouse not captured.
 
 ### `scroll`

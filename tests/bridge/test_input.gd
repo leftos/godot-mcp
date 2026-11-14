@@ -1,3 +1,6 @@
+# gdlint: disable=max-public-methods
+# Every public method is a test the runner calls by name. gdlint reports the class at line 1, so
+# the line above must be the first.
 extends "res://gd_test.gd"
 ## The input player's pure helpers (bridge/godot_mcp_input.gd), on an instance never added to
 ## the tree, and the bridge's pointer ownership it sets (bridge/godot_mcp_bridge.gd), on a bridge
@@ -31,6 +34,8 @@ func test_an_injected_motion_takes_the_pointer_and_a_real_one_hands_it_back() ->
 	var bridge: Node = _bridge_script.new()
 	var gestures: Node = _input_script.new()
 	gestures.bridge = bridge
+	gestures._hover = load_bridge_script("godot_mcp_hover.gd").new()
+	gestures._hover.gestures = gestures
 	assert_eq(bridge._owns_pointer, false, "a new bridge owns no pointer")
 	var injected: InputEventMouseMotion = gestures.motion_event(Vector2(40, 30), Vector2.ZERO, 0)
 	assert_eq(bridge._owns_pointer, true, "an injected motion takes the pointer")
@@ -38,6 +43,7 @@ func test_an_injected_motion_takes_the_pointer_and_a_real_one_hands_it_back() ->
 	assert_eq(bridge._owns_pointer, true, "the injected motion reaching window_input keeps it")
 	gestures._on_window_input(_real_motion())
 	assert_eq(bridge._owns_pointer, false, "a real motion hands it back when nothing is in play")
+	gestures._hover.free()
 	gestures.free()
 	bridge.free()
 
@@ -46,6 +52,8 @@ func test_a_real_motion_keeps_the_pointer_while_injected_input_is_in_play() -> v
 	var bridge: Node = _bridge_script.new()
 	var gestures: Node = _input_script.new()
 	gestures.bridge = bridge
+	gestures._hover = load_bridge_script("godot_mcp_hover.gd").new()
+	gestures._hover.gestures = gestures
 	bridge._owns_pointer = true
 	bridge._gesture_playing = true
 	gestures._on_window_input(_real_motion())
@@ -54,6 +62,7 @@ func test_a_real_motion_keeps_the_pointer_while_injected_input_is_in_play() -> v
 	bridge._held_mask = MOUSE_BUTTON_MASK_LEFT
 	gestures._on_window_input(_real_motion())
 	assert_eq(bridge._owns_pointer, true, "a real motion while a button is held")
+	gestures._hover.free()
 	gestures.free()
 	bridge.free()
 
@@ -163,6 +172,133 @@ func test_handing_the_pointer_back_drops_an_armed_re_pick() -> void:
 	_free_rig(rig)
 
 
+## An Escape press is one of the events the engine cancels a tooltip on (scene/main/viewport.cpp
+## L2290, L2297-2299 in 4.7.2), which the reader marks so the per-frame re-pick drops the tooltip
+## the engine re-arms.
+func test_an_escape_press_marks_the_tooltip_cancelled() -> void:
+	var rig: Array = _hover_rig()
+	var gestures: Node = rig[0]
+	gestures._on_window_input(_key(KEY_ESCAPE, true))
+	assert_eq(gestures._hover._tooltip_cancelled, true, "an Escape press cancels the tooltip")
+	_free_rig(rig)
+
+
+func test_a_mouse_button_press_marks_the_tooltip_cancelled() -> void:
+	var pressed: Array = _hover_rig()
+	var pressed_gestures: Node = pressed[0]
+	pressed_gestures._on_window_input(_event_button(true))
+	assert_eq(pressed_gestures._hover._tooltip_cancelled, true, "a press cancels the tooltip")
+	_free_rig(pressed)
+	var released: Array = _hover_rig()
+	var released_gestures: Node = released[0]
+	released_gestures._on_window_input(_event_button(false))
+	assert_eq(released_gestures._hover._tooltip_cancelled, false, "a release cancels nothing")
+	_free_rig(released)
+
+
+func test_a_pan_gesture_marks_the_tooltip_cancelled() -> void:
+	var rig: Array = _hover_rig()
+	var gestures: Node = rig[0]
+	gestures._on_window_input(InputEventPanGesture.new())
+	assert_eq(gestures._hover._tooltip_cancelled, true, "a gesture cancels the tooltip")
+	_free_rig(rig)
+
+
+func test_an_escape_echo_or_another_key_leaves_the_mark() -> void:
+	var echoed: Array = _hover_rig()
+	var echoed_gestures: Node = echoed[0]
+	echoed_gestures._on_window_input(_key(KEY_ESCAPE, true, true))
+	assert_eq(echoed_gestures._hover._tooltip_cancelled, false, "an Escape echo cancels nothing")
+	_free_rig(echoed)
+	var other: Array = _hover_rig()
+	var other_gestures: Node = other[0]
+	other_gestures._on_window_input(_key(KEY_A, true))
+	assert_eq(other_gestures._hover._tooltip_cancelled, false, "another key cancels nothing")
+	_free_rig(other)
+
+
+## A motion that would let the engine re-arm a tooltip clears the mark, the Control it held with
+## it: a real mouse's, or a no-button one more than 5 px from the pointer the cancel stood at.
+func test_a_motion_clears_the_tooltip_mark() -> void:
+	var injected: Array = _hover_rig()
+	var injected_gestures: Node = injected[0]
+	injected_gestures.bridge._pointer = Vector2(40, 30)
+	injected_gestures._on_window_input(_key(KEY_ESCAPE, true))
+	var injected_recorded := Control.new()
+	injected_gestures._hover._cancelled_over = injected_recorded
+	injected_gestures._on_window_input(
+		injected_gestures.motion_event(Vector2(80, 30), Vector2(40, 0), 0)
+	)
+	assert_eq(
+		injected_gestures._hover._tooltip_cancelled, false, "an injected motion clears the mark"
+	)
+	assert_eq(injected_gestures._hover._cancelled_over, null, "and the Control it held")
+	injected_recorded.free()
+	_free_rig(injected)
+	var real: Array = _hover_rig()
+	var real_gestures: Node = real[0]
+	real_gestures._on_window_input(_key(KEY_ESCAPE, true))
+	var real_recorded := Control.new()
+	real_gestures._hover._cancelled_over = real_recorded
+	real_gestures._on_window_input(_real_motion())
+	assert_eq(real_gestures._hover._tooltip_cancelled, false, "a real motion clears the mark")
+	assert_eq(real_gestures._hover._cancelled_over, null, "and the Control it held")
+	real_recorded.free()
+	_free_rig(real)
+
+
+## The engine starts a tooltip timer only on a motion with no button held (scene/main/viewport.cpp
+## L2117 in 4.7.2), so the injected motions a press and drag send leave the mark.
+func test_a_held_button_motion_leaves_the_mark() -> void:
+	var rig: Array = _hover_rig()
+	var gestures: Node = rig[0]
+	gestures.bridge._pointer = Vector2(40, 30)
+	gestures._on_window_input(_key(KEY_ESCAPE, true))
+	gestures._on_window_input(
+		gestures.motion_event(Vector2(80, 30), Vector2(40, 0), MOUSE_BUTTON_MASK_LEFT)
+	)
+	assert_eq(gestures._hover._tooltip_cancelled, true, "a held-button motion leaves the mark")
+	_free_rig(rig)
+
+
+## The engine restarts its tooltip timer only from a motion more than 5 px from where it started
+## (scene/main/viewport.cpp L2138 in 4.7.2): 18 px² within, 32 px² beyond.
+func test_a_motion_within_five_pixels_leaves_the_mark() -> void:
+	var rig: Array = _hover_rig()
+	var gestures: Node = rig[0]
+	gestures.bridge._pointer = Vector2(40, 30)
+	gestures._on_window_input(_key(KEY_ESCAPE, true))
+	gestures._on_window_input(gestures.motion_event(Vector2(43, 33), Vector2(3, 3), 0))
+	assert_eq(gestures._hover._tooltip_cancelled, true, "a motion within 5 px leaves the mark")
+	gestures._on_window_input(gestures.motion_event(Vector2(44, 34), Vector2(1, 1), 0))
+	assert_eq(gestures._hover._tooltip_cancelled, false, "a motion past 5 px clears it")
+	_free_rig(rig)
+
+
+## The bridge's _input marks a real mouse's events handled while a gesture plays or a button is
+## held (bridge/godot_mcp_bridge.gd), so the engine never sees the press and cancels nothing.
+func test_a_swallowed_real_press_leaves_no_mark() -> void:
+	var rig: Array = _hover_rig()
+	var gestures: Node = rig[0]
+	gestures.bridge._gesture_playing = true
+	gestures._on_window_input(_event_button(true))
+	assert_eq(gestures._hover._tooltip_cancelled, false, "a swallowed real press marks nothing")
+	_free_rig(rig)
+
+
+## Clearing the mark forgets the Control the first frame noted, so the next cancel starts over.
+func test_clearing_the_mark_resets_the_noted_over() -> void:
+	var rig: Array = _hover_rig()
+	var gestures: Node = rig[0]
+	gestures.bridge._pointer = Vector2(40, 30)
+	gestures._on_window_input(_key(KEY_ESCAPE, true))
+	gestures._hover._over_noted = true
+	gestures._on_window_input(gestures.motion_event(Vector2(80, 30), Vector2(40, 0), 0))
+	assert_eq(gestures._hover._over_noted, false, "clearing the mark forgets the noted Control")
+	assert_eq(gestures._hover._tooltip_cancelled, false, "and clears the mark")
+	_free_rig(rig)
+
+
 ## The result a drag that ends without releasing records: released false, guiDragStarted as the
 ## motions found it, and no releasedOn or dropAccepted, nothing having been released.
 func test_a_drag_that_ends_without_a_release_records_released_false() -> void:
@@ -229,19 +365,51 @@ func test_a_mouse_button_release_after_a_drag_that_did_not_release_clears_the_ma
 
 
 ## An input player re-picking every frame as repick_hover says, with a bridge that owns the
-## pointer: [gestures, bridge].
+## pointer and the hover's tooltip reader: [gestures, bridge, hover].
 func _repick_rig(repick_hover: bool) -> Array:
 	var bridge: Node = _bridge_script.new()
 	var gestures: Node = _input_script.new()
 	gestures.bridge = bridge
 	gestures.repick_hover = repick_hover
+	gestures._hover = load_bridge_script("godot_mcp_hover.gd").new()
+	gestures._hover.gestures = gestures
 	bridge._owns_pointer = true
-	return [gestures, bridge]
+	return [gestures, bridge, gestures._hover]
 
 
 func _free_rig(rig: Array) -> void:
 	for node: Node in rig:
 		node.free()
+
+
+## An input player with a bridge that owns no pointer and its tooltip reader, none of them in the
+## tree: [gestures, bridge, hover].
+func _hover_rig() -> Array:
+	var bridge: Node = _bridge_script.new()
+	var gestures: Node = _input_script.new()
+	gestures.bridge = bridge
+	gestures._hover = load_bridge_script("godot_mcp_hover.gd").new()
+	gestures._hover.gestures = gestures
+	return [gestures, bridge, gestures._hover]
+
+
+## A key event for keycode as both keycode and physical keycode, as the window's own input
+## carries one, optionally an echo.
+func _key(keycode: Key, pressed: bool, echo: bool = false) -> InputEventKey:
+	var key := InputEventKey.new()
+	key.keycode = keycode
+	key.physical_keycode = keycode
+	key.pressed = pressed
+	key.echo = echo
+	return key
+
+
+## A left mouse button event, pressed or released.
+func _event_button(pressed: bool) -> InputEventMouseButton:
+	var button := InputEventMouseButton.new()
+	button.button_index = MOUSE_BUTTON_LEFT
+	button.pressed = pressed
+	return button
 
 
 ## A mouse motion without the injected mark, as the real mouse sends one.

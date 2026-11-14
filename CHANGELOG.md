@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A native tooltip dismissed with Escape or a click no longer comes back while the driven pointer stays still.
+
+### For agents
+
+- Hover re-pick: after a `ui_cancel` press, a mouse-button press or a gesture, a tooltip stays hidden until the pointer moves more than 5 px or leaves its Control, as for a still hand; `repickHover: false` is no longer needed for an Escape-over-tooltip check.
+
 ## 0.42.1 - 2026-11-13
 
 ### Added

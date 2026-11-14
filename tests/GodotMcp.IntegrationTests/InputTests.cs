@@ -148,12 +148,99 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "await scene_tree.process_frame\n\t"
         + "return null";
 
+    // The rect of the first tooltip panel seen visible before a SceneTreeTimer of gui/timers/tooltip_delay_sec plus 1 s runs
+    // out, or null when none shows. The timer runs on the tooltip timer's own clamped clock, so a loaded machine still sees it.
+    private const string AwaitTooltipThroughTheDelay =
+        "var delay := float(ProjectSettings.get_setting(\"gui/timers/tooltip_delay_sec\", 0.5))\n\t"
+        + "var timer := scene_tree.create_timer(delay + 1.0, true, false, true)\n\t"
+        + "while timer.time_left > 0.0:\n\t\t"
+        + "for window in scene_tree.root.get_embedded_subwindows():\n\t\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t\t"
+        + "return {\"x\": window.position.x, \"y\": window.position.y, \"width\": window.size.x, \"height\": window.size.y}\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return null";
+
     // Whether a tooltip panel is visible now.
     private const string TooltipShownNow =
         "for window in scene_tree.root.get_embedded_subwindows():\n\t\t"
         + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t"
         + "return true\n\t"
         + "return false";
+
+    // Whether a tooltip panel ever shows from now until a SceneTreeTimer of gui/timers/tooltip_delay_sec plus 200 ms runs
+    // out, and for 5 frames after it. The timer runs on the tooltip timer's own clock, which clamps under load.
+    private const string TooltipShowsThroughTheDelay =
+        "var delay := float(ProjectSettings.get_setting(\"gui/timers/tooltip_delay_sec\", 0.5))\n\t"
+        + "var timer := scene_tree.create_timer(delay + 0.2, true, false, true)\n\t"
+        + "while timer.time_left > 0.0:\n\t\t"
+        + "for window in scene_tree.root.get_embedded_subwindows():\n\t\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t\t"
+        + "return true\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "var frames_after := 0\n\t"
+        + "while frames_after < 5:\n\t\t"
+        + "await scene_tree.process_frame\n\t\t"
+        + "for window in scene_tree.root.get_embedded_subwindows():\n\t\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t\t"
+        + "return true\n\t\t"
+        + "frames_after += 1\n\t"
+        + "return false";
+
+    // Whether a tooltip panel is visible on the fifth process frame from now.
+    private const string TooltipShownInFiveFrames =
+        "var shown := false\n\t"
+        + "for _frame in 5:\n\t\t"
+        + "await scene_tree.process_frame\n\t\t"
+        + "shown = false\n\t\t"
+        + "for window in scene_tree.root.get_embedded_subwindows():\n\t\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t\t"
+        + "shown = true\n\t"
+        + "return shown";
+
+    // A root node EscapeEater whose _input marks an Escape press handled, as a game that binds Escape to a dialog does.
+    private const string AddEscapeEater =
+        "var script := GDScript.new()\n\t"
+        + "script.source_code = \"extends Node\\n\\n\\n"
+        + "func _input(event: InputEvent) -> void:\\n\\t"
+        + "if event.is_action_pressed(\\\"ui_cancel\\\"):\\n\\t\\t"
+        + "get_viewport().set_input_as_handled()\\n\"\n\t"
+        + "script.reload()\n\t"
+        + "var eater := Node.new()\n\t"
+        + "eater.name = \"EscapeEater\"\n\t"
+        + "eater.set_script(script)\n\t"
+        + "scene_tree.root.add_child(eater)\n\t"
+        + "return true";
+
+    private const string FreeEscapeEater = "scene_tree.root.get_node(\"EscapeEater\").free()\n\treturn true";
+
+    // A Control over ProbeButton's rect, (20, 70) to (140, 110), with tooltip_text "Cover tip", added without a re-pick.
+    private const string AddTooltipCoverBody =
+        "var cover := Control.new()\n\t"
+        + "cover.name = \"TooltipCover\"\n\t"
+        + "cover.position = Vector2(20, 70)\n\t"
+        + "cover.size = Vector2(120, 40)\n\t"
+        + "cover.mouse_filter = Control.MOUSE_FILTER_STOP\n\t"
+        + "cover.tooltip_text = \"Cover tip\"\n\t"
+        + "scene_tree.root.add_child(cover)\n\t";
+
+    private const string AddTooltipCover = AddTooltipCoverBody + "return true";
+
+    // ProbeButton freed and the same cover added over its rect in one script, with no re-pick between.
+    private const string FreeProbeButtonAndAddCover =
+        "scene_tree.root.get_node(\"Main/ProbeButton\").free()\n\t" + AddTooltipCoverBody + "return true";
+
+    // ProbeButton put back as main.tscn has it, (20, 70) to (140, 110), so the shared run's other tests still find it.
+    private const string RestoreProbeButton =
+        "var button := Button.new()\n\t"
+        + "button.name = \"ProbeButton\"\n\t"
+        + "button.position = Vector2(20, 70)\n\t"
+        + "button.size = Vector2(120, 40)\n\t"
+        + "button.tooltip_text = \"Does nothing yet\"\n\t"
+        + "button.text = \"Press\"\n\t"
+        + "scene_tree.root.get_node(\"Main\").add_child(button)\n\t"
+        + "return true";
+
+    private const string FreeTooltipCover = "scene_tree.root.get_node(\"TooltipCover\").free()\n\treturn true";
 
     // A game's own hover re-pick (delve's modal calls it once a panel shows or hides), then the hovered Control's name
     // two frames later, "" over none.
@@ -999,6 +1086,95 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.False(clicked.AsObject().ContainsKey("errors"), clicked.ToJsonString());
         Assert.False(again.AsObject().ContainsKey("errors"), again.ToJsonString());
         Assert.False(tooltipAfter, "a tooltip showed again after the clicks");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task EscapeOverAShowingTooltipKeepsItHidden()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, 80, 90), cancellationToken: cancellation))!;
+        Assert.True(hovered["tooltip"] is JsonObject, $"no tooltip showed over ProbeButton: {hovered.ToJsonString()}");
+
+        await _tools.KeyAsync("Escape", "tap", null, cancellationToken: cancellation);
+        bool cameBack = (await RunAsync(TooltipShowsThroughTheDelay)).GetValue<bool>();
+
+        Assert.False(cameBack, "the tooltip Escape cancelled came back while the pointer stayed on ProbeButton");
+
+        // More than 5 px within ProbeButton, which spans (20, 70) to (140, 110): a moved pointer re-arms its tooltip.
+        JsonNode moved = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, 110, 95), cancellationToken: cancellation))!;
+        Assert.True(moved["tooltip"] is JsonObject, $"no tooltip showed after the pointer moved: {moved.ToJsonString()}");
+        Assert.Equal("Does nothing yet", moved["tooltip"]!["text"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickOnATooltipOwnerKeepsItsTooltipHidden()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        await _tools.ClickAsync(new InputTarget(null, 80, 90), "left", false, cancellationToken: cancellation);
+        bool showed = (await RunAsync(TooltipShowsThroughTheDelay)).GetValue<bool>();
+
+        Assert.False(showed, "a tooltip showed over ProbeButton after the click with the pointer still");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameThatHandlesEscapeKeepsTheTooltip()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(AddEscapeEater);
+
+        try
+        {
+            JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, 80, 90), cancellationToken: cancellation))!;
+            Assert.True(hovered["tooltip"] is JsonObject, $"no tooltip showed over ProbeButton: {hovered.ToJsonString()}");
+
+            await _tools.KeyAsync("Escape", "tap", null, cancellationToken: cancellation);
+            bool kept = (await RunAsync(TooltipShownInFiveFrames)).GetValue<bool>();
+
+            Assert.True(kept, "the bridge hid a tooltip the game's _input kept by handling Escape");
+        }
+        finally
+        {
+            await RunAsync(FreeEscapeEater);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickThenACoverWithATooltipShowsTheCoversTooltip()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.ClickAsync(new InputTarget(null, 80, 90), "left", false, cancellationToken: cancellation);
+        await RunAsync(AddTooltipCover);
+
+        try
+        {
+            JsonNode? coverTooltip = await RunAsync(AwaitTooltipThroughTheDelay);
+            Assert.True(coverTooltip is JsonObject, "no tooltip showed for the cover over ProbeButton");
+        }
+        finally
+        {
+            await RunAsync(FreeTooltipCover);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickThenAFreedOwnerLeavesTheNextControlsTooltip()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.ClickAsync(new InputTarget(null, 80, 90), "left", false, cancellationToken: cancellation);
+        await RunAsync(FreeProbeButtonAndAddCover);
+
+        try
+        {
+            JsonNode? coverTooltip = await RunAsync(AwaitTooltipThroughTheDelay);
+            Assert.True(coverTooltip is JsonObject, "no tooltip showed for the Control that took the freed owner's place under the pointer");
+        }
+        finally
+        {
+            await RunAsync(FreeTooltipCover);
+            await RunAsync(RestoreProbeButton);
+        }
     }
 
     [Fact(Timeout = TestTimeoutMs)]

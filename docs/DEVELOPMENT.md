@@ -881,13 +881,25 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   So while injected input owns the pointer (`_owns_pointer`, set by every injected mouse event), the input module (`_take_repick`) re-picks at the bridge's pointer on `RenderingServer.frame_pre_draw`, after the whole SceneTree process, with a motion of device `DEVICE_ID_INTERNAL` (-2, which GDScript has no constant for) through `push_input`: no game `_input`, `_unhandled_input` or `gui_input` sees it, a physics `input_event` does.
 
+  The re-pick would also bring back a tooltip the engine cancelled: `_gui_cancel_tooltip` (a `ui_cancel` press, a mouse-button press or a gesture) nulls `gui.tooltip_control`, so the next motion, even of zero distance, sees `over != gui.tooltip_control` and starts a new tooltip timer (4.7.2 `viewport.cpp` L1553-1564, L2011, L2246, L2297-2299, L2138, L2142-2146). `Viewport.cancel_tooltip` is not bound to scripts, so a drive cannot ask for the cancel.
+
+  So the hover module (`godot_mcp_hover.gd`) marks the cancel in `note_input`, called first from the input module's `_on_window_input`, and `_repick` first runs `drop_rearmed_tooltip`, which hides and frees the re-armed tooltip at `frame_pre_draw`, before it is drawn, while the pointer stays on the same Control. Only the popup the engine parented to the hovered Control's tooltip owner is dropped, and the hover is read with tooltip windows skipped.
+
+  The mark clears on a real mouse motion, on an injected no-button motion more than 5 px from where the cancel stood (L2117, L2138), and when the hover leaves the Control or is on none; a held-button motion or a smaller move keeps it.
+
+  A real event the bridge swallows during a gesture marks nothing, and on the first frame a still-standing tooltip (not queued for free, so the engine never cancelled it, as when a game's `_input` handles Escape) clears the mark. A tooltip whose delay was still running when the game kept the cancel is not told apart, and is dropped.
+
+  The drop runs only while the bridge owns the pointer and `repickHover` is on; then a re-arm by the game's own re-pick at the OS cursor is dropped too. A game's own `cancel_tooltip()` call or a focus loss is not seen.
+
   A real motion with no injected input in play hands the hover back, caught on the root's `window_input` before any game node can stop it.
 
   `run_project`'s `options.repickHover: false` (the game's `GODOT_MCP_NO_REPICK_HOVER=1`, carried in the endpoint as `repickHover`) turns the per-frame re-pick off, because 4.7.2 gives a script no hook for the game's own re-pick (decision 39).
 
   `_take_repick` then fires only for the one re-pick `_arm_repick` arms on a scene change and on `NOTIFICATION_DRAG_END` (the end of any GUI drag, a drop or a cancel, which the engine follows with its own re-pick), only while the bridge owns the pointer, under the same conditions; a real mouse taking the pointer back clears it.
 
-  The tests: `tests/bridge/test_input.gd` (the `_take_repick` one-shots), `tests/bridge/test_dormant.gd` (the endpoint's `repickHover` from the environment and from attach and join files, true when missing), `GodotCommandLineTests` (the variable) and `InputTests` (`TheEveryFrameRepickMovesTheHoverOntoACoverNobodyRepickedFor` on the shared run, `WithoutTheEveryFrameRepickOnlyTheGamesRepickMovesTheHover` on its own launch with `RepickHover = false`).
+  The tests: `tests/bridge/test_input.gd` (the `_take_repick` one-shots and the `note_input` cancel mark), `tests/bridge/test_dormant.gd` (the endpoint's `repickHover` from the environment and from attach and join files, true when missing), `GodotCommandLineTests` (the variable) and `InputTests` (`TheEveryFrameRepickMovesTheHoverOntoACoverNobodyRepickedFor` on the shared run, `WithoutTheEveryFrameRepickOnlyTheGamesRepickMovesTheHover` on its own launch with `RepickHover = false`).
+
+  The cancelled-tooltip tests are in `InputTests` too: `EscapeOverAShowingTooltipKeepsItHidden` and `AClickOnATooltipOwnerKeepsItsTooltipHidden` for a tooltip that stays hidden, and `AGameThatHandlesEscapeKeepsTheTooltip`, `AClickThenACoverWithATooltipShowsTheCoversTooltip` and `AClickThenAFreedOwnerLeavesTheNextControlsTooltip` for one that must stay or show.
 - **With `emulate_touch_from_mouse` on, every left-button mouse event has a touch twin** (`InputEventScreenTouch`/`ScreenDrag`) with device `DEVICE_ID_EMULATION` (-1), injected events' twins included (`input.cpp` L850-861, L876-891). It is dispatched just before its mouse event, and Controls receive it in `gui_input` (`viewport.cpp` L2213-2287); a Button does not press from it.
 
   The mark cannot reach a twin, so the bridge tells its own twins apart by a flag set while the input module's `dispatch` runs, and swallows every other twin while a gesture plays or an injected button is held. Real touchscreen events are left alone, as real keys are. The project setting is dropped on a machine with a touchscreen (`main.cpp` L3662-3668), so tests turn on `Input.emulate_touch_from_mouse` instead.
