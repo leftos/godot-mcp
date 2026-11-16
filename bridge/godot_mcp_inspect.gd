@@ -363,14 +363,15 @@ func call_method(params: Dictionary) -> Variant:
 
 ## {value}: the method params names ({node, method, args}, as call_method takes them) called now
 ## with callv and never awaited, so a coroutine runs to its first await and its value is null.
-## Returns a String instead when the call is refused as call_method refuses it, or, with
-## keep_raised false, when the error feed logged an error (not a warning) across the callv: a
-## GDScript runtime error or a C# exception cannot be caught, and Godot refusing the callv itself
-## logs one too; the String is the first such error's message. With keep_raised true an error the
-## call logged does not replace its value: the answer gains raised, that first error's message, and
-## the value is the method's as it would be without it. params {tool, extension, request} calls a
-## game tool instead (call_tool_now).
-func call_now(params: Dictionary, keep_raised: bool = false) -> Variant:
+## Returns a String instead when the call is refused as call_method refuses it, Godot refusing the
+## callv itself included: that refusal's logged message (the logger's first_refused_call_since).
+## Any other error (not a warning) the error feed logged across the callv does not fail the call,
+## as call_method's does not: a GDScript runtime error or a C# exception cannot be caught, so the
+## value is what callv returned (a GDScript runtime error ends the method with its return type's
+## default, modules/gdscript/gdscript_vm.cpp L3988-3992 in 4.7.2), the answer gains raised, the
+## first such error's message, and the error reaches the agent in the tool's errors. params {tool,
+## extension, request} calls a game tool instead (call_tool_now).
+func call_now(params: Dictionary) -> Variant:
 	if params.has("tool"):
 		return call_tool_now(params)
 	var prepared: Variant = _prepare_call(params)
@@ -379,15 +380,20 @@ func call_now(params: Dictionary, keep_raised: bool = false) -> Variant:
 	var node: Node = prepared[0]
 	var mark: int = _bridge._logger.sequence()
 	var value: Variant = node.callv(prepared[1], prepared[2])
-	var raised: String = _bridge._logger.first_error_since(mark)
+	var refused: String = _bridge._logger.first_refused_call_since(mark)
+	if not refused.is_empty():
+		return refused
 	var answer: Dictionary = {
 		"value": null if is_coroutine(value) else _bridge._json.to_json(value)
 	}
-	if raised.is_empty():
-		return answer
-	if not keep_raised:
-		return raised
-	answer["raised"] = raised
+	return _with_raised(answer, mark)
+
+
+## answer with raised added, the first error the feed logged since mark, when there is one.
+func _with_raised(answer: Dictionary, mark: int) -> Dictionary:
+	var raised: String = _bridge._logger.first_error_since(mark)
+	if not raised.is_empty():
+		answer["raised"] = raised
 	return answer
 
 
@@ -396,9 +402,10 @@ func call_now(params: Dictionary, keep_raised: bool = false) -> Variant:
 ## C# helper, in this frame, reply the helper's answer as it came, which the server reads as
 ## call_game_tool does: GDScript's JSON parser would read every number as a float. A Task the tool
 ## returns is never awaited: its pending call is forgotten, the Task left running in the game, and
-## the answer is {value: null, tool, pending: true}. Returns a String instead: the helper's own
-## text when it cannot load or refuses the call, or, as call_now, the first error the feed logged
-## across a call the helper answered.
+## the answer is {value: null, tool, pending: true}. Returns a String instead, the helper's own
+## text, when it cannot load or refuses the call, or why its reply is unreadable. An error the feed
+## logged across a call the helper answered does not fail it: as call_now's, the answer gains
+## raised, the first such error's message.
 func call_tool_now(params: Dictionary) -> Variant:
 	var tool_name: String = str(params["tool"])
 	var extension: String = str(params.get("extension", ""))
@@ -415,8 +422,7 @@ func call_tool_now(params: Dictionary) -> Variant:
 		var id: String = str((JSON.parse_string(reply) as Dictionary)["pending"])
 		_bridge._dotnet.call_now(extension, JSON.stringify({"op": "forget", "id": id}))
 		answer = {"value": null, "tool": tool_name, "pending": true}
-	var raised: String = _bridge._logger.first_error_since(mark)
-	return answer if raised.is_empty() else raised
+	return _with_raised(answer, mark)
 
 
 ## Why the helper's reply to game tool tool_name is a failure: its own error text when it refused,

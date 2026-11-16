@@ -2795,7 +2795,7 @@ internal sealed class ScratchRun
         if (call is not null)
         {
             parameters["call"] = call;
-            parameters["keepRaised"] = true;
+            parameters["pacedStep"] = true;
         }
 
         try

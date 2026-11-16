@@ -623,16 +623,20 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
     }
 
     [Fact(Timeout = GameToolTestTimeoutMs)]
-    public async Task AGameToolThatLogsAnErrorFailsTheWait()
+    public async Task AGameToolThatLogsAnErrorIsKeptByTheWait()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         WaitOptions options = new(Call: new MethodCall(Tool: "Complain"));
 
-        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.WaitForAsync(new WaitCondition(Frames: 2), null, options, cancellationToken: cancellation)
-        );
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(new WaitCondition(Frames: 2), null, options, cancellationToken: cancellation);
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
 
-        Assert.Contains("CsTools complained", refused.Message, StringComparison.Ordinal);
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        JsonObject call = waited["call"]!.AsObject();
+        Assert.Equal("Complain", call["tool"]!.GetValue<string>());
+        Assert.Equal(1, call["value"]!.GetValue<int>());
+        Assert.Equal("CsTools complained", call["raised"]!.GetValue<string>());
+        Assert.Contains("CsTools complained", waited["errors"]!.ToJsonString(), StringComparison.Ordinal);
     }
 
     [Fact(Timeout = GameToolTestTimeoutMs)]

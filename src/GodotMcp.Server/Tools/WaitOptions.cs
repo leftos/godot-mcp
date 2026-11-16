@@ -21,7 +21,8 @@ internal sealed record WaitOptions(
             + "for a game tool by name with named arguments, as call_game_tool takes them. The result adds call: {value}, the "
             + "method's return value as call_method returns it (null for a coroutine); a game tool's adds tool and type, and "
             + "pending: true with a null value for a Task, which is not awaited. A call refused as call_method or call_game_tool "
-            + "refuses it, or an error it raises, fails the wait."
+            + "refuses it fails the wait; an error the method raises does not: it comes back in errors and as call.raised, the "
+            + "first such error's message, and the wait goes on."
     )]
         MethodCall? Call = null,
     [property: Description(
@@ -30,8 +31,9 @@ internal sealed record WaitOptions(
             + "timeScale sets Engine.time_scale right after it; pause: true leaves the game paused on that frame, as frame_control "
             + "pause does, so a later read sees the state the condition did; record {mark, path?, overwrite?} marks a Movie Maker "
             + "recording's clip start or stop at that frame, as record_mark does. The result adds then: {frame, call?: {value}, "
-            + "timeScale?, paused?, record?}. A refused or failing call fails the wait and leaves timeScale unset and the game "
-            + "running; a timeout runs nothing."
+            + "timeScale?, paused?, record?}. A refused call fails the wait and leaves timeScale unset and the game running; an "
+            + "error the method raises comes back in errors and as then.call.raised, and the rest of then still runs; a timeout "
+            + "runs nothing."
     )]
         WaitThen? Then = null,
     [property: Description(
@@ -42,8 +44,9 @@ internal sealed record WaitOptions(
     )]
         bool? Edge = null,
     [property: Description(
-        "Wall-time cap in ms: the wait ends unmet with wallCapped: true once this much real time has passed, however slowly the "
-            + "load-adjusted timeout runs. Pass it with every long timeoutMs on a game that may stall."
+        "Wall-time cap in ms, a whole number from 1 to 120000: the wait ends unmet with wallCapped: true once this much real "
+            + "time has passed, however slowly the load-adjusted timeout runs. Pass it with every long timeoutMs on a game that "
+            + "may stall."
     )]
         double? MaxWallMs = null,
     [property: Description(
@@ -72,7 +75,8 @@ internal sealed record WaitThen(
             + "{...}} for a game tool by name with named arguments, as call_game_tool takes them. It runs before timeScale, so "
             + "the call sees the scale the wait ran at. then adds call: {value}, the method's return value as call_method returns "
             + "it (null for a coroutine); a game tool's adds tool and type, and pending: true with a null value for a Task, which "
-            + "is not awaited. A call refused as call_method or call_game_tool refuses it, or an error it raises, fails the wait."
+            + "is not awaited. A call refused as call_method or call_game_tool refuses it fails the wait; an error the method "
+            + "raises comes back in errors and as then.call.raised."
     )]
         MethodCall? Call = null,
     [property: Description(

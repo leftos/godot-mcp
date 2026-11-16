@@ -240,8 +240,8 @@ func capture_frames(params: Dictionary) -> Dictionary:
 ## from the met frame itself when it was met in a frame after the request or the start has a call
 ## (whose checks all run inside a process_frame emission), so this frame's delta counts, else from
 ## the next process_frame, as without a start. Writes the start's report into start. Returns []
-## when the start timed out, or a String saying why the start's condition, start.call,
-## start.then.call, options.call or a frame failed.
+## when the start timed out, or a String saying why the start's condition or a frame failed, or
+## why start.call, start.then.call or options.call was refused.
 func _capture_from_start(
 	points: Array, params: Dictionary, called: Dictionary, start: Dictionary
 ) -> Variant:
@@ -260,8 +260,9 @@ func _capture_from_start(
 ## edge, then, call} as wait_for waits for a condition, for start.timeoutMs of real time or until a
 ## cancel (_poll_probe_start, or _poll_signal_start for a signal, which waits for frame, the tree's
 ## process_frame, before its call), running start.then in the frame it is met (_start_outcome).
-## Writes start_report, plus call: {value} when it called, into start. Returns the poll's outcome,
-## or {error} when the condition is refused, cannot be checked, or start.call or then.call failed.
+## Writes start_report, plus call: {value, raised?} when it called, into start. Returns the poll's
+## outcome, or {error} when the condition is refused or cannot be checked, or start.call or
+## then.call was refused.
 func _await_start(params: Dictionary, start: Dictionary, frame: Signal) -> Dictionary:
 	var start_called: Dictionary = {}
 	var outcome: Dictionary
@@ -398,12 +399,12 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 
 
 ## Calls params.call {node, method, args} with the inspector's call_now, the first time it is
-## asked in a request, putting its {value} into called; nothing when params has no call or called
-## already holds its value. Returns why the call failed, or "".
+## asked in a request, putting its {value, raised?} into called; nothing when params has no call or
+## called already holds its value. Returns why the call was refused, or "".
 ##
-## A wait with params.limitGameMs (a scratch step's until) or params.keepRaised (a scratch paced
-## step's pace) does not fail on an error the called method logs: call_now keeps that error, called
-## then holds {value, raised}, and the wait goes on, the step's feed entries reporting the error.
+## An error the called method logs does not fail the call: call_now keeps it, called then holds
+## {value, raised}, and the wait goes on, the error reaching the agent in the tool's errors (a
+## scratch step's in its feed entries). Only a refused call fails it.
 ##
 ## It runs inside a process_frame emission, which SceneTree::process sends before it processes
 ## the nodes (scene/main/scene_tree.cpp L713, L719 in 4.7.2), so a method called here has its
@@ -412,8 +413,7 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 func _call_once(params: Dictionary, called: Dictionary) -> String:
 	if not called.is_empty() or not params.get("call") is Dictionary:
 		return ""
-	var keep_raised: bool = params.has("limitGameMs") or bool(params.get("keepRaised", false))
-	var outcome: Variant = bridge._inspect.call_now(params["call"], keep_raised)
+	var outcome: Variant = bridge._inspect.call_now(params["call"])
 	if outcome is String:
 		return outcome
 	called.merge(outcome)
@@ -478,8 +478,9 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 ## (a scratch fixture) that must time something from the wait's start joins the group. _tree() is
 ## the tree it reads and tells. Scratch's own params, which the MCP tool never sends: endMarker
 ## ends the step's window as the wait ends, endMarkerAtGameMs holds a met one's end to that game
-## time (_end_window), holdGameMs/holdEndMarker run the exit hold (Hold), keepRaised keeps errors,
-## shotWhen is a shot condition checked at each draw, its first holding frame the shot (MidShot).
+## time (_end_window), holdGameMs/holdEndMarker run the exit hold (Hold), pacedStep marks a paced
+## step's pace, which a paused tree does not refuse (_paused_refusal), shotWhen is a shot condition
+## checked at each draw, its first holding frame the shot (MidShot).
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var tree: Object = _tree()
@@ -487,7 +488,7 @@ func wait_for(params: Dictionary) -> Dictionary:
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
 	if kind == "signal":
 		return await signal_wait._wait_for_signal(params, timeout_ms, tree.process_frame)
-	var limited: bool = params.has("limitGameMs") or bool(params.get("keepRaised", false))
+	var limited: bool = params.has("limitGameMs") or bool(params.get("pacedStep", false))
 	var refusal: String = _paused_refusal(tree.paused, timeout_ms, limited)
 	if not refusal.is_empty():
 		return {"error": refusal}
@@ -539,7 +540,7 @@ static func _with_call(outcome: Dictionary, called: Dictionary) -> Dictionary:
 
 ## Why a non-signal wait cannot run now, or empty: a pausable node's state cannot change while
 ## the tree is paused, so a non-signal wait could only time out; only a check-once wait
-## (timeout_ms 0) runs while paused. A scratch step's wait (limitGameMs: an until; keepRaised: a
+## (timeout_ms 0) runs while paused. A scratch step's wait (limitGameMs: an until; pacedStep: a
 ## paced step's pace), whose call may pause or unpause the tree itself, is never refused: on a
 ## tree still paused it ends at the server's real-time backstop, read as a clock that stood still.
 func _paused_refusal(paused: bool, timeout_ms: int, limited: bool) -> String:
@@ -889,10 +890,11 @@ func _run_then_into(drawn: Dictionary) -> void:
 
 ## Runs params.then now, once: its call through the inspector, then its timeScale, then its pause.
 ## A then.record adds movieFrame, the frames Movie Maker has written before this one, as
-## movie_frame answers it in this frame; the server places the mark there. Returns {frame,
-## movieFrame?, call?, timeScale?, paused?}, {failed, frame} when the call failed, {failed_pause,
-## frame} when a step or a capture still ran and the pause was skipped, or {} when params has no
-## then.
+## movie_frame answers it in this frame; the server places the mark there. A call whose method
+## logged an error is not a failed one: call is then {value, raised} and the rest still runs.
+## Returns {frame, movieFrame?, call?, timeScale?, paused?}, {failed, frame} when the call or the
+## timeScale (_set_time_scale) was refused, {failed_pause, frame} when a step or a capture still
+## ran and the pause was skipped, or {} when params has no then.
 func _run_then(params: Dictionary) -> Dictionary:
 	if not params.get("then") is Dictionary:
 		return {}

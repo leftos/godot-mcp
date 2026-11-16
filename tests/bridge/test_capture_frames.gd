@@ -291,7 +291,7 @@ func test_call_once_answers_a_missing_node_as_call_method_refuses_it() -> void:
 	_free_call_rig(rig)
 
 
-func test_call_once_fails_on_an_error_the_feed_logs_across_the_call() -> void:
+func test_call_once_keeps_an_error_the_feed_logs_across_the_call() -> void:
 	var rig: Dictionary = _call_rig()
 	rig["target"].log_to_feed(Logger.ERROR_TYPE_ERROR, "an older error")
 	var called: Dictionary = {}
@@ -299,6 +299,7 @@ func test_call_once_fails_on_an_error_the_feed_logs_across_the_call() -> void:
 		{"call": {"node": "CallTarget", "method": "add", "args": [1, 1]}}, called
 	)
 	assert_eq(clean, "", "an error logged before the call is not the call's")
+	assert_eq(called, {"value": 2}, "nor is it its raised")
 	var warned: Dictionary = {}
 	var warning: String = rig["time"]._call_once(
 		{"call": {"node": "CallTarget", "method": "warn"}}, warned
@@ -309,22 +310,39 @@ func test_call_once_fails_on_an_error_the_feed_logs_across_the_call() -> void:
 	var error: String = rig["time"]._call_once(
 		{"call": {"node": "CallTarget", "method": "fail"}}, failed
 	)
-	assert_eq(error, "the method failed", "the first new error's message")
-	assert_eq(failed, {}, "no value")
-	_free_call_rig(rig)
-
-
-func test_call_once_in_a_scratch_until_keeps_the_call_and_its_raised_error() -> void:
-	var rig: Dictionary = _call_rig()
-	var called: Dictionary = {}
-	var failed: String = rig["time"]._call_once(
-		{"call": {"node": "CallTarget", "method": "fail"}, "limitGameMs": 500}, called
-	)
-	assert_eq(failed, "", "an error the step logs does not end its until's wait")
+	assert_eq(error, "", "an error the method logs does not fail the call")
 	assert_eq(
-		called, {"value": 3, "raised": "the method failed"}, "the value, and the first error raised"
+		failed, {"value": 3, "raised": "the method failed"}, "the value, and the first error raised"
 	)
 	_free_call_rig(rig)
+
+
+func test_first_refused_call_since_reads_only_the_engine_refusing_call_nows_callv() -> void:
+	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
+	var refusal := "Error calling method from 'callv': Method expected 1 argument, but called with 0."
+	var inspector := "res://addons/x/godot_mcp_inspect.gd"
+	_log_to(logger, "call_now", inspector, refusal)
+	var mark: int = logger.sequence()
+	_log_to(logger, "call_method", inspector, refusal)
+	_log_to(logger, "call_now", inspector, "Cannot call method 'queue_free' on a null value.")
+	_log_to(logger, "call_now", "res://addons/x/game.gd", refusal)
+	assert_eq(
+		logger.first_refused_call_since(mark), "", "only call_now's own callv, after the mark"
+	)
+	_log_to(logger, "call_now", inspector, refusal)
+	assert_eq(
+		logger.first_refused_call_since(mark), refusal, "the engine refusing call_now's callv"
+	)
+	assert_eq(logger.first_refused_call_since(logger.sequence()), "", "none after a later mark")
+	assert_eq(
+		logger.first_error_since(mark), refusal, "first_error_since still reads the first error"
+	)
+
+
+## Logs an error with message at function in file to logger, as the engine would.
+static func _log_to(logger: Logger, function: String, file: String, message: String) -> void:
+	var none: Array[ScriptBacktrace] = []
+	logger._log_error(function, file, 1, message, "", false, Logger.ERROR_TYPE_ERROR, none)
 
 
 ## A clock whose bridge is a stand-in holding the inspector, the JSON module and an unregistered

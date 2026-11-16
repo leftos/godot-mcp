@@ -2330,51 +2330,88 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task AnExpressionWaitWhoseCallErrorsAnswersTheErrorAndNoWait()
+    public async Task AnExpressionWaitWhoseCallErrorsIsMetAndListsTheError()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await AddTimeProbeAsync(cancellation);
 
-        // The condition holds at once, so a wait that went on past the failed call would be met rather than answer the error.
-        McpException wait = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.WaitForAsync(
-                new WaitCondition(Expression: "true"),
-                3000,
-                new WaitOptions(Call: new MethodCall("TimeProbe", "fail_on_null")),
-                cancellationToken: cancellation
-            )
+        // The condition holds at once, so the wait that goes on past the call's error is met at its first check.
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Expression: "true"),
+            3000,
+            new WaitOptions(Call: new MethodCall("TimeProbe", "fail_on_null")),
+            cancellationToken: cancellation
         );
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
 
-        Assert.Contains("queue_free", wait.Message, StringComparison.Ordinal);
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        AssertRaisedOnNull(waited["call"]!);
+        AssertErrorListed(waited, "queue_free");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task ACallThatErrorsAnswersTheErrorAndNoFrames()
+    public async Task ACallThatErrorsGoesOnAndListsTheError()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await AddTimeProbeAsync(cancellation);
         MethodCall failing = new("TimeProbe", "fail_on_null");
 
-        McpException capture = await Assert.ThrowsAsync<McpException>(() =>
-            CaptureFramesAsync([0.1], new CaptureFramesOptions(Call: failing), cancellation)
-        );
-        McpException wait = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.WaitForAsync(new WaitCondition(Frames: 3), null, new WaitOptions(Call: failing), cancellationToken: cancellation)
-        );
-
-        // The start's condition holds at once, so a capture that went on past the failed start call would be met rather than
-        // answer the error.
-        McpException startCall = await Assert.ThrowsAsync<McpException>(() =>
-            CaptureFramesAsync([0.1], new CaptureFramesOptions(Start: new CaptureStart(Expression: "true", Call: failing)), cancellation)
+        JsonObject capture = await CaptureFramesAsync([0.1], new CaptureFramesOptions(Call: failing), cancellation);
+        JsonObject wait = JsonNode
+            .Parse(
+                Text(await _tools.WaitForAsync(new WaitCondition(Frames: 3), null, new WaitOptions(Call: failing), cancellationToken: cancellation))
+            )!
+            .AsObject();
+        JsonObject startCall = await CaptureFramesAsync(
+            [0.1],
+            new CaptureFramesOptions(Start: new CaptureStart(Expression: "true", Call: failing)),
+            cancellation
         );
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             CaptureFramesAsync([0.1], new CaptureFramesOptions(Call: new MethodCall("TimeProbe", "no_such_method")), cancellation)
         );
 
-        Assert.Contains("queue_free", capture.Message, StringComparison.Ordinal);
-        Assert.Contains("queue_free", wait.Message, StringComparison.Ordinal);
-        Assert.Contains("queue_free", startCall.Message, StringComparison.Ordinal);
+        Assert.Single(capture["files"]!.AsArray());
+        AssertRaisedOnNull(capture["call"]!);
+        AssertErrorListed(capture, "queue_free");
+        Assert.True(wait["met"]!.GetValue<bool>(), wait.ToJsonString());
+        AssertRaisedOnNull(wait["call"]!);
+        AssertErrorListed(wait, "queue_free");
+        Assert.Single(startCall["files"]!.AsArray());
+        AssertRaisedOnNull(startCall["start"]!["call"]!);
         Assert.Contains("Node '/root/TimeProbe' has no method 'no_such_method'.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACallvTheEngineRefusesFailsTheWait()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+
+        // emit_signal is vararg, so the bridge's count check lets a call with no signal name through to callv, which Godot
+        // refuses; that refusal is the call's, not an error its method raised.
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(
+                new WaitCondition(Frames: 2),
+                null,
+                new WaitOptions(Call: new MethodCall("TimeProbe", "emit_signal")),
+                cancellationToken: cancellation
+            )
+        );
+
+        Assert.Contains("Error calling method from 'callv'", refused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Asserts that result's errors list an entry whose message contains text.</summary>
+    private static void AssertErrorListed(JsonObject result, string text) =>
+        Assert.Contains(result["errors"]!.AsArray(), error => error!["message"]!.GetValue<string>().Contains(text, StringComparison.Ordinal));
+
+    /// <summary>Asserts that call is fail_on_null's: the null-instance error raised, and the int return type's default, since a
+    /// GDScript runtime error ends the method with it.</summary>
+    private static void AssertRaisedOnNull(JsonNode call)
+    {
+        Assert.Equal("Cannot call method 'queue_free' on a null value.", call["raised"]!.GetValue<string>());
+        Assert.Equal(0, call["value"]!.GetValue<int>());
     }
 
     [Fact(Timeout = TestTimeoutMs)]

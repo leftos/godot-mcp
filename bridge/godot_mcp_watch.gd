@@ -596,8 +596,9 @@ func advance(watch: Dictionary, paused: bool, frame_count: int, delta: float, no
 
 
 ## Stamps the watch's first frame and calls params.call there (Inspect's call_now, keeping its
-## {value}), before anything is sampled; returns false when the call failed, which ends the watch
-## with its error and lets it go as though none had started.
+## {value, raised?}: an error the method logs does not fail it), before anything is sampled;
+## returns false when the call was refused, which ends the watch with its error and lets it go as
+## though none had started.
 func _first_frame(watch: Dictionary, frame_count: int, now_ms: int) -> bool:
 	watch["start_frame"] = frame_count
 	watch["began_ms"] = now_ms

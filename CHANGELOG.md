@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- A method that `wait_for`, `capture_frames` or `watch` calls no longer fails the tool when it logs an error; the error comes back in `errors`.
+
+### For agents
+
+- `options.call` and `then.call` (`wait_for`, `capture_frames` and its `start`, `watch`): a logged error adds `call.raised` and lands in `errors`; only a refused call fails. `options.maxWallMs` states its 1 to 120000 bound.
+
 ## 0.43.0 - 2026-11-16
 
 ### Added

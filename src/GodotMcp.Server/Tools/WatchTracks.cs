@@ -132,8 +132,8 @@ internal sealed record WatchOptions(
             + "counts from the method's entry; a coroutine is not awaited. Or {tool, args: {...}} for a game tool by name with "
             + "named arguments, as call_game_tool takes them. start's and run's replies add call: {value}, the method's return "
             + "value as call_method returns it (null for a coroutine); a game tool's adds tool and type, and pending: true with a "
-            + "null value for a Task, which is not awaited. A call refused as call_method or call_game_tool refuses it, or an "
-            + "error it raises, fails the call and ends the watch."
+            + "null value for a Task, which is not awaited. A call refused as call_method or call_game_tool refuses it fails the "
+            + "call and ends the watch; an error the method raises comes back in errors and as call.raised."
     )]
         MethodCall? Call = null,
     [property: Description(

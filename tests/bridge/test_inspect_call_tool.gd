@@ -2,8 +2,9 @@ extends "res://gd_test.gd"
 ## The inspector's call_now for a game tool (bridge/godot_mcp_inspect.gd): params {tool,
 ## extension, request} go to the C# helper through the Dotnet child's call_now, stubbed here as
 ## test_state.gd stubs it, and its reply comes back as {tool, reply} untouched, as the helper's
-## own text, as {value: null, tool, pending: true} after the pending call is forgotten, or as the
-## first error the feed logged across the call, read from a stub logger.
+## own text, or as {value: null, tool, pending: true} after the pending call is forgotten; the
+## first error the feed logged across an answered call, read from a stub logger, is added to the
+## answer as raised.
 
 const EXTENSION := "C:/cache/dotnet/0123abcd/godot_mcp_dotnet.gdextension"
 const REQUEST := (
@@ -66,11 +67,31 @@ func test_a_pending_reply_forgets_the_call_and_answers_pending() -> void:
 	_free(rig)
 
 
-func test_an_error_logged_across_an_answered_call_fails_it() -> void:
+func test_an_error_logged_across_an_answered_call_is_kept_beside_the_reply() -> void:
 	var rig: Dictionary = _rig(GDExtensionManager.LOAD_STATUS_OK, [BIG])
 	rig["logger"].error = "CsTools complained"
 	var outcome: Variant = rig["inspect"].call_now(_params("Complain"))
-	assert_eq(outcome, "CsTools complained", "the feed's first error since the call's mark")
+	assert_eq(
+		outcome,
+		{"tool": "Complain", "reply": BIG, "raised": "CsTools complained"},
+		"the reply, and the feed's first error since the call's mark as raised"
+	)
+	_free(rig)
+
+
+func test_an_error_logged_across_a_pending_call_is_kept_beside_the_pending_answer() -> void:
+	var replies: Array = ['{"ok":true,"pending":"c1"}', '{"ok":true,"result":{"forgotten":"c1"}}']
+	var rig: Dictionary = _rig(GDExtensionManager.LOAD_STATUS_OK, replies)
+	rig["logger"].error = "CsTools complained"
+	var outcome: Variant = rig["inspect"].call_now(_params("FetchLater"))
+	assert_eq(
+		outcome,
+		{"value": null, "tool": "FetchLater", "pending": true, "raised": "CsTools complained"},
+		"pending, no value, and the feed's first error as raised"
+	)
+	assert_eq(
+		rig["requests"], [REQUEST, '{"id":"c1","op":"forget"}'], "the pending call is forgotten"
+	)
 	_free(rig)
 
 

@@ -428,6 +428,36 @@ func test_a_failed_call_ends_the_watch_as_though_none_had_started() -> void:
 	_free(rig)
 
 
+func test_a_watch_call_that_raises_starts_and_keeps_the_error() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
+	rig["bridge"]._logger = logger
+	var script := GDScript.new()
+	script.source_code = (
+		"extends Node\n\nvar logger: Logger\n\n\nfunc shout() -> int:\n"
+		+ "\tvar none: Array[ScriptBacktrace] = []\n"
+		+ "\tlogger._log_error('f', 'res://t.gd', 1, 'shouted', '', false, "
+		+ "Logger.ERROR_TYPE_ERROR, none)\n\treturn 5\n"
+	)
+	script.reload()
+	var shouter: Node = script.new()
+	shouter.name = "Shouter"
+	shouter.logger = logger
+	rig["top"].add_child(shouter)
+	var params: Dictionary = _rotation(5)
+	params["call"] = {"node": "Shouter", "method": "shout"}
+	var outcome: Dictionary = {}
+	_start_into(watch, params, false, test_frame, outcome)
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	logger.take_pending()
+	assert_true(not outcome.has("error"), "the call's error does not fail it: %s" % outcome)
+	var reply: Dictionary = outcome.get("result", {})
+	assert_eq(reply.get("call"), {"value": 5, "raised": "shouted"}, "the start's reply: %s" % reply)
+	assert_true(test_frame.get_connections().size() > 0, "the watch is running")
+	_free(rig)
+
+
 func test_a_cancel_ends_its_own_watch_as_its_deadline_would() -> void:
 	var rig: Dictionary = _rig()
 	var watch: Node = rig["watch"]

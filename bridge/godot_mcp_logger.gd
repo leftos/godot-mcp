@@ -29,6 +29,9 @@ const MAX_FRAMES := 10
 ## C# error's glue, an ERR_FAIL in the node a script called), so the error is moved to the most
 ## recent script frame and the engine's site is kept as "engine".
 const SCRIPT_PREFIXES: PackedStringArray = ["res://", "gdscript://"]
+## How Object::callv's refusal of a call begins, and the inspector script call_now is in.
+const CALLV_REFUSAL := "Error calling method from 'callv'"
+const INSPECTOR_SCRIPT := "godot_mcp_inspect.gd"
 
 ## In an editor session, the editor mode script (godot_mcp_editor_mode.gd), whose is_noise entries
 ## are dropped before they are queued; null in a game.
@@ -155,7 +158,8 @@ static func _latest_frame_files(backtraces: Array[ScriptBacktrace]) -> Array:
 	return files
 
 
-## The sequence number the next entry logged takes, the mark first_error_since reads from.
+## The sequence number the next entry logged takes, the mark first_error_since and
+## first_refused_call_since read from.
 func sequence() -> int:
 	_mutex.lock()
 	var next: int = _sequence
@@ -167,13 +171,43 @@ func sequence() -> int:
 ## still held, or "" when there is none: one take_pending has sent, or one dropped over the cap, is
 ## not seen.
 func first_error_since(since: int) -> String:
+	return _first_since(since, func(_entry: Dictionary) -> bool: return true)
+
+
+## The message of the first error logged at or after sequence number since that is Godot refusing
+## the inspector's own callv in call_now, or "" when there is none, seen as first_error_since sees
+## entries. Object::callv logs that refusal through ERR_FAIL (core/object/object.cpp L762-763 in
+## 4.7.2) from the engine's file, so _locate_in_script places it at the newest script frame,
+## call_now in godot_mcp_inspect.gd; the server reads call_method's refusal the same way
+## (RuntimeTools.IsRefusedCall). A callv a called GDScript method makes itself is placed in that
+## method. A native method that calls callv inside it (Node.propagate_call, scene/main/node.cpp
+## L2592-2602) and a C# method calling GodotObject.Callv leave no GDScript frame above call_now,
+## so their inner refusal is placed at call_now and read as the call's own refusal. In a release
+## export without always_track_call_stacks (modules/gdscript/gdscript.cpp L2871-2875) no script
+## stack is recorded: the refusal keeps function callv and the engine's file, so it is not found
+## here, and the call's answer carries it as raised.
+func first_refused_call_since(since: int) -> String:
+	return _first_since(since, _is_refused_call)
+
+
+static func _is_refused_call(entry: Dictionary) -> bool:
+	return (
+		str(entry["message"]).begins_with(CALLV_REFUSAL)
+		and entry["function"] == "call_now"
+		and str(entry["file"]).ends_with(INSPECTOR_SCRIPT)
+	)
+
+
+## The message of the first held error logged at or after sequence number since for which
+## matches(entry) holds, or "".
+func _first_since(since: int, matches: Callable) -> String:
 	_mutex.lock()
 	var number: int = _sequence - _dropped - (_pending.size() - _held_marks)
 	var found: String = ""
 	for entry: Dictionary in _pending:
 		if entry["type"] == "mark":
 			continue
-		if number >= since and entry["type"] == "error":
+		if number >= since and entry["type"] == "error" and matches.call(entry):
 			found = entry["message"]
 			break
 		number += 1

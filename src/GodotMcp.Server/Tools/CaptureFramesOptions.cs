@@ -26,8 +26,9 @@ internal sealed record CaptureFramesOptions(
             + "method's entry, with no round trip between; a coroutine is not awaited. Or {tool, args: {...}} for a game tool by "
             + "name with named arguments, as call_game_tool takes them. The result adds call: {value}, the method's return value "
             + "as call_method returns it (null for a coroutine); a game tool's adds tool and type, and pending: true with a null "
-            + "value for a Task, which is not awaited. A call refused as call_method or call_game_tool refuses it, or an error "
-            + "it raises, fails the capture with no frames. With start, it runs in the frame the start is met, after start.then."
+            + "value for a Task, which is not awaited. A call refused as call_method or call_game_tool refuses it fails the "
+            + "capture with no frames; an error the method raises comes back in errors and as call.raised. With start, it runs "
+            + "in the frame the start is met, after start.then."
     )]
         MethodCall? Call = null,
     [property: Description(
@@ -122,7 +123,8 @@ internal sealed record CaptureStart(
     [property: Description(
         "{call?, timeScale?}, run once in the frame the condition is met, as wait_for's options.then, before options.call; pause is "
             + "refused, as a paused game adds no game time, so the capture would never advance. start adds then: {frame, call?, "
-            + "timeScale?}. A refused or failing call fails the capture with no frames."
+            + "timeScale?}. A refused call fails the capture with no frames; an error the method raises comes back in errors and "
+            + "as start.then.call.raised."
     )]
         WaitThen? Then = null,
     [property: Description(
@@ -130,7 +132,8 @@ internal sealed record CaptureStart(
             + "edge start's baseline check and before the check that can meet the start, so the start sees the change it makes; "
             + "a change an earlier tool call made may already have happened before the start's first check. timeoutMs counts "
             + "from after the call, and a start met on the check right after it starts the clock in the call's frame. start adds "
-            + "call: {value}, as options.call's. A refused or failing call fails the capture with no frames."
+            + "call: {value}, as options.call's. A refused call fails the capture with no frames; an error the method raises comes "
+            + "back in errors and as start.call.raised."
     )]
         MethodCall? Call = null,
     [property: Description("Refused: options.start takes an exists, property, expression or signal condition.")] string? Text = null,

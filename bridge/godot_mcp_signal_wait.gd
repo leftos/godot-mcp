@@ -33,8 +33,8 @@ func _wait_for_signal(params: Dictionary, timeout_ms: int, frame: Signal) -> Dic
 
 
 ## Calls params.call, if any (the clock's _call_once), then polls caught, the connected signal
-## probe, and releases hold's connection either way. Returns the signal outcome, with call: {value}
-## when a method was called, or {error} when the call failed.
+## probe, and releases hold's connection either way. Returns the signal outcome, with call: {value,
+## raised?} when a method was called, or {error} when the call was refused.
 func _call_and_poll_signal(
 	caught: Callable, params: Dictionary, timeout_ms: int, hold: Dictionary
 ) -> Dictionary:

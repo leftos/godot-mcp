@@ -861,7 +861,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A step that stops the walk also lists the errors raised after its cut, as `errorsAfterCut` in its details, since no later step takes them; they are shown only, and its `error` stays its own stop reason. A line or error from another thread in the very instant the window ends may fall on either side (unspecified).
 
-  The bridge ends the window itself: as the wait ends it prints the `[godot-mcp] scratch … end <nonce>` line to stdout and stderr and marks its error feed (`wait_for`'s `endMarker`, `endMarkerAtGameMs` and `keepRaised` params and `endMarked` result, which the runner alone sends and the MCP tool's schema never offers).
+  The bridge ends the window itself: as the wait ends it prints the `[godot-mcp] scratch … end <nonce>` line to stdout and stderr and marks its error feed (`wait_for`'s `endMarker`, `endMarkerAtGameMs` and `pacedStep` params and `endMarked` result, which the runner alone sends and the MCP tool's schema never offers).
 
   When the wait fails, or the game closes inside it, the window falls back to a marker the runner has the game print afterwards and takes every error so far, and the server logs `scratch: step <n> window fell back to the runner's marker: the bridge did not end the wait` (or `…: the feed has no mark <marker>`; `pace` in place of `step <n>` for the exit's window) to stderr.
 
@@ -1581,7 +1581,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   Or `options.call {tool, args?}` calls a game tool, a C# method the game marks `[GodotMcpTool]`, by its name as `list_game_tools` lists it, with `args` an object keyed by parameter name as `call_game_tool` takes it; the result's `call` is then `call_game_tool`'s `{tool, value, type, build?}`, and a tool that returns a `Task` is not awaited: `call` reads `pending: true` with a null `value`.
 
-  A call refused as `call_method` or `call_game_tool` refuses it, or an error it raises, fails the capture with no frames.
+  A call refused as `call_method` or `call_game_tool` refuses it fails the capture with no frames. An error the method raises does not: the capture goes on, the call is `{value, raised}` with `raised` the first such error's message, and the error is in `errors`, as `call_method` answers it.
 
   `options.start {node, property, equals | exists | expression | signal, edge?, timeoutMs?, then?, call?}` is a condition laid out as `wait_for`'s, of kind `exists`, `property`, `expression` or `signal`, that the clock waits for: the points count from the frame it is met, not from the call, so a round trip after a `wait_for` does not shift them. `equals: null` there waits for a present null, as in `wait_for`; `start` takes no `match`.
 
@@ -1597,7 +1597,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   Put the call that causes the change in the same request (`start.call`, or `wait_for`'s `options.call`).
 
-  A `start.call` the bridge refuses, or that fails, fails the capture with its error and takes no frames.
+  A `start.call` the bridge refuses fails the capture with its error and takes no frames; an error its method raises sets `start.call.raised` and lands in `errors`, and the capture goes on.
 
   Another kind is refused: `options.start takes an exists, property, expression or signal condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries)
 
@@ -1618,7 +1618,9 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   It ends at `options.timeoutMs` (default the last point + 10 s + 100 ms a point, load-adjusted; 1 to 600000) and then answers the frames taken with `stopped: true` and `missed`, the points not reached, still a success: under a small `time_scale`, raise `timeoutMs`.
 
-  A game that pauses itself partway stops its clock, so it ends the same way. A call refused as `call_method` refuses it, or a method that raises an error (a GDScript runtime error or C# exception cannot be caught, so the bridge's error feed is read across the call), fails the capture with that error and no frames; an unrelated error another node raises in that same frame fails it too.
+  A game that pauses itself partway stops its clock, so it ends the same way.
+
+  A call refused as `call_method` refuses it, or whose call Godot itself refuses (`Error calling method from 'callv'`, such as a vararg method like `emit_signal` given too few arguments), fails the capture with that error and no frames, as it does for `wait_for` and `watch`; a method that raises an error (a GDScript runtime error or C# exception cannot be caught, so the bridge's error feed is read across the call) does not, and the error comes back as `call.raised` and in `errors`.
 
 ### `watch`
 
@@ -1647,7 +1649,9 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   `window` is exactly one of `{frames}` (1 to 7200 unpaused frames, physics ticks with `unit: "physics"`) or `{gameMs}` (1 to 120000 ms of game time, the sum of each unpaused frame's scaled delta, so it follows `Engine.time_scale` as the game's own timers do); `start` defaults to `{frames: 600}`, `run` needs one.
 
-  `options {call, unit, budgetMs}`: `call {node, method, args?}`, or `{tool, args?}` for a game tool as `capture_frames` takes it, is called in the watch's first frame, before its first sample, so the window counts from the method's entry (a coroutine is not awaited), and `start`'s and `run`'s replies add `call: {value}` (`call_game_tool`'s `{tool, value, type, build?}` for the tool form); `unit` is `process` (the default) or `physics`.
+  `options {call, unit, budgetMs}`: `call {node, method, args?}`, or `{tool, args?}` for a game tool as `capture_frames` takes it, is called in the watch's first frame, before its first sample, so the window counts from the method's entry (a coroutine is not awaited), and `start`'s and `run`'s replies add `call: {value, raised?}` (`call_game_tool`'s `{tool, value, type, build?}` for the tool form); `unit` is `process` (the default) or `physics`.
+
+  A refused `call` ends the watch with its error; an error the method raises sets `call.raised` and lands in `errors`, and the watch starts.
 
   `minDelta` (above 0, numeric tracks only) keeps a sample only when it moved at least that far from the last one kept (an int or float by its difference, a vector when any component did): `minDelta: 1` on a tween's `position:y`. Between `start` and `stop` any tool runs: input, `wait_for`, `capture_frames`, `get_game_state`, `run_script`, `frame_control`'s `pause`, `step` and `resume`.
 
@@ -1793,7 +1797,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   A `signal` wait connects before the call, so a signal the call emits at once is caught, and it does not catch an emission from the frames before the call.
 
-  The result adds `call` as `capture_frames`' does; a refused or erroring call fails the wait. A check-once wait (`timeoutMs: 0`) with a call waits for the next frame, calls, then checks once.
+  The result adds `call` as `capture_frames`' does; a refused call fails the wait, while an error the method raises sets `call.raised` and lands in `errors`, and the wait goes on. A check-once wait (`timeoutMs: 0`) with a call waits for the next frame, calls, then checks once.
 
   A `uiChanged` or `output` wait refuses `options.call` (`options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; this condition is {kind}.`), and `batch_drive`'s wait assertion has none: put a `call_method` step before it.
 
@@ -1849,13 +1853,13 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   Where a pause lands: a plain wait pauses before the met frame's `_process`, after its physics, so a read afterwards gives the values the wait met but anything the game updates in `_process` (a shader parameter, an animation) may still show the previous frame. Give `options.screenshot: true` when a picture or crop must match the values: that wait pauses after the met frame is drawn. For whole stepped frames from a paused game, `frame_control step {options: {until}}` stops on the met frame too.
 
-  A failed `then.call` does not pause (its error says `the game was not paused`), and neither does a wait whose met frame comes while a `frame_control` step or a `capture_frames` runs: the wait fails, naming the running one. `capture_frames`' `start.then` refuses `pause` (`capture_frames' start.then cannot pause: a paused game adds no game time, so the capture would never advance.`).
+  A refused `then.call` does not pause (its error says `the game was not paused`), and neither does a wait whose met frame comes while a `frame_control` step or a `capture_frames` runs: the wait fails, naming the running one. `capture_frames`' `start.then` refuses `pause` (`capture_frames' start.then cannot pause: a paused game adds no game time, so the capture would never advance.`).
 
   A slow-motion shot of a moment: `wait_for {condition: {expression: "…"}, options: {then: {timeScale: 0.2}}}`, then `capture_frames`, or give `capture_frames` an `options.start` that waits for the condition and counts its points from the met frame. The result adds `then: {frame, call?: {value}, timeScale?, paused?, record?}`, `frame` being `Engine.get_process_frames()` when it ran.
 
   A plain wait runs it at that frame's start, before the nodes process (a check met at once runs it inside the request); with `options.screenshot` it runs after the met frame is drawn and grabbed, but a check-once wait runs it before its capture, which can then show its effect; a signal wait runs it in the frame the wait notices the emission.
 
-  A refused or erroring `then.call` fails the wait with no screenshot: `The condition was met after 12 frames (frame 4810), but then.call failed, so timeScale was not set: …`. A timeout runs nothing. A recording's 60 fps clip does not follow `timeScale`. `batch_drive`'s wait assertion takes no `then` and no `edge`: use a `wait_for` tool step.
+  A refused `then.call` fails the wait with no screenshot: `The condition was met after 12 frames (frame 4810), but then.call failed, so timeScale was not set: …`. An error the method raises does not: `then.call` is `{value, raised}`, the error is in `errors`, and `timeScale`, `pause` and `record` still run. A timeout runs nothing. A recording's 60 fps clip does not follow `timeScale`. `batch_drive`'s wait assertion takes no `then` and no `edge`: use a `wait_for` tool step.
 - **Wait for a rise:** `options.edge: true`, with an `exists`, `property`, `expression`, `text` or `state` wait, is met only on a check that finds the condition true after a check that found it false.
 
   A first check that already finds it true is not met, so a condition already true waits for its next rise (with `options.call`, the baseline check runs in the call's frame before the call, so an effect the call makes at once is met as a rise), and one true for the whole wait times out with `met: false` and `last` the true value.

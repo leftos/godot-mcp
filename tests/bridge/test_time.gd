@@ -11,6 +11,10 @@ extends "res://gd_test.gd"
 ## Stands in for the tree's process_frame in a game-time wait, so its connections can be read.
 signal test_frame
 
+## A call refused before it runs: no node is named Nowhere. A refusal naming CallTarget's path
+## would read the path of a node outside any tree, which logs an engine error.
+const MISSING_CALL := {"node": "Nowhere", "method": "go"}
+
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
 
 
@@ -375,35 +379,41 @@ func test_the_result_says_endMarked() -> void:
 	_free_then_rig(rig)
 
 
-## A paced step's pace is one wait whose call is PlayStep, carrying keepRaised: the call runs in the
-## clock's first frame, which the clock counts, so the pace starts in PlayStep's frame; an error the
-## call logs is its raised, not its failure, as for an until's call. Without keepRaised it fails.
-func test_a_keep_raised_wait_calls_in_its_clocks_first_frame_and_keeps_the_calls_error() -> void:
+## A wait's call runs in the clock's first frame, which the clock counts, so a paced step's pace
+## (a pacedStep wait whose call is PlayStep) starts in PlayStep's frame; an error the call logs is
+## its raised, not its failure, for a plain wait and a paced step alike.
+func test_a_wait_with_a_call_calls_in_its_clocks_first_frame_and_keeps_the_calls_error() -> void:
 	var rig: Dictionary = _then_rig()
 	rig["time"].wait_tree = _compile("extends RefCounted\n\nvar paused: bool = false\n")
 	var call: Dictionary = {"node": "CallTarget", "method": "fail", "args": []}
 	var kept: Array = []
-	var failed: Array = []
+	var plain: Array = []
 	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
 	var keeping := func() -> void:
 		var called: Dictionary = {}
-		var params: Dictionary = {"call": call, "keepRaised": true}
+		var params: Dictionary = {"call": call, "pacedStep": true}
 		var why: String = await rig["time"]._start_with_call(params, called, clock, test_frame)
 		kept.append([why, called])
-	var failing := func() -> void:
+	var plain_start := func() -> void:
 		var other: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
-		var why: String = await rig["time"]._start_with_call({"call": call}, {}, other, test_frame)
-		failed.append(why)
+		var called: Dictionary = {}
+		var why: String = await rig["time"]._start_with_call(
+			{"call": call}, called, other, test_frame
+		)
+		plain.append([why, called])
 	keeping.call()
-	failing.call()
+	plain_start.call()
 	test_frame.emit()
 	rig["bridge"]._logger.take_pending()
-	assert_eq(kept.size(), 1, "the keep-raised start answered")
+	assert_eq(kept.size(), 1, "the paced step's start answered")
 	if kept.size() == 1:
 		assert_eq(kept[0][0], "", "the call's logged error is not its failure")
 		assert_eq(kept[0][1], {"value": 3, "raised": "the method failed"}, "its value and raised")
 	assert_eq(clock["frames"], 1, "the call's frame is the clock's first")
-	assert_eq(failed, ["the method failed"], "without keepRaised the logged error fails the call")
+	assert_eq(plain.size(), 1, "the plain start answered")
+	if plain.size() == 1:
+		assert_eq(plain[0][0], "", "a plain wait's call does not fail on it either")
+		assert_eq(plain[0][1], {"value": 3, "raised": "the method failed"}, "its value and raised")
 	_free_then_rig(rig)
 
 
@@ -555,9 +565,9 @@ func test_a_held_shot_stays_held_while_its_clock_stands_still_and_a_cancel_ends_
 	_free_then_rig(rig)
 
 
-## A paced step's keepRaised wait is never refused on a paused tree: its call (PlayStep, which may
+## A paced step's pacedStep wait is never refused on a paused tree: its call (PlayStep, which may
 ## unpause it) runs, as an until's does.
-func test_a_keep_raised_wait_on_a_paused_tree_is_not_refused_and_its_call_runs() -> void:
+func test_a_paced_step_wait_on_a_paused_tree_is_not_refused_and_its_call_runs() -> void:
 	var rig: Dictionary = _then_rig()
 	var fixture: Node = _compile(
 		"extends Node\n\n\nfunc _on_godot_mcp_wait_started(_kind: String) -> void:\n\tpass\n"
@@ -569,7 +579,7 @@ func test_a_keep_raised_wait_on_a_paused_tree_is_not_refused_and_its_call_runs()
 		"kind": "gameMs",
 		"gameMs": 100,
 		"timeoutMs": 5000,
-		"keepRaised": true,
+		"pacedStep": true,
 		"_cancelled": true,
 		"call": {"node": "CallTarget", "method": "add", "args": [1, 2]},
 	}
@@ -582,9 +592,9 @@ func test_a_keep_raised_wait_on_a_paused_tree_is_not_refused_and_its_call_runs()
 		assert_true(outcomes[0].has("result"), "not refused: %s" % outcomes[0])
 	assert_eq(rig["target"].calls, 1, "its call ran")
 	var plain: Dictionary = params.duplicate()
-	plain.erase("keepRaised")
+	plain.erase("pacedStep")
 	var refused: Dictionary = await rig["time"].wait_for(plain)
-	assert_eq(refused, {"error": rig["time"].PAUSED_REFUSAL}, "without keepRaised: refused")
+	assert_eq(refused, {"error": rig["time"].PAUSED_REFUSAL}, "without pacedStep: refused")
 	fixture.free()
 	_free_then_rig(rig)
 
@@ -933,9 +943,10 @@ func test_a_failed_then_call_skips_the_time_scale_and_names_the_met_frame() -> v
 	Engine.time_scale = 1.0
 	var rig: Dictionary = _then_rig()
 	var frame: int = Engine.get_process_frames()
+	var refusal: String = _missing_node_refusal(rig)
 	var with_scale: Dictionary = rig["time"]._finish_then(
 		{"result": {"met": true, "frames": 4}},
-		{"then": {"call": {"node": "CallTarget", "method": "fail"}, "timeScale": 0.5}},
+		{"then": {"call": MISSING_CALL, "timeScale": 0.5}},
 		{}
 	)
 	assert_true(with_scale.has("error"), "the wait fails: %s" % with_scale)
@@ -944,23 +955,21 @@ func test_a_failed_then_call_skips_the_time_scale_and_names_the_met_frame() -> v
 		(
 			(
 				"The condition was met after 4 frames (frame %d), but then.call failed, "
-				+ "so timeScale was not set: the method failed"
+				+ "so timeScale was not set: %s"
 			)
-			% frame
+			% [frame, refusal]
 		),
 		"the met frame and the reason"
 	)
 	assert_approx(Engine.time_scale, 1.0, "the scale is not set")
 	var without_scale: Dictionary = rig["time"]._finish_then(
-		{"result": {"met": true, "frames": 1}},
-		{"then": {"call": {"node": "CallTarget", "method": "fail"}}},
-		{}
+		{"result": {"met": true, "frames": 1}}, {"then": {"call": MISSING_CALL}}, {}
 	)
 	assert_eq(
 		without_scale["error"],
 		(
-			"The condition was met after 1 frames (frame %d), but then.call failed: the method failed"
-			% frame
+			"The condition was met after 1 frames (frame %d), but then.call failed: %s"
+			% [frame, refusal]
 		),
 		"no timeScale given, no clause"
 	)
@@ -999,18 +1008,36 @@ func test_a_failed_then_call_does_not_pause() -> void:
 	var rig: Dictionary = _tree_then_rig()
 	var failed: Dictionary = rig["time"]._finish_then(
 		{"result": {"met": true, "frames": 4}},
-		{
-			"then":
-			{"call": {"node": "CallTarget", "method": "fail"}, "timeScale": 0.5, "pause": true}
-		},
+		{"then": {"call": MISSING_CALL, "timeScale": 0.5, "pause": true}},
 		{}
 	)
 	assert_true(failed.has("error"), "the wait fails: %s" % failed)
 	assert_true(
-		failed["error"].ends_with("; the game was not paused: the method failed"),
+		failed["error"].ends_with("; the game was not paused: %s" % _missing_node_refusal(rig)),
 		"the text names the pause it did not make: %s" % failed["error"]
 	)
 	assert_true(not rig["tree"].paused, "the tree keeps running")
+	Engine.time_scale = 1.0
+	_free_then_rig(rig)
+
+
+func test_a_then_call_that_raises_still_sets_the_scale_and_pauses() -> void:
+	Engine.time_scale = 1.0
+	var rig: Dictionary = _tree_then_rig()
+	var params: Dictionary = {
+		"then": {"call": {"node": "CallTarget", "method": "fail"}, "timeScale": 0.5, "pause": true}
+	}
+	var met: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 2}}, params, {}
+	)
+	rig["bridge"]._logger.take_pending()
+	assert_true(not met.has("error"), "the wait does not fail: %s" % met)
+	if met.has("result"):
+		var then: Dictionary = met["result"]["then"]
+		assert_eq(then["call"], {"value": 3, "raised": "the method failed"}, "value and raised")
+		assert_approx(then["timeScale"], 0.5, "the scale then set")
+		assert_eq(then["paused"], true, "then reports the pause")
+	assert_true(rig["tree"].paused, "the tree is paused")
 	Engine.time_scale = 1.0
 	_free_then_rig(rig)
 
@@ -1085,15 +1112,35 @@ func test_a_signal_wait_connects_before_its_call_so_an_emission_the_call_makes_i
 
 func test_a_signal_wait_whose_call_fails_fails_and_releases_its_connection() -> void:
 	var rig: Dictionary = _then_rig()
+	var params: Dictionary = {"node": "CallTarget", "signal": "pinged", "call": MISSING_CALL}
+	var hold: Dictionary = {}
+	var caught: Variant = rig["time"].signal_wait.signal_probe(params, hold)
+	var outcome: Dictionary = await rig["time"].signal_wait._call_and_poll_signal(
+		caught, params, 1000, hold
+	)
+	assert_eq(outcome, {"error": _missing_node_refusal(rig)}, "the refused call fails the wait")
+	assert_eq(rig["target"].get_signal_connection_list("pinged").size(), 0, "released")
+	_free_then_rig(rig)
+
+
+func test_a_signal_wait_whose_call_raises_goes_on_and_keeps_the_error() -> void:
+	var rig: Dictionary = _then_rig()
 	var params: Dictionary = {
 		"node": "CallTarget", "signal": "pinged", "call": {"node": "CallTarget", "method": "fail"}
 	}
 	var hold: Dictionary = {}
 	var caught: Variant = rig["time"].signal_wait.signal_probe(params, hold)
 	var outcome: Dictionary = await rig["time"].signal_wait._call_and_poll_signal(
-		caught, params, 1000, hold
+		caught, params, 0, hold
 	)
-	assert_eq(outcome, {"error": "the method failed"}, "the call's error fails the wait")
+	rig["bridge"]._logger.take_pending()
+	assert_true(outcome.has("result"), "the wait goes on: %s" % outcome)
+	if outcome.has("result"):
+		assert_eq(
+			outcome["result"]["call"],
+			{"value": 3, "raised": "the method failed"},
+			"the call's value and its raised error"
+		)
 	assert_eq(rig["target"].get_signal_connection_list("pinged").size(), 0, "released")
 	_free_then_rig(rig)
 
@@ -1138,12 +1185,11 @@ func test_a_signal_start_met_by_its_calls_emission_reports_args_and_releases_it(
 
 func test_a_signal_start_releases_its_connection_however_it_ends_unmet() -> void:
 	var ping: Dictionary = {"node": "CallTarget", "method": "ping", "args": [4]}
-	var fail: Dictionary = {"node": "CallTarget", "method": "fail"}
 	var endings: Dictionary = {
 		"timeout": [{"timeoutMs": 0}, {}],
 		"cancel": [{"timeoutMs": 1000}, {"_cancelled": true}],
 		"deadline": [{"call": ping, "timeoutMs": 1000}, {"_deadline": true}],
-		"failed call": [{"call": fail, "timeoutMs": 1000}, {}],
+		"failed call": [{"call": MISSING_CALL, "timeoutMs": 1000}, {}],
 	}
 	for ending: String in endings:
 		var rig: Dictionary = _then_rig()
@@ -1151,7 +1197,9 @@ func test_a_signal_start_releases_its_connection_however_it_ends_unmet() -> void
 		assert_eq(run["outcomes"].size(), 1, "%s: the start answers" % ending)
 		var outcome: Dictionary = run["outcomes"][0]
 		if ending == "failed call":
-			assert_eq(outcome, {"error": "the method failed"}, "the call's error fails the start")
+			assert_eq(
+				outcome, {"error": _missing_node_refusal(rig)}, "the refused call fails the start"
+			)
 		else:
 			var report: Dictionary = run["start"]
 			report.erase("call")
@@ -1300,6 +1348,11 @@ func _hold_rig() -> Dictionary:
 ## A wait's params that end its window at cut and carry a 100 ms exit hold ending at hold_end.
 func _hold_params(cut: String, hold_end: String) -> Dictionary:
 	return {"endMarker": cut, "holdGameMs": 100, "holdEndMarker": hold_end}
+
+
+## The refusal call_now answers for MISSING_CALL on rig's inspector, as wait_for's not-found text.
+func _missing_node_refusal(rig: Dictionary) -> String:
+	return rig["bridge"]._inspect.not_found("Nowhere", "get_scene_tree lists the nodes' paths")
 
 
 func _free_then_rig(rig: Dictionary) -> void:
