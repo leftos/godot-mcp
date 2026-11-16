@@ -970,6 +970,12 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
     - **It fits decision 55's cut**: the check runs inside the until's one wait, so no round trip lands in the step's window and the cut stays at the until's last check.
     - **Rejected**: named marks (`GetStepShotMarks`: several shots per step, a `screenshots` list in the details, a larger bridge change; `shotWhen` can grow into a map without a protocol break), and a scene-emitted signal (game code would push the shot, which decision 51 ruled out for a hook).
 
+57. **A tooltip the game draws itself reaches `hover` through a node in the `mcp_tooltip` group** (GMCP-613, asked by world-of-intrigue; orchestrator decisions, not owner rulings; the design is archived in [plans/archive/game-tooltips.md](./plans/archive/game-tooltips.md)). The node's state method (`_mcp_state`, or `_McpState` in C#) gives null or `{}` for none, `{pending: true}` while due and `{text, x?, y?, width?, height?}` while showing, read by the state reader, the C# helper included, so no new method, attribute or helper op is needed.
+    - **Godot's own tooltip wins**: the group is read only when no Control owns a Godot tooltip at the pointer, or over no Control at all.
+    - **Polled each frame under `hover`'s timeout**, counted from the end of the first read so a C# helper's first load does not use it up; the first node in tree order showing one wins. A node still pending at the limit, a read error or a malformed state ends the wait with a warning.
+    - **The result carries the node's whole state** as `tooltip.state` beside `owner`, so a game field such as `locked` is read; a Godot tooltip has no `state` key.
+    - **Tried and ruled out**: a `[GodotMcpTool]` game tool (C# only, and a helper request prepared by the server per hover) and a new `_mcp_tooltip` method (a second helper op for the same read).
+
 ## Wire
 
 - **The server listens and the bridge dials in.** The server binds `127.0.0.1:0` and keeps the listener open, then passes the port and a session token to Godot through environment variables (`GODOT_MCP_PORT`, `GODOT_MCP_TOKEN`). This removes the reference server's free-port race and its regex-editing of the port into GDScript.

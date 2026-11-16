@@ -19,7 +19,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Pick a thing to click | `get_ui_elements` (Controls, with viewport rects) | guessing coordinates from a screenshot |
 | Click, drag, type | `click`, `drag`, `type_text`, `key` | `simulate_input`, which is for event sequences the gestures cannot make |
 | Pick an option from a dropdown or a menu (`OptionButton`, `MenuButton`, `PopupMenu`) | `click` with `{element: <the button>, item: {text}}`, which opens the popup first | setting `selected` and emitting `item_selected` by hand; clicking the button, then coordinates read off a screenshot |
-| Hover a Control, see its tooltip | `hover` (waits for the tooltip, returns its text and rect) | a `mouse_button` release as a hover, a `wait_for` as a sleep |
+| Hover a Control, see its tooltip | `hover` (waits for the tooltip, returns its text and rect; a tooltip the game draws itself is read from a node in the `mcp_tooltip` group) | a `mouse_button` release as a hover, a `wait_for` as a sleep |
 | Scroll a list or container, wheel-zoom | `scroll` (wheel notches or a trackpad pan) | a `run_script` that parses wheel events |
 | Drive with a pad | `gamepad_button`, `gamepad_stick`, `gamepad_axis` | `simulate_input` joypad events |
 | Land a check on an exact frame | `frame_control` (`pause`, `step`), then `wait_for` with `timeoutMs: 0` | `wait_for` with a timeout on a running game |
@@ -1418,10 +1418,20 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 - **Does:** moves the pointer to `target` (an element or a point) pressing nothing, held buttons kept in the motion, then, when Godot has a tooltip to show for the pointer, waits for it to show. That tooltip is the hovered Control's, or else the nearest ancestor's, climbing no further than a Control whose mouse filter is Stop or which is top-level (4.7.2 `viewport.cpp` L1566-1596).
 
   Returns `{pointer, heldButtonMask, hoveredOn, tooltip, warning?}`: `hoveredOn` the Control under the pointer (`{path, class}`, null over none), `tooltip` `{text, x, y, width, height, owner}` in viewport coordinates (`text` null for a custom tooltip with no Label; `owner` the Control whose tooltip it is, `{path, class}`), or null.
+
+  When no Control has a Godot tooltip there, or the pointer is over none (`hoveredOn` null), `hover` reads a tooltip the game draws itself: a node in the `mcp_tooltip` group reports it through its state method (`_mcp_state()`, or `_McpState()` in C#, read as `get_game_state` reads it). The state is null or `{}` for none, `{pending: true}` while a tooltip is due, and `{text, x?, y?, width?, height?}` while one shows, `text` a string or null.
+
+  `tooltip` is then `{text, x?, y?, width?, height?, owner, state}`: `owner` the node (`{path, class}`, of any class), the rect keys present only when the state gives all four as numbers, `state` the node's whole value. A Godot tooltip has no `state` key and takes precedence over a game's.
 - **Use:** checking a tooltip's text or look: hover, then `take_screenshot` with the returned rect as its `crop`. `options {tooltip, timeoutMs}`: `tooltip: false` answers right after the move; `timeoutMs` 0 to 10000, by default `gui/timers/tooltip_delay_sec` plus 1 s; in a recording, clip time (60 movie frames a second).
 - **Edges:** Godot starts a tooltip's timer only from a motion over a Control that can process (4.7.2 `viewport.cpp` L2117, L2136), so over a pausable Control in a paused game `hover` answers at once with `tooltip: null` and the warning "the game is paused and <path> cannot process, so its tooltip timer never starts; resume, hover, then pause". A timer once started fires even if the game pauses after, so hover, then `frame_control pause`, keeps the tooltip up.
 
   A tooltip due but not shown in time answers the warning "no tooltip showed within <n> ms". Over a Control with no tooltip, and none on the ancestors that climb reaches, it answers at once, with no warning, except over a `RichTextLabel` that has tooltip spans: the warning is then `no tooltip at (x, y) on <path>; its nearest tooltip span is index N '<text>' at x,y,w,h, D px away; aim at it with item {index: N}`.
+
+  A game tooltip is read once, then polled each frame, paused or not, for `timeoutMs` counted from the end of that first read (so a C# helper's first load does not use it up), and the first node in tree order showing one wins; a state with both `text` and `pending: true` is showing. `tooltip: false` skips the read. With no node in the group showing or pending, the hover answers at once as before.
+
+  A node still pending at the limit answers the warning `the game tooltip of <path> was still pending after <n> ms`. A node whose state cannot be read answers `<path> is in the mcp_tooltip group but its tooltip cannot be read: <error>`, the error as `get_game_state` gives it, except that a node with no state method reads `it has no _mcp_state method`.
+
+  A state with neither a `text` that is a string or null nor `pending: true` (only a boolean `true` counts) answers `<path> is in the mcp_tooltip group but its state is not a tooltip: it has neither text nor pending: true`. Each of these ends the wait.
 
   A `RichTextLabel` with no spans stays silent. A `MenuBar` title's tooltip and an embedded `PopupMenu` item's are read, with a point target or an item target on the open popup (a `PopupMenu`'s items are drawn by its internal `PopupMenuItems` Control, which an element target cannot name, and which `tooltip.owner` reports, the `PopupMenu` two parents up); a native, non-embedded `PopupMenu` is out of reach.
 

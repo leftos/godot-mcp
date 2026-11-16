@@ -212,6 +212,8 @@ Its sessions are skipped by calls that name no `session`, so name one to drive o
 
 `hover` (the pointer over a Control, waiting for its tooltip and returning its text and rect; hover while the game runs, since a paused Control never starts its tooltip timer, then pause if needed).
 
+A tooltip the game draws itself is read by `hover` from a node in the `mcp_tooltip` group whose `_mcp_state()` (`_McpState()` in C#) gives null or `{}` for none, `{pending: true}` while due and `{text, x?, y?, width?, height?}` while showing; it comes back as `tooltip {text, ..., owner, state}`, even over no Control.
+
 `scroll` (wheel notches at a target, `notches` and `options.factor` for how far, `options.via: "pan"` for a trackpad pan; a ScrollContainer moves an eighth of its page per notch, and a child with mouse filter Stop swallows the wheel unless it sets `force_pass_scroll_events`).
 
 A click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or the arrow clicks, that bring it in).

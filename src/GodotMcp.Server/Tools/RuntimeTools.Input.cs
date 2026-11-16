@@ -252,7 +252,11 @@ internal sealed partial class RuntimeTools
             + "tooltip, warning?}: hoveredOn the Control ({path, class}) under the pointer, null over none; tooltip {text, x, "
             + "y, width, height, owner} in viewport coordinates (text null for a custom tooltip without a Label; owner the "
             + "Control ({path, class}) whose tooltip it is), null when none showed, with a warning when one was due, or when "
-            + "none was due over a RichTextLabel with tooltip spans: the warning names the nearest span and its item.index. Godot "
+            + "none was due over a RichTextLabel with tooltip spans: the warning names the nearest span and its item.index. "
+            + "When no Control has a Godot tooltip there, a node in the mcp_tooltip group can report one the game draws itself "
+            + "through its state method (_mcp_state, or _McpState in C#): null or {} for none, {pending: true} while due, "
+            + "{text, x?, y?, width?, height?} when showing; tooltip is then {text, x?, y?, width?, height?, owner, state}, state the "
+            + "node's whole value. Godot "
             + "starts a tooltip's timer only while the hovered Control can process, so over a pausable Control in a paused "
             + "game hover answers at once with a warning: resume, hover, then pause."
             + TargetNote
@@ -278,6 +282,8 @@ internal sealed partial class RuntimeTools
             parameters["timeoutMs"] = timeoutMs;
         }
 
+        // The game-tooltip read takes each mcp_tooltip node's state as a state read does, a C# node's through the helper.
+        AddStateHelper(parameters, csharp.PrepareForState(Find(session).ProjectDir));
         return SendInputAsync(session, "hover", parameters, TimeSpan.FromMilliseconds(timeoutMs ?? MaxHoverTimeoutMs), cancellationToken);
     }
 

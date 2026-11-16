@@ -7,9 +7,27 @@ extends Node
 ## warnings) stays in the input player.
 
 const TooltipSpans := preload("godot_mcp_tooltip_spans.gd")
+const State := preload("godot_mcp_state.gd")
 
 ## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
 const HOVER_TIMEOUT_CAP_MS := 10000
+
+## The group of the nodes that report a tooltip the game draws itself, through their state method.
+const GAME_TOOLTIP_GROUP := "mcp_tooltip"
+## A game tooltip's rect keys, in viewport coordinates, taken only when the state gives all four.
+const GAME_TOOLTIP_RECT := ["x", "y", "width", "height"]
+## The warning when a game tooltip is still due at the limit: the node's path, then the limit.
+const GAME_TOOLTIP_PENDING := "the game tooltip of %s was still pending after %d ms"
+## The warning when a node's state cannot be read: its path, then the state reader's error.
+const GAME_TOOLTIP_UNREADABLE := "%s is in the mcp_tooltip group but its tooltip cannot be read: %s"
+## The unreadable warning's reason for a node with no state method, in place of the state reader's
+## own, which names the mcp_state group.
+const GAME_TOOLTIP_NO_METHOD := "it has no _mcp_state method"
+## The warning when a node's state is no tooltip value: its path.
+const GAME_TOOLTIP_MALFORMED := (
+	"%s is in the mcp_tooltip group but its state is not a tooltip: "
+	+ "it has neither text nor pending: true"
+)
 
 ## The input player (godot_mcp_input.gd) and the target resolver (godot_mcp_targets.gd), set by
 ## the input player before this node enters the tree.
@@ -137,6 +155,154 @@ func describe_tooltip(popup: Window) -> Dictionary:
 		"width": rect.size.x,
 		"height": rect.size.y,
 	}
+
+
+## The answer for a hover where no Control owns a Godot tooltip (control may be null, over none):
+## await_game_tooltip's answer when a game tooltip showed or one warned, else the near-miss
+## warning for control as {warning}, else {}. A control freed during the wait gets no near-miss
+## warning: a freed Object fails a typed Object parameter (modules/gdscript/gdscript_function.cpp
+## L111-115 in 4.7.2).
+func game_tooltip_or_near_miss(control: Control, point: Vector2, params: Dictionary) -> Dictionary:
+	var game: Dictionary = await await_game_tooltip(params)
+	if not game.is_empty() or not is_instance_valid(control):
+		return game
+	var near_miss: String = near_miss_warning(control, point)
+	return {} if near_miss.is_empty() else {"warning": near_miss}
+
+
+## The tooltip a game draws itself, read from the nodes in the mcp_tooltip group through the state
+## reader (godot_mcp_state.gd read_one, with params.extension or params.csharpError for a C# node)
+## now and then on each process_frame, which fires paused or not (scene/main/scene_tree.cpp L649,
+## L713 in 4.7.2), while a node is pending, up to tooltip_timeout_ms (in a recording, its clip
+## frames) counted from the end of the first check, so a first read that loads the C# helper does
+## not use up the limit. Answers {tooltip} ({text, x?, y?, width?, height?, owner, state}) for the
+## first node in tree order showing one, {warning} when a node is still pending at the limit or one
+## cannot be read or is malformed, and {} at once when none shows and none is pending.
+func await_game_tooltip(params: Dictionary) -> Dictionary:
+	var timeout_ms: int = tooltip_timeout_ms(params)
+	var helper: Dictionary = {
+		"extension": _text_of(params, "extension"), "csharpError": _text_of(params, "csharpError")
+	}
+	var check: Dictionary = _check_game_tooltips(helper)
+	var until: int = Time.get_ticks_msec() + timeout_ms
+	var frames: int = gestures.clip_frames(timeout_ms, gestures.clip_fps())
+	var waited: int = 0
+	while check.has("pending") and gestures.within(waited, frames, until):
+		await get_tree().process_frame
+		waited += 1
+		check = _check_game_tooltips(helper)
+	if check.has("pending"):
+		return {"warning": GAME_TOOLTIP_PENDING % [check["pending"], timeout_ms]}
+	return check
+
+
+## params[key] when it is a String, else "" (missing, or another type).
+static func _text_of(params: Dictionary, key: String) -> String:
+	var value: Variant = params.get(key, "")
+	return value if value is String else ""
+
+
+## One check of every node in the mcp_tooltip group, in tree order, the bridge's own left out and a
+## freed one skipped: {tooltip} for the first showing one, {warning} for the first that cannot be
+## read or is malformed before it, else {pending: path} naming the first pending one, else {}.
+## helper is {extension, csharpError}.
+func _check_game_tooltips(helper: Dictionary) -> Dictionary:
+	var pending: String = ""
+	for node: Variant in get_tree().get_nodes_in_group(GAME_TOOLTIP_GROUP):
+		if _skipped(node):
+			continue
+		var read: Dictionary = _read_game_tooltip(node, helper)
+		if read.is_empty():
+			continue
+		if not read.has("pending"):
+			return read
+		if pending.is_empty():
+			pending = read["pending"]
+	return {} if pending.is_empty() else {"pending": pending}
+
+
+## Whether an mcp_tooltip node is left out of a check: freed, or the bridge or under it.
+func _skipped(node: Variant) -> bool:
+	if not is_instance_valid(node):
+		return true
+	return node == gestures.bridge or gestures.bridge.is_ancestor_of(node)
+
+
+## One mcp_tooltip node read through the state reader at its default depth: {tooltip} with owner,
+## {warning}, {pending: path} or {} for none. The tooltip's keys come out {text, x?, y?, width?,
+## height?, owner, state}.
+func _read_game_tooltip(node: Node, helper: Dictionary) -> Dictionary:
+	var entry: Dictionary = gestures.bridge._state.read_one(
+		node, State.DEFAULT_MAX_DEPTH, helper["extension"], helper["csharpError"]
+	)
+	var path: String = str(entry["path"])
+	if entry.has("error"):
+		var reason: String = _unreadable_reason(str(entry["error"]))
+		return {"warning": GAME_TOOLTIP_UNREADABLE % [path, reason]}
+	var classified: Dictionary = classify_game_tooltip(entry.get("state"))
+	match classified["kind"]:
+		"showing":
+			var tooltip: Dictionary = classified["tooltip"]
+			var state: Variant = tooltip["state"]
+			tooltip.erase("state")
+			tooltip["owner"] = describe(node)
+			tooltip["state"] = state
+			return {"tooltip": tooltip}
+		"pending":
+			return {"pending": path}
+		"malformed":
+			return {"warning": GAME_TOOLTIP_MALFORMED % path}
+	return {}
+
+
+## The state reader's error as the unreadable warning says it: its no-method error names the
+## mcp_state group, so it becomes GAME_TOOLTIP_NO_METHOD; every other error passes unchanged.
+static func _unreadable_reason(error: String) -> String:
+	return GAME_TOOLTIP_NO_METHOD if error == State.NO_METHOD else error
+
+
+## What an mcp_tooltip node's state value says, keys matched exactly: {kind: "none"} for null or an
+## empty Dictionary; {kind: "pending"} for a Dictionary with pending: true; {kind: "showing",
+## tooltip} for one with a text key whose value is a String or null, pending or not (text wins);
+## {kind: "malformed"} for anything else. tooltip is {text, x, y, width, height, state}, the four
+## rect keys only when the state gives all four as numbers (int or float), state the whole value.
+static func classify_game_tooltip(value: Variant) -> Dictionary:
+	if value == null:
+		return {"kind": "none"}
+	if not value is Dictionary:
+		return {"kind": "malformed"}
+	var state: Dictionary = value
+	if state.is_empty():
+		return {"kind": "none"}
+	if _shows_text(state):
+		return {"kind": "showing", "tooltip": _game_tooltip(state)}
+	if state.get("pending") is bool and state["pending"]:
+		return {"kind": "pending"}
+	return {"kind": "malformed"}
+
+
+## Whether a tooltip state has a text key holding a String or null.
+static func _shows_text(state: Dictionary) -> bool:
+	return state.has("text") and (state["text"] == null or state["text"] is String)
+
+
+## A showing tooltip state as {text, x?, y?, width?, height?, state}.
+static func _game_tooltip(state: Dictionary) -> Dictionary:
+	var tooltip: Dictionary = {"text": state["text"]}
+	if _has_rect(state):
+		for key: String in GAME_TOOLTIP_RECT:
+			tooltip[key] = state[key]
+	tooltip["state"] = state
+	return tooltip
+
+
+## Whether a tooltip state gives all four rect keys as numbers.
+static func _has_rect(state: Dictionary) -> bool:
+	for key: String in GAME_TOOLTIP_RECT:
+		var value: Variant = state.get(key)
+		if not (value is int or value is float):
+			return false
+	return true
 
 
 ## The first Label under node, depth first, internal children included.
@@ -338,11 +504,11 @@ func control_under(point: Vector2) -> Variant:
 	return describe(hovered_control(point))
 
 
-## A Control as {path, class}, or null for none.
-func describe(control: Control) -> Variant:
-	if control == null:
+## A Control, or an mcp_tooltip node of any class, as {path, class}, or null for none.
+func describe(node: Node) -> Variant:
+	if node == null:
 		return null
-	return {"path": str(control.get_path()), "class": control.get_class()}
+	return {"path": str(node.get_path()), "class": node.get_class()}
 
 
 ## The Control under a viewport point, or null over none, read right after a mouse event there:

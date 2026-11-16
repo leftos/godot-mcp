@@ -17,6 +17,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     // A hang guard: it also covers the class's reset, which can relaunch the game, and each call's own allowances.
     private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const int ScriptTimeoutMs = 10_000;
+    private const string GameTooltipPath = "/root/GameTooltip";
 
     // The probe's base size is 640 x 360 with stretch canvas_items / keep: a 1000 x 900 window scales it by 1.5625 and
     // adds bars above and below.
@@ -883,6 +884,236 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverReportsAGameDrawnTooltip()
+    {
+        await AddGameTooltipAsync("""{"text": "Bribe", "x": 10, "y": 20, "width": 80, "height": 24, "locked": true}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertHit(hovered, "hoveredOn", "SmallButton", "Button");
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+        JsonNode tooltip = hovered["tooltip"]!;
+        Assert.Equal("Bribe", tooltip["text"]!.GetValue<string>());
+        Assert.Equal(
+            (10.0, 20.0, 80.0, 24.0),
+            (
+                tooltip["x"]!.GetValue<double>(),
+                tooltip["y"]!.GetValue<double>(),
+                tooltip["width"]!.GetValue<double>(),
+                tooltip["height"]!.GetValue<double>()
+            )
+        );
+        AssertGameTooltipOwner(tooltip);
+        Assert.True(tooltip["state"]!["locked"]!.GetValue<bool>(), hovered.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWaitsForAPendingGameTooltip()
+    {
+        await AddGameTooltipAsync("""{"text": "Later"}""", pendingReads: 3);
+
+        // The cap, so a slow machine cannot run the four reads out of time.
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("SmallButton"),
+                new HoverOptions(TimeoutMs: 10_000),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        Assert.Equal("Later", hovered["tooltip"]?["text"]?.GetValue<string>());
+        // Read once right after the hover settled, then once a frame: three pending reads, then the showing one.
+        Assert.Equal(4, await GameTooltipReadsAsync());
+        long[] frames =
+        [
+            .. (await RunAsync($"return scene_tree.root.get_node(\"{GameTooltipPath}\").frames")).AsArray().Select(frame => frame!.GetValue<long>()),
+        ];
+        Assert.True(frames.Zip(frames.Skip(1)).All(pair => pair.First < pair.Second), string.Join(", ", frames));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverSurvivesTheHoveredControlFreedWhileAGameTooltipIsPending()
+    {
+        // A plain Control at an empty spot of the probe; the fixture frees it on its second read, then answers null.
+        await RunAsync(
+            "var plain := Control.new()\n\t"
+                + "plain.name = \"Plain\"\n\t"
+                + "scene_tree.root.get_node(\"Main\").add_child(plain)\n\t"
+                + "plain.position = Vector2(160, 300)\n\t"
+                + "plain.size = Vector2(100, 40)\n\t"
+                + "await scene_tree.process_frame\n\t"
+                + "return true"
+        );
+        await AddGameTooltipAsync("null", pendingReads: 2);
+        await RunAsync(
+            $"var node: Node = scene_tree.root.get_node(\"{GameTooltipPath}\")\n\t"
+                + "node.set(\"free_on_read\", 2)\n\tnode.set(\"free_path\", \"/root/Main/Plain\")\n\treturn true"
+        );
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("Plain"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertHit(hovered, "hoveredOn", "Plain", "Control");
+        AssertNoHit(hovered, "tooltip");
+        Assert.False(hovered.AsObject().ContainsKey("errors"), hovered.ToJsonString());
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWarnsAGameTooltipNodeWithNoStateMethod()
+    {
+        await RunAsync(
+            "var bare := Node.new()\n\tbare.name = \"Bare\"\n\tbare.add_to_group(\"mcp_tooltip\")\n\tscene_tree.root.add_child(bare)\n\treturn true"
+        );
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal(
+            "/root/Bare is in the mcp_tooltip group but its tooltip cannot be read: it has no _mcp_state method",
+            hovered["warning"]?.GetValue<string>()
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverReportsTheFirstGameTooltipInTreeOrder()
+    {
+        await AddGameTooltipAsync("""{"text": "First"}""", name: "GameTooltip");
+        await AddGameTooltipAsync("""{"text": "Second"}""", name: "SecondTooltip");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        Assert.Equal("First", hovered["tooltip"]?["text"]?.GetValue<string>());
+        AssertGameTooltipOwner(hovered["tooltip"]!);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverNamesTheFirstPendingGameTooltip()
+    {
+        await AddGameTooltipAsync("""{"pending": true}""", name: "GameTooltip");
+        await AddGameTooltipAsync("""{"pending": true}""", name: "SecondTooltip");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("SmallButton"),
+                new HoverOptions(TimeoutMs: 300),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal($"the game tooltip of {GameTooltipPath} was still pending after 300 ms", hovered["warning"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWarnsAGameTooltipStillPending()
+    {
+        await AddGameTooltipAsync("""{"pending": true}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("SmallButton"),
+                new HoverOptions(TimeoutMs: 300),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal($"the game tooltip of {GameTooltipPath} was still pending after 300 ms", hovered["warning"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverPrefersGodotsTooltipOverTheGames()
+    {
+        await AddGameTooltipAsync("""{"text": "Game"}""");
+
+        // ProbeButton spans (20, 70) to (140, 110) and has tooltip_text "Does nothing yet".
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget(null, 80, 90), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+        JsonObject tooltip = hovered["tooltip"]!.AsObject();
+        Assert.Equal("Does nothing yet", tooltip["text"]!.GetValue<string>());
+        Assert.False(tooltip.ContainsKey("state"), hovered.ToJsonString());
+        Assert.Equal(0, await GameTooltipReadsAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWarnsAMalformedGameTooltip()
+    {
+        await AddGameTooltipAsync("""{"label": "x"}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal(
+            $"{GameTooltipPath} is in the mcp_tooltip group but its state is not a tooltip: it has neither text nor pending: true",
+            hovered["warning"]?.GetValue<string>()
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverAnswersAtOnceWithNoGameTooltipDue()
+    {
+        await AddGameTooltipAsync("null");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        // One read, with no wait after it.
+        Assert.Equal(1, await GameTooltipReadsAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverReportsAGameTooltipWithoutARect()
+    {
+        await AddGameTooltipAsync("""{"text": "NoRect"}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+        JsonObject tooltip = hovered["tooltip"]!.AsObject();
+        Assert.Equal("NoRect", tooltip["text"]!.GetValue<string>());
+        AssertGameTooltipOwner(tooltip);
+        Assert.Equal("NoRect", tooltip["state"]!["text"]!.GetValue<string>());
+        Assert.All(["x", "y", "width", "height"], key => Assert.False(tooltip.ContainsKey(key), hovered.ToJsonString()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWithTooltipOffSkipsTheGameTooltip()
+    {
+        await AddGameTooltipAsync("""{"text": "Skipped"}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("SmallButton"),
+                new HoverOptions(Tooltip: false),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal(0, await GameTooltipReadsAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task HoverReportsAPopupMenuItemsTooltip()
     {
         JsonNode centre = await RunAsync(PopupMenuScript);
@@ -1532,6 +1763,31 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
                 + "await scene_tree.process_frame\n\t"
                 + "return true"
         );
+
+    // Adds under the root, after its other children, a game_tooltip.gd node of that name in the mcp_tooltip group, its
+    // _mcp_state answering {pending: true} for its first pendingReads reads, then the GDScript value state; the class's
+    // reset frees it.
+    private async Task AddGameTooltipAsync(string state, int pendingReads = 0, string name = "GameTooltip") =>
+        await RunAsync(
+            "var node: Node = load(\"res://game_tooltip.gd\").new()\n\t"
+                + $"node.name = \"{name}\"\n\t"
+                + "node.set(\"tooltip_state\", "
+                + state
+                + ")\n\t"
+                + $"node.set(\"pending_reads\", {pendingReads})\n\t"
+                + "scene_tree.root.add_child(node)\n\t"
+                + "return true"
+        );
+
+    // How many times GameTooltip's _mcp_state was read.
+    private async Task<int> GameTooltipReadsAsync() =>
+        (await RunAsync($"return scene_tree.root.get_node(\"{GameTooltipPath}\").reads")).GetValue<int>();
+
+    private static void AssertGameTooltipOwner(JsonNode tooltip)
+    {
+        JsonNode owner = tooltip["owner"]!;
+        Assert.Equal((GameTooltipPath, "Node"), (owner["path"]!.GetValue<string>(), owner["class"]!.GetValue<string>()));
+    }
 
     private Task<JsonNode> HandPressesAsync() => RunAsync("return scene_tree.root.get_node(\"HandProbe\").presses");
 

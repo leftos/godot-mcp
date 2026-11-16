@@ -13,7 +13,8 @@ namespace GodotMcp.IntegrationTests;
 /// C# children each carry a different state method, with a GDScript node the test puts second among them and one returning
 /// the process frame last, all read in one call:
 /// the C# nodes by the helper, merged with the GDScript node in tree order. The States node is added once for the class.
-/// A wait_for state condition reads its C# Counter through the helper at each check.
+/// A wait_for state condition reads its C# Counter through the helper at each check, and a hover reads a C# node's game
+/// tooltip (CsGameTooltip, in the mcp_tooltip group only) through the helper too.
 /// </summary>
 public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixture<SharedCsProbeSession>
 {
@@ -262,6 +263,48 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         JsonNode frame = changed[0]!;
         Assert.True(frame["after"]!.GetValue<long>() > frame["before"]!.GetValue<long>(), frame.ToJsonString());
         Assert.Equal((0, 0), (diff["addedCount"]!.GetValue<int>(), diff["removedCount"]!.GetValue<int>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverReadsACSharpGameTooltip()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // Loads the helper before the hover, whose allowance does not cover a first load on a busy machine.
+        await AddStatesAsync(cancellation);
+        const string GameTooltip = "/root/GameTooltip";
+        await RunBodyAsync(
+            "var node: Node = load(\"res://CsGameTooltip.cs\").new()\n\tnode.name = \"GameTooltip\"\n\t"
+                + "scene_tree.root.add_child(node)\n\treturn true",
+            cancellation
+        );
+        try
+        {
+            // The CsProbe has no Control, so the pointer is over none and only the game's tooltip can answer.
+            JsonObject hovered = JsonNode
+                .Parse(await _tools.HoverAsync(new InputTarget(null, 100, 100), cancellationToken: cancellation))!
+                .AsObject();
+
+            Assert.False(hovered.ContainsKey("warning"), hovered.ToJsonString());
+            Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+            JsonNode tooltip = hovered["tooltip"]!;
+            Assert.Equal("Bribe", tooltip["text"]!.GetValue<string>());
+            Assert.Equal(
+                (10.0, 20.0, 80.0, 24.0),
+                (
+                    tooltip["x"]!.GetValue<double>(),
+                    tooltip["y"]!.GetValue<double>(),
+                    tooltip["width"]!.GetValue<double>(),
+                    tooltip["height"]!.GetValue<double>()
+                )
+            );
+            Assert.Equal((GameTooltip, "Node"), (tooltip["owner"]!["path"]!.GetValue<string>(), tooltip["owner"]!["class"]!.GetValue<string>()));
+            Assert.True(tooltip["state"]!["locked"]!.GetValue<bool>(), hovered.ToJsonString());
+        }
+        finally
+        {
+            // The class shares one game, whose other hovers must not find this node.
+            await RunBodyAsync($"scene_tree.root.get_node(\"{GameTooltip}\").free()\n\treturn true", cancellation);
+        }
     }
 
     private static string Error(JsonNode entry) => entry["error"]?.GetValue<string>() ?? $"no error in {entry.ToJsonString()}";

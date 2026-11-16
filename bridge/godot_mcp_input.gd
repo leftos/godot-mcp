@@ -666,22 +666,24 @@ func _settle_hover(point: Vector2) -> Control:
 ## Moves to the target as mouse_button's move does; then, when params.tooltip is not false and
 ## a Control has a tooltip for the pointer (the hovered one or an ancestor, as the tooltip
 ## reader's tooltip_owner finds it), waits for it to show. Records tooltip ({text, x, y, width,
-## height, owner}, or null) and a warning when a tooltip was due and none showed, or when none
-## was due over a RichTextLabel with tooltip spans, naming the nearest (and where the span probe
-## stopped, when it ran out of samples).
+## height, owner}, or null) and a warning when a tooltip was due and none showed. When no Control
+## has one (or the pointer is over none), the nodes in the mcp_tooltip group are read for a
+## tooltip the game draws itself (the tooltip reader's game_tooltip_or_near_miss): tooltip {text,
+## x?, y?, width?, height?, owner, state}, or a warning; with none due, the warning over a
+## RichTextLabel with tooltip spans names the nearest (and where the span probe stopped, when it
+## ran out of samples).
 func _play_hover(params: Dictionary) -> String:
 	var point: Variant = await aim(params.get("target"), true, false, false)
 	if point is String:
 		return point
 	var control: Control = await _settle_hover(point)
 	_hits["tooltip"] = null
-	if control == null or not bool(params.get("tooltip", true)):
+	if not bool(params.get("tooltip", true)):
 		return ""
 	var tooltip_owner: Control = _hover.tooltip_owner(control, point)
 	if tooltip_owner == null:
-		var near_miss: String = _hover.near_miss_warning(control, point)
-		if not near_miss.is_empty():
-			_hits["warning"] = near_miss
+		var game: Dictionary = await _hover.game_tooltip_or_near_miss(control, point, params)
+		_hits.merge(game, true)
 		return ""
 	# The tooltip timer starts only from a motion over a Control that can process
 	# (scene/main/viewport.cpp L2117, L2136 in 4.7.2), so a pausable one in a paused tree

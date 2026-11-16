@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `hover` reports a tooltip the game draws itself, with its text, place and the game's own fields, once the game marks the node that knows it.
+
+### For agents
+
+- `hover`: a node in the `mcp_tooltip` group reports a game-drawn tooltip through its state method: null or `{}` none, `{pending: true}` due, `{text, x?, y?, width?, height?}` showing; `tooltip` then adds `owner` and `state`.
+
 ## 0.42.2 - 2026-11-14
 
 ### Fixed
