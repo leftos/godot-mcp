@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A scratch scene whose game quits with code 0 just as its exit hold's wait expires no longer fails as an unreadable hold.
+
 ## 0.43.1 - 2026-11-16
 
 ### Changed

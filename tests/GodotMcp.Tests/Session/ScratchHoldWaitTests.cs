@@ -202,6 +202,41 @@ public sealed class ScratchHoldWaitTests
     }
 
     [Fact]
+    public async Task AProbeThatFindsNoLiveRunBeforeTheConnectionReportsItsEndIsTheClosedFallback()
+    {
+        Rig rig = new();
+        TaskCompletionSource closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Outcome outcome = await rig.RunAsync(() => NotYet, _ => throw new SessionException(GodotSession.NoneRunning), closed.Task);
+
+        Assert.Equal(ClosedError, outcome.Error);
+        Assert.True(outcome.Closed);
+        Assert.Null(outcome.Marked);
+    }
+
+    [Fact]
+    public async Task AProbeThatFindsNoLiveRunAfterTheMarkersLandedReportsTheMarkers()
+    {
+        Rig rig = new();
+        TaskCompletionSource closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool probed = false;
+
+        Outcome outcome = await rig.RunAsync(
+            () => probed ? MarkedRead : NotYet,
+            _ =>
+            {
+                probed = true;
+                throw new SessionException(GodotSession.NoneRunning);
+            },
+            closed.Task
+        );
+
+        Assert.Same(Entries, outcome.Marked);
+        Assert.Null(outcome.Error);
+        Assert.False(outcome.Closed);
+    }
+
+    [Fact]
     public async Task ACancellationDuringTheProbePropagatesEvenOnceTheConnectionClosed()
     {
         Rig rig = new();

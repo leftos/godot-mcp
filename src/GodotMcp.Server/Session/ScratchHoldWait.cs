@@ -21,8 +21,8 @@ internal sealed record HoldWaitTerms(TimeSpan Window, TimeSpan Readers, int Game
 /// game must beat: it reads the output every <see cref="ScratchRun.MarkerPoll"/>, and each time a window of load-adjusted time passes
 /// with no markers, it asks the bridge for the hold's progress (its hold command). A clock that advanced since the last ask
 /// starts a new window; one that stood still a whole window fails, as does no hold running or a refused ask; a hold the bridge
-/// says ended leaves the readers' allowance for its markers. Every verdict is followed by one more read, so a marker that
-/// arrived meanwhile wins, and a closed connection wins over any verdict. Single use: one per hold.
+/// says ended leaves the readers' allowance for its markers. Every verdict, and the closed fallback, is followed by one more read,
+/// so a marker that arrived meanwhile wins, and a closed connection wins over any verdict. Single use: one per hold.
 /// </summary>
 internal sealed class ScratchHoldWait(LoadClock clock, HoldWaitTerms terms, Func<HoldRead> read, Func<CancellationToken, Task<JsonNode?>> probe)
 {
@@ -49,8 +49,9 @@ internal sealed class ScratchHoldWait(LoadClock clock, HoldWaitTerms terms, Func
     internal static string HoldUnread(string message) => $"the exit hold's progress could not be read: {message}";
 
     /// <summary>
-    /// Waits for the hold's end: the entries its read took, null error, not closed; the closed error, closed, once
-    /// <paramref name="closed"/> completes or the ask fails on the connection; else the verdict, not closed.
+    /// Waits for the hold's end: the entries its read took, null error, not closed; once the game is gone — <paramref name="closed"/>
+    /// completed, or the ask failed on a closed connection or on no live run — the markers one more read finds, else the closed
+    /// error, closed; else the verdict, not closed.
     /// </summary>
     /// <exception cref="TimeoutException">The bridge left an ask of the hold's progress unanswered within its timeout.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="limit"/> was cancelled.</exception>
@@ -74,7 +75,7 @@ internal sealed class ScratchHoldWait(LoadClock clock, HoldWaitTerms terms, Func
                 }
                 else if (await ExpireAsync(seen, closed, limit))
                 {
-                    return (terms.ClosedError, true, null);
+                    return ClosedFallback(read());
                 }
             }
         }
@@ -105,7 +106,8 @@ internal sealed class ScratchHoldWait(LoadClock clock, HoldWaitTerms terms, Func
 
     /// <summary>
     /// The window that passed: after an ended hold, the markers' timeout; else the bridge's answer about the hold, a new window
-    /// or a verdict. True when the ask failed on the connection.
+    /// or a verdict. True when the game is gone: the ask failed on the closed connection, an IO failure, or a probe that found no
+    /// live run (see <see cref="ConnectionIsGone"/>).
     /// </summary>
     private async Task<bool> ExpireAsync(HoldRead seen, Task closed, CancellationToken limit)
     {
@@ -123,7 +125,7 @@ internal sealed class ScratchHoldWait(LoadClock clock, HoldWaitTerms terms, Func
         {
             reply = await probe(limit);
         }
-        catch (Exception e) when (e is not (TimeoutException or OperationCanceledException) && (e is IOException || closed.IsCompleted))
+        catch (Exception e) when (e is not (TimeoutException or OperationCanceledException) && ConnectionIsGone(e, closed))
         {
             return true;
         }
@@ -136,6 +138,20 @@ internal sealed class ScratchHoldWait(LoadClock clock, HoldWaitTerms terms, Func
         _deadline = Judge(reply, limit);
         return false;
     }
+
+    /// <summary>
+    /// Whether a failed ask means the game is gone: the connection closed, its error a connection one, or a probe that found no
+    /// live run at all, the process having exited before the read loop saw its end of the connection.
+    /// </summary>
+    private static bool ConnectionIsGone(Exception e, Task closed) =>
+        e is IOException || closed.IsCompleted || e is SessionException { Message: GodotSession.NoneRunning };
+
+    /// <summary>
+    /// The closed fallback after the game is gone: the markers one more read finds, else the closed error as closed, so a marker
+    /// that landed between the last read and the failed ask wins over the connection's end.
+    /// </summary>
+    private (string? Error, bool Closed, IReadOnlyList<ErrorEntry>? Marked) ClosedFallback(HoldRead after) =>
+        after.Marked is { } marked ? (null, false, marked) : (terms.ClosedError, true, null);
 
     /// <summary>
     /// What the bridge's report of the hold means: this hold running further than last seen, a new window; running no further,
