@@ -236,7 +236,9 @@ Which test project or folder pins which layer, and where a new test goes. What e
 
 On the main thread the bridge flushes the queue as an id-less errors frame, `{type: "errors", entries, dropped}`, sent only when there are entries, every frame and before every reply, so an error raised while a command ran is on the wire before its reply.
 
-An error logged across an `options.call` does not fail the call: `call_now` keeps the method's value, adds `raised`, and the error reaches the agent in `errors`; only a refused call fails, Godot's own refusal of the `callv` included (an error logged since the mark whose message starts `Error calling method from 'callv'` at `call_now` in `godot_mcp_inspect.gd`, which the logger's `first_refused_call_since` finds, as the server's `IsRefusedCall` does for `call_method`).
+An error logged across an `options.call` does not fail the call: `call_now` keeps the method's value, adds `raised`, and the error reaches the agent in `errors`; only a refused call fails, Godot's own refusal of the `callv` included.
+
+That refusal is an error logged since the mark whose message starts `Error calling method from 'callv'` at `call_now` in `godot_mcp_inspect.gd` and names the called method (`::<method>': `); the logger's `first_refused_call_since` finds it, as the server's `IsRefusedCall` does for `call_method`. A native or C# method's own inner `callv` refused for another method (a `propagate_call`, a `GodotObject.Callv`) is only an error in `errors`; one refused under the called method's own name still reads as the call's refusal.
 
 `BridgeConnection` hands errors frames to the session's `ErrorFeed` (the last 500 entries, each with a per-session `seq`).
 

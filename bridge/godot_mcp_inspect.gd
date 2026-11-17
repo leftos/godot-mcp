@@ -343,8 +343,12 @@ func _not_converted(
 ## {path, method, value}: the method called with params.args converted by its parameters' declared
 ## types, and awaited when it is a coroutine. A call Godot refuses logs "Error calling method from
 ## 'callv'" and returns null (core/object/object.cpp L750-766 in 4.7.2); the logger locates that
-## error at the callv line below, in this file's call_method, and the server fails the call on
-## an error located there alone, which reaches it ahead of this reply.
+## error at the callv line below, in this file's call_method, and the server fails the call on an
+## error located there alone (RuntimeTools.IsRefusedCall), which reaches it ahead of this reply. The
+## message names the refused method as '<Class>[(<script file>)]::<method>': <reason>
+## (core/variant/variant.cpp L3534-3543), so an inner callv a native method (Node.propagate_call,
+## scene/main/node.cpp L2588-2603) or a C# method refuses reads as an inner one unless it names this
+## same method, which the text cannot tell apart.
 func call_method(params: Dictionary) -> Variant:
 	var prepared: Variant = _prepare_call(params)
 	if prepared is String:
@@ -364,7 +368,10 @@ func call_method(params: Dictionary) -> Variant:
 ## {value}: the method params names ({node, method, args}, as call_method takes them) called now
 ## with callv and never awaited, so a coroutine runs to its first await and its value is null.
 ## Returns a String instead when the call is refused as call_method refuses it, Godot refusing the
-## callv itself included: that refusal's logged message (the logger's first_refused_call_since).
+## callv itself included: that refusal's logged message (the logger's first_refused_call_since,
+## which requires the message to name this call's method, so one an inner callv refuses under
+## another name is not this call's refusal, and one under this same name is, as no reading of the
+## text tells them apart).
 ## Any other error (not a warning) the error feed logged across the callv does not fail the call,
 ## as call_method's does not: a GDScript runtime error or a C# exception cannot be caught, so the
 ## value is what callv returned (a GDScript runtime error ends the method with its return type's
@@ -380,7 +387,7 @@ func call_now(params: Dictionary) -> Variant:
 	var node: Node = prepared[0]
 	var mark: int = _bridge._logger.sequence()
 	var value: Variant = node.callv(prepared[1], prepared[2])
-	var refused: String = _bridge._logger.first_refused_call_since(mark)
+	var refused: String = _bridge._logger.first_refused_call_since(mark, prepared[1])
 	if not refused.is_empty():
 		return refused
 	var answer: Dictionary = {

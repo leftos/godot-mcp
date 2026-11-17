@@ -18,7 +18,7 @@ const LOGGER_SOURCE := (
 	+ "func raise(message: String) -> void:\n\tif error.is_empty():\n"
 	+ "\t\terror = message\n\t\traised_at = count\n\n\n"
 	+ 'func first_error_since(mark: int) -> String:\n\treturn error if raised_at >= mark else ""\n\n\n'
-	+ 'func first_refused_call_since(_mark: int) -> String:\n\treturn ""\n'
+	+ 'func first_refused_call_since(_mark: int, _method: String) -> String:\n\treturn ""\n'
 )
 ## A scratch root whose GetStepCount answers null.
 const NO_COUNT_SOURCE := (

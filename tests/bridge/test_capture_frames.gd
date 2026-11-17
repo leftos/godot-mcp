@@ -319,23 +319,65 @@ func test_call_once_keeps_an_error_the_feed_logs_across_the_call() -> void:
 
 func test_first_refused_call_since_reads_only_the_engine_refusing_call_nows_callv() -> void:
 	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
-	var refusal := "Error calling method from 'callv': Method expected 1 argument, but called with 0."
+	var refusal := (
+		"Error calling method from 'callv': 'Node(game.gd)::add': "
+		+ "Method expected 2 argument(s), but called with 1."
+	)
+	var inner := "Error calling method from 'callv': 'Node::no_such_method': Method not found."
 	var inspector := "res://addons/x/godot_mcp_inspect.gd"
 	_log_to(logger, "call_now", inspector, refusal)
 	var mark: int = logger.sequence()
 	_log_to(logger, "call_method", inspector, refusal)
+	_log_to(logger, "call_now", inspector, inner)
 	_log_to(logger, "call_now", inspector, "Cannot call method 'queue_free' on a null value.")
 	_log_to(logger, "call_now", "res://addons/x/game.gd", refusal)
 	assert_eq(
-		logger.first_refused_call_since(mark), "", "only call_now's own callv, after the mark"
+		logger.first_refused_call_since(mark, "add"),
+		"",
+		"only call_now's own callv, after the mark"
+	)
+	assert_eq(
+		logger.first_refused_call_since(mark, "propagate_call"),
+		"",
+		"an inner callv of another method is not the call's"
+	)
+	assert_eq(
+		logger.first_refused_call_since(mark, "no_such_method"),
+		inner,
+		"the inner refusal names its own method"
 	)
 	_log_to(logger, "call_now", inspector, refusal)
 	assert_eq(
-		logger.first_refused_call_since(mark), refusal, "the engine refusing call_now's callv"
+		logger.first_refused_call_since(mark, "add"),
+		refusal,
+		"the engine refusing call_now's callv"
 	)
-	assert_eq(logger.first_refused_call_since(logger.sequence()), "", "none after a later mark")
+	assert_eq(
+		logger.first_refused_call_since(logger.sequence(), "add"), "", "none after a later mark"
+	)
 	assert_eq(
 		logger.first_error_since(mark), refusal, "first_error_since still reads the first error"
+	)
+
+
+## A refusal names the method it refused inside the quotes before "': ", so a method whose name
+## merely continues another's (add_child, readd) and a method called call are not that other
+## method's refusal.
+func test_first_refused_call_since_needs_the_methods_whole_name() -> void:
+	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
+	var inspector := "res://addons/x/godot_mcp_inspect.gd"
+	var child := "Error calling method from 'callv': 'Node::add_child': Method not found."
+	var longer := "Error calling method from 'callv': 'Node::readd': Method not found."
+	var other := "Error calling method from 'callv': 'Node::other': Method not found."
+	var mark: int = logger.sequence()
+	_log_to(logger, "call_now", inspector, child)
+	_log_to(logger, "call_now", inspector, longer)
+	_log_to(logger, "call_now", inspector, other)
+	assert_eq(
+		logger.first_refused_call_since(mark, "add"), "", "a longer name is not add's refusal"
+	)
+	assert_eq(
+		logger.first_refused_call_since(mark, "call"), "", "another method's refusal is not call's"
 	)
 
 

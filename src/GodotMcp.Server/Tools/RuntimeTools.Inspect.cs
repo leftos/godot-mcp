@@ -174,7 +174,7 @@ internal sealed partial class RuntimeTools
         long mark = target.Errors.Mark();
         JsonNode? reply = await CallStoppableAsync(target, "call_method", parameters, timeout, cancellationToken);
         BridgeResult result = new(reply, target.Errors.ErrorsSince(mark));
-        ErrorEntry? refused = result.Errors.FirstOrDefault(IsRefusedCall);
+        ErrorEntry? refused = result.Errors.FirstOrDefault(error => IsRefusedCall(error, method));
         if (refused is not null)
         {
             throw new McpException($"call_method failed: {refused.Message}");
@@ -249,12 +249,16 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// Whether an error is Godot refusing the bridge's own callv: the logger locates an engine error at the most recent script
-    /// frame, which for that call is call_method in godot_mcp_inspect.gd. A callv the called method makes itself is located in
-    /// that method, and one from another script in its own.
+    /// Whether an error is Godot refusing the bridge's own callv of <paramref name="method"/>: the logger locates an engine
+    /// error at the most recent script frame, which for that call is call_method in godot_mcp_inspect.gd. Its message names
+    /// the refused method, <c>'&lt;Class&gt;[(<script file>)]::&lt;method&gt;': &lt;reason&gt;</c> (core/variant/variant.cpp
+    /// L3534-3543), which is what tells this call's refusal from an inner one: a callv the called method makes itself is
+    /// located in that method, one a native method (Node.propagate_call) or a C# method makes is located there too, and only
+    /// a message naming the same method reads as this call's own.
     /// </summary>
-    internal static bool IsRefusedCall(ErrorEntry error) =>
+    internal static bool IsRefusedCall(ErrorEntry error, string method) =>
         error.Message.StartsWith(CallvErrorPrefix, StringComparison.Ordinal)
+        && error.Message.Contains($"::{method}': ", StringComparison.Ordinal)
         && error.Function == "call_method"
         && error.File.EndsWith(InspectorScript, StringComparison.Ordinal);
 

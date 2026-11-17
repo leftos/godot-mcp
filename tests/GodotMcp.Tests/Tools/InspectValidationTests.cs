@@ -91,6 +91,44 @@ public sealed class InspectValidationTests : IDisposable
         await AssertNoSessionAsync(() => _tools.CallMethodAsync("Probe", "probe_add", args, new CallOptions(120_000), cancellationToken: Token));
     }
 
+    [Fact]
+    public void AnInnerCallvRefusalOfAnotherMethodIsNotTheCallsOwn()
+    {
+        ErrorEntry entry = new(
+            1,
+            "error",
+            "Error calling method from 'callv': 'Node(game.gd)::inner': Method not found.",
+            "res://addons/x/godot_mcp_inspect.gd",
+            1,
+            "call_method",
+            [],
+            "core/object/object.cpp:763"
+        );
+
+        Assert.False(RuntimeTools.IsRefusedCall(entry, "propagate_call"));
+        Assert.True(RuntimeTools.IsRefusedCall(entry, "inner"));
+    }
+
+    [Theory]
+    [InlineData("add_child", "add")]
+    [InlineData("readd", "add")]
+    [InlineData("other", "call")]
+    public void ACallvRefusalOfAnotherNameIsNotTheCallsOwn(string refused, string called)
+    {
+        ErrorEntry entry = new(
+            1,
+            "error",
+            $"Error calling method from 'callv': 'Node::{refused}': Method not found.",
+            "res://addons/x/godot_mcp_inspect.gd",
+            1,
+            "call_method",
+            [],
+            "core/object/object.cpp:763"
+        );
+
+        Assert.False(RuntimeTools.IsRefusedCall(entry, called));
+    }
+
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
     private static async Task AssertRefusedBeforeSessionAsync(Func<Task<string>> call, string argument)

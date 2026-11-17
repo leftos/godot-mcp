@@ -6,6 +6,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Changed
 
+- `call_method` and `options.call` no longer fail when the called method's own `propagate_call` or C# `Callv` is refused for another method.
+
 - A headless node path missing a `%Name` names the unique name, and `get_scene_file_tree`'s missing `root` names the nearest node and its children.
 
 ### Fixed

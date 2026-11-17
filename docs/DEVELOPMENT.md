@@ -1003,7 +1003,7 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
   So the read-back check (`same` in the JSON module) compares a String and a StringName by their text, and two kinds of array element by element by the same rule, an int never equal to a float.
 - **`call_method` reaches C# `internal` methods too**: Godot's C# source generator exposes every method with a Godot-compatible signature, with no accessibility filter (`ScriptMethodsGenerator.cs` L128-135), and calls one only when the argument count matches exactly, so optional parameters are passed.
 
-  A refused call is recognised only when the error feed has placed Godot's `callv` error in the `Inspect` module's `call_method`, which needs script backtraces (debug builds, or `always_track_call_stacks`); without them the call returns null with the error in `errors`.
+  A refused call is recognised only when the error feed has placed Godot's `callv` error in the `Inspect` module's `call_method` and its message names the called method (`::<method>': `), which needs script backtraces (debug builds, or `always_track_call_stacks`); without them the call returns null with the error in `errors`.
 - **A fixture copy is a committed git repository without a `git init` of its own**: `CommittedFixture.CopyTo` (used by `ProbeProject`, `CsProbeProject` and `ProjectImportTests`) commits each fixture folder once per test process in a template under the temp root, deleted at process exit, and each copy takes the template's top-level files and its `.git`; git re-checks the copied index's stale stat info on the first status, so the copy reads clean.
 
   Nothing may run a server or Godot in a template, since the server writes `.git/info/exclude`.

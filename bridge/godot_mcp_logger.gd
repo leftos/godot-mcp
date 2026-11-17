@@ -175,24 +175,31 @@ func first_error_since(since: int) -> String:
 
 
 ## The message of the first error logged at or after sequence number since that is Godot refusing
-## the inspector's own callv in call_now, or "" when there is none, seen as first_error_since sees
-## entries. Object::callv logs that refusal through ERR_FAIL (core/object/object.cpp L762-763 in
-## 4.7.2) from the engine's file, so _locate_in_script places it at the newest script frame,
-## call_now in godot_mcp_inspect.gd; the server reads call_method's refusal the same way
-## (RuntimeTools.IsRefusedCall). A callv a called GDScript method makes itself is placed in that
-## method. A native method that calls callv inside it (Node.propagate_call, scene/main/node.cpp
-## L2592-2602) and a C# method calling GodotObject.Callv leave no GDScript frame above call_now,
-## so their inner refusal is placed at call_now and read as the call's own refusal. In a release
-## export without always_track_call_stacks (modules/gdscript/gdscript.cpp L2871-2875) no script
-## stack is recorded: the refusal keeps function callv and the engine's file, so it is not found
-## here, and the call's answer carries it as raised.
-func first_refused_call_since(since: int) -> String:
-	return _first_since(since, _is_refused_call)
+## the inspector's own callv in call_now of method, or "" when there is none, seen as
+## first_error_since sees entries. Object::callv logs that refusal through ERR_FAIL
+## (core/object/object.cpp L762-763 in 4.7.2) from the engine's file, so _locate_in_script places it
+## at the newest script frame, call_now in godot_mcp_inspect.gd; the server reads call_method's
+## refusal the same way (RuntimeTools.IsRefusedCall). The message names the refused method as
+## '<Class>[(<script file>)]::<method>': <reason> (core/variant/variant.cpp L3534-3543), and that is
+## what tells this call's refusal from an inner one. A callv a called GDScript method makes itself
+## is placed in that method. A native method that calls callv inside it (Node.propagate_call,
+## scene/main/node.cpp L2588-2603) and a C# method calling GodotObject.Callv leave no GDScript frame
+## above call_now, so their inner refusal is placed at call_now and reads as this call's unless it
+## names another method; one of this same method name still does, which no reading of the text can
+## tell apart. In a release export without always_track_call_stacks
+## (modules/gdscript/gdscript.cpp L2871-2875) no script stack is recorded: the refusal keeps
+## function callv and the engine's file, so it is not found here, and the call's answer carries it
+## as raised.
+func first_refused_call_since(since: int, method: String) -> String:
+	return _first_since(
+		since, func(entry: Dictionary) -> bool: return _is_refused_call(entry, method)
+	)
 
 
-static func _is_refused_call(entry: Dictionary) -> bool:
+static func _is_refused_call(entry: Dictionary, method: String) -> bool:
 	return (
 		str(entry["message"]).begins_with(CALLV_REFUSAL)
+		and str(entry["message"]).contains("::%s': " % method)
 		and entry["function"] == "call_now"
 		and str(entry["file"]).ends_with(INSPECTOR_SCRIPT)
 	)
