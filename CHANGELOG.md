@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A native tooltip that hugs the window border over a still driven pointer stays shown instead of blinking every tooltip delay.
 - A scratch scene whose game quits with code 0 just as its exit hold's wait expires no longer fails as an unreadable hold.
 
 ## 0.43.1 - 2026-11-16

@@ -203,7 +203,7 @@ Injected mouse events carry a device mark (`0x6D6370`), and while a gesture play
 
 The app's own hover re-picks (a cursor-state update, a drop's end, a scene change) read the OS cursor, which is garbage on a hidden desktop, so while injected input owns the pointer the hook re-picks at the injected pointer every frame before draw, with a motion no app handler sees; a real motion hands the pointer back (a 0.14.0 fix: hovers used to drop to the hidden cursor).
 
-The re-pick never brings back a tooltip the engine cancelled (Escape, a press, a gesture) while the pointer stays on its Control, so an Escape-over-tooltip check needs no `repickHover: false`.
+The re-pick never brings back a tooltip the engine cancelled (Escape, a press, a gesture) while the pointer stays on its Control, so an Escape-over-tooltip check needs no `repickHover: false`; it also sends no motion while a tooltip covers the pointer, so a tooltip placed against the window border stays shown.
 
 `run_project`'s `options.repickHover: false` turns the every-frame re-pick off for a drive that needs the app's own re-picks to decide the hover; the hook then re-picks only once after a scene change and once at the end of a GUI drag (a drop or a cancel).
 

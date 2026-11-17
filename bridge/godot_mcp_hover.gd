@@ -498,6 +498,26 @@ func _hovered_under_tooltips(point: Vector2) -> Control:
 	return viewport.gui_get_hovered_control()
 
 
+## Whether the topmost embedded window at the injected pointer is a tooltip popup standing
+## visible: the engine routes a mouse event to the topmost window holding the point, and entering
+## any of them makes the root drop its hover (_update_mouse_over, scene/main/viewport.cpp
+## L3283-3320 and L3297-3299 in 4.7.2), whose _gui_cancel_tooltip (L3453) cancels the tooltip
+## whatever its kind. The border-hug fallback can place one over the pointer (L1715, L1726), and
+## the default panel's own mouse_entered (L1671) is only a second cancel.
+func tooltip_covers_pointer() -> bool:
+	var point: Vector2 = gestures.to_viewport(gestures.bridge._pointer)
+	var windows: Array[Window] = get_tree().root.get_embedded_subwindows()
+	for index in range(windows.size() - 1, -1, -1):
+		var window: Window = windows[index]
+		if (
+			window.visible
+			and Rect2(Vector2(window.position), Vector2(window.size)).has_point(point)
+		):
+			var tooltip: bool = gestures.bridge._ui_snapshot.is_tooltip(window)
+			return tooltip and not window.is_queued_for_deletion()
+	return false
+
+
 ## The Control under a viewport point as {path, class}, or null over none, read right after a
 ## mouse event there.
 func control_under(point: Vector2) -> Variant:

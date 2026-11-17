@@ -130,10 +130,11 @@ func _on_window_input(event: InputEvent) -> void:
 ## gui_input in game scripts sees it (node.cpp L3565-3567, control.cpp L2523-2533); a physics
 ## input_event (CollisionObject2D/3D) sees it as the engine's passive hover pick. It skips Input and
 ## a capture, and the re-pick restarts the tooltip timer once the engine cancelled one (viewport.cpp
-## L2138), the reader dropping the tooltip that timer shows while the pointer stays put.
+## L2138), the reader dropping the tooltip that timer shows while the pointer stays put; a tooltip
+## over the pointer is left alone, as a still hand sees it.
 func _repick() -> void:
 	_hover.drop_rearmed_tooltip()
-	if not _take_repick():
+	if not _take_repick() or _hover.tooltip_covers_pointer():
 		return
 	var point: Vector2 = to_viewport(bridge._pointer)
 	var motion := InputEventMouseMotion.new()

@@ -187,6 +187,24 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "frames_after += 1\n\t"
         + "return false";
 
+    // Whether one tooltip panel, the first seen visible now, stays the same visible instance on every frame until a
+    // SceneTreeTimer of gui/timers/tooltip_delay_sec plus 200 ms runs out: a cancelled tooltip that a re-pick re-arms
+    // later is a new instance, so a cancel fails here. The timer runs on the tooltip timer's own clock, which clamps.
+    private const string TooltipStaysShownThroughTheDelay =
+        "var panel: Window = null\n\t"
+        + "for window in scene_tree.root.get_embedded_subwindows():\n\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t"
+        + "panel = window\n\t"
+        + "if panel == null:\n\t\t"
+        + "return false\n\t"
+        + "var delay := float(ProjectSettings.get_setting(\"gui/timers/tooltip_delay_sec\", 0.5))\n\t"
+        + "var timer := scene_tree.create_timer(delay + 0.2, true, false, true)\n\t"
+        + "while timer.time_left > 0.0:\n\t\t"
+        + "if not is_instance_valid(panel) or not panel.visible or panel.is_queued_for_deletion():\n\t\t\t"
+        + "return false\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return true";
+
     // Whether a tooltip panel is visible on the fifth process frame from now.
     private const string TooltipShownInFiveFrames =
         "var shown := false\n\t"
@@ -242,6 +260,23 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "return true";
 
     private const string FreeTooltipCover = "scene_tree.root.get_node(\"TooltipCover\").free()\n\treturn true";
+
+    // A Control HugHost spanning (240, 280) to (360, 320), whose tooltip is 20 lines of 60 characters: the default tooltip
+    // panel is then wider than 340 and taller than 300 px, so at (300, 300) in the probe's 640 x 360 viewport neither side
+    // fits, both axes hug the border, and the panel covers the pointer.
+    private const string AddHugHost =
+        "var host := Control.new()\n\t"
+        + "host.name = \"HugHost\"\n\t"
+        + "host.position = Vector2(240, 280)\n\t"
+        + "host.size = Vector2(120, 40)\n\t"
+        + "var lines := PackedStringArray()\n\t"
+        + "for _line in 20:\n\t\t"
+        + "lines.append(\"x\".repeat(60))\n\t"
+        + "host.tooltip_text = \"\\n\".join(lines)\n\t"
+        + "scene_tree.root.add_child(host)\n\t"
+        + "return true";
+
+    private const string FreeHugHost = "scene_tree.root.get_node(\"HugHost\").free()\n\treturn true";
 
     // A game's own hover re-pick (delve's modal calls it once a panel shows or hides), then the hovered Control's name
     // two frames later, "" over none.
@@ -1368,6 +1403,40 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         finally
         {
             await RunAsync(FreeEscapeEater);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AHugTooltipOverThePointerStaysShown()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(AddHugHost);
+
+        try
+        {
+            JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, 300, 300), cancellationToken: cancellation))!;
+            JsonNode? tooltip = hovered["tooltip"];
+            Assert.True(tooltip is JsonObject, $"no tooltip showed over HugHost: {hovered.ToJsonString()}");
+            double x = tooltip!["x"]!.GetValue<double>();
+            double y = tooltip["y"]!.GetValue<double>();
+            double right = x + tooltip["width"]!.GetValue<double>();
+            double bottom = y + tooltip["height"]!.GetValue<double>();
+
+            Assert.True(
+                x <= 300 && 300 < right && y <= 300 && 300 < bottom,
+                $"the tooltip {tooltip.ToJsonString()} does not cover the pointer, so the test proves nothing"
+            );
+            bool kept = (await RunAsync(TooltipStaysShownThroughTheDelay)).GetValue<bool>();
+
+            Assert.True(kept, "a tooltip hugging the border over the pointer stopped showing its panel within a tooltip delay");
+            // The pointer never entered the tooltip window, so the root's own hover is still the Control beneath it.
+            string hoveredOn = (await RunAsync(ReadHoveredInTwoFrames)).GetValue<string>();
+
+            Assert.Equal("HugHost", hoveredOn);
+        }
+        finally
+        {
+            await RunAsync(FreeHugHost);
         }
     }
 
