@@ -85,6 +85,76 @@ public sealed class ScratchUntilTests
         Assert.False(plain!.ContainsKey("screenshot"), plain.ToJsonString());
     }
 
+    [Fact]
+    public void AnUntilConditionMayAskForAnEdge()
+    {
+        (JsonObject? wait, string? error) = ScratchRun.UntilWait(
+            JsonNode.Parse("{\"node\": \"Door\", \"property\": \"open\", \"equals\": true, \"edge\": true}"),
+            0,
+            "go",
+            2000,
+            Play
+        );
+
+        Assert.Null(error);
+        Assert.True(wait!["edge"]!.GetValue<bool>());
+        Assert.Equal("{\"node\":\"/root/ScratchScene\",\"method\":\"PlayStep\",\"args\":[0]}", wait["call"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AnEdgeOnAKindItDoesNotApplyToIsRefusedWithWaitForsText()
+    {
+        (JsonObject? wait, string? error) = ScratchRun.UntilWait(
+            JsonNode.Parse("{\"node\": \"Door\", \"signal\": \"Closed\", \"edge\": true}"),
+            1,
+            "go",
+            2000,
+            Play
+        );
+
+        Assert.Null(wait);
+        Assert.Equal(
+            "step 1 'go': its until was refused: options.edge applies to exists, property, expression, text and state waits; this "
+                + "condition is signal.",
+            error
+        );
+    }
+
+    [Theory]
+    [InlineData("\"yes\"", "\"yes\"")]
+    [InlineData("null", "null")]
+    public void AnEdgeThatIsNotABooleanIsRefused(string edge, string shown)
+    {
+        (JsonObject? wait, string? error) = ScratchRun.UntilWait(
+            JsonNode.Parse($"{{\"node\": \"Door\", \"property\": \"open\", \"equals\": true, \"edge\": {edge}}}"),
+            0,
+            "go",
+            2000,
+            Play
+        );
+
+        Assert.Null(wait);
+        Assert.Equal($"GetStepUntil(0) returned edge {shown}, not true or false", error);
+    }
+
+    [Theory]
+    [InlineData("until")]
+    [InlineData("shot")]
+    [InlineData("shotWhen")]
+    public void AnEdgeOfFalseSendsNoEdgeForTheUntilThePacedShotOrTheShotWhen(string route)
+    {
+        JsonNode condition = JsonNode.Parse("{\"node\": \"Door\", \"property\": \"open\", \"equals\": true, \"edge\": false}")!;
+        JsonObject? parameters = route switch
+        {
+            "until" => ScratchRun.UntilWait(condition, 0, "go", 2000, Play).Wait,
+            "shot" => ScratchRun.ShotUntilWait(condition, 0, 2000, Root).Wait,
+            _ => ScratchRun.UntilShotWhen(condition, 0, 2000).ShotWhen,
+        };
+        JsonObject built = parameters!;
+
+        Assert.False(built.ContainsKey("edge"), built.ToJsonString());
+    }
+
     [Theory]
     [InlineData("{\"node\": \"Dice\", \"signal\": \"Settled\", \"expression\": \"true\"}", "condition needs exactly one of: ")]
     [InlineData(
@@ -199,6 +269,10 @@ public sealed class ScratchUntilTests
     [InlineData("\"soon\"", "the screenshot at step 2 'roll' failed: GetStepShotUntil(2) returned \"soon\", not a wait_for condition")]
     [InlineData("[1]", "the screenshot at step 2 'roll' failed: GetStepShotUntil(2) returned [1], not a wait_for condition")]
     [InlineData("true", "the screenshot at step 2 'roll' failed: GetStepShotUntil(2) returned true, not a wait_for condition")]
+    [InlineData(
+        "{\"node\": \"Globe\", \"property\": \"shot_ready\", \"equals\": true, \"edge\": \"yes\"}",
+        "the screenshot at step 2 'roll' failed: GetStepShotUntil(2) returned edge \"yes\", not true or false"
+    )]
     public void AShotConditionAnswerNeitherADictionaryNorNullIsTheShotsWarning(string answer, string warning)
     {
         (JsonObject? wait, string? refusal) = ScratchRun.ShotUntilWait(JsonNode.Parse(answer), 2, 2000, Root);
@@ -245,6 +319,20 @@ public sealed class ScratchUntilTests
         Assert.False(shotWhen.ContainsKey("call"), shotWhen.ToJsonString());
     }
 
+    [Fact]
+    public void AShotConditionMayAskForAnEdgeOnAPacedStepAndOnAStepWithAnUntil()
+    {
+        JsonNode condition = JsonNode.Parse("{\"node\": \"Globe\", \"property\": \"shot_ready\", \"equals\": true, \"edge\": true}")!;
+
+        (JsonObject? wait, string? refusal) = ScratchRun.ShotUntilWait(condition, 2, 2000, Root);
+        (JsonObject? shotWhen, string? shotRefusal) = ScratchRun.UntilShotWhen(condition, 2, 2000);
+
+        Assert.Null(refusal);
+        Assert.Null(shotRefusal);
+        Assert.True(wait!["edge"]!.GetValue<bool>());
+        Assert.True(shotWhen!["edge"]!.GetValue<bool>());
+    }
+
     [Theory]
     [InlineData("null")]
     [InlineData("{}")]
@@ -255,6 +343,10 @@ public sealed class ScratchUntilTests
     [InlineData("\"soon\"", "GetStepShotUntil(2) returned \"soon\", not a wait_for condition")]
     [InlineData("[1]", "GetStepShotUntil(2) returned [1], not a wait_for condition")]
     [InlineData("true", "GetStepShotUntil(2) returned true, not a wait_for condition")]
+    [InlineData(
+        "{\"node\": \"Globe\", \"property\": \"shot_ready\", \"equals\": true, \"edge\": \"yes\"}",
+        "GetStepShotUntil(2) returned edge \"yes\", not true or false"
+    )]
     public void AShotConditionForAStepWithAnUntilNeitherADictionaryNorNullIsRefused(string answer, string refused) =>
         Assert.Equal(((JsonObject?)null, refused), ScratchRun.UntilShotWhen(JsonNode.Parse(answer), 2, 2000));
 
@@ -262,12 +354,14 @@ public sealed class ScratchUntilTests
     [InlineData("{\"node\": \"Globe\", \"signal\": \"Settled\"}", "signal")]
     [InlineData("{\"gameMs\": 100}", "gameMs")]
     [InlineData("{\"frames\": 3}", "frames")]
+    [InlineData("{\"output\": \"ready\"}", "output")]
+    [InlineData("{\"uiChanged\": true}", "uiChanged")]
     public void AShotConditionForAStepWithAnUntilNotCheckedAtADrawnFrameIsRefused(string answer, string kind) =>
         Assert.Equal(
             (
                 (JsonObject?)null,
                 $"GetStepShotUntil(1) returned a {kind} condition; a step with an until is shot on a condition checked at a drawn frame, "
-                    + "not signal, gameMs or frames"
+                    + "not signal, gameMs, frames, output or uiChanged"
             ),
             ScratchRun.UntilShotWhen(JsonNode.Parse(answer), 1, 2000)
         );

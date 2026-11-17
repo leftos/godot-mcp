@@ -175,6 +175,39 @@ public sealed class ScratchShotTests
     [Fact]
     public void CapturedStepsTheRunPlaysAllGiveNoWarning() => Assert.Null(ScratchRun.CaptureNotPlayed([0, 2], [0, 1, 2], ["open", "hit", "fight"]));
 
+    // The unplayed-shot warning follows options.capture's own steps for the scene: a map that names it warns, a map that leaves it
+    // out or names no steps warns of nothing, and the list form covers every scene.
+    [Fact]
+    public void APerSceneCaptureMapNamingAStepThePartialRunDoesNotPlayWarnsOfIt()
+    {
+        ScratchCapture capture = new(null)
+        {
+            StepsByScene = new Dictionary<string, IReadOnlyList<ScratchStepToken>> { ["Fight"] = [new ScratchStepToken("1", IsNumber: true)] },
+        };
+
+        Assert.Equal(
+            "options.capture names steps this run did not play: 1 'hit'",
+            ScratchRun.UnplayedShotsWarning(capture, "Fight", [1], [0, 2], ["open", "hit", "fight"])
+        );
+    }
+
+    [Fact]
+    public void ACaptureForAnotherSceneInTheMapOrNoStepsGivesNoWarning()
+    {
+        ScratchCapture map = new(null)
+        {
+            StepsByScene = new Dictionary<string, IReadOnlyList<ScratchStepToken>> { ["Fight"] = [new ScratchStepToken("1", IsNumber: true)] },
+        };
+        ScratchCapture list = new([new ScratchStepToken("1", IsNumber: true)]);
+
+        Assert.Null(ScratchRun.UnplayedShotsWarning(map, "Other", [1], [0, 2], ["open", "hit", "fight"]));
+        Assert.Null(ScratchRun.UnplayedShotsWarning(new ScratchCapture(null), "Fight", [1], [0, 2], ["open", "hit", "fight"]));
+        Assert.Equal(
+            "options.capture names steps this run did not play: 1 'hit'",
+            ScratchRun.UnplayedShotsWarning(list, "Fight", [1], [0, 2], ["open", "hit", "fight"])
+        );
+    }
+
     [Fact]
     public void CaptureStepsTakeEachScenesOwnListFromAMap()
     {

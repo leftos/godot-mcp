@@ -955,13 +955,14 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The bridge's wait_for parameters for step <paramref name="index"/>'s GetStepUntil answer: its condition checked as wait_for
-    /// checks one, <paramref name="paceMs"/> its timeoutMs and its limitGameMs <see cref="LoadClock.BackstopFactor"/> times
-    /// <paramref name="play"/>'s hang guard in game time at its time scale, the game time the bridge ends the wait at, not met: a
-    /// backstop behind the caller's load-adjusted release, which neither a loaded machine nor a time scale above 1 reaches first
-    /// (a parameter only the runner sends; the bridge bounds the wait by the caller's backstop, not by timeoutMs),
-    /// PlayStep(index) on <paramref name="play"/>'s root its call, and options.screenshot
+    /// checks one, its edge when the answer asks for one, <paramref name="paceMs"/> its timeoutMs and its limitGameMs
+    /// <see cref="LoadClock.BackstopFactor"/> times <paramref name="play"/>'s hang guard in game time at its time scale, the game
+    /// time the bridge ends the wait at, not met: a backstop behind the caller's load-adjusted release, which neither a loaded
+    /// machine nor a time scale above 1 reaches first (a parameter only the runner sends; the bridge bounds the wait by the
+    /// caller's backstop, not by timeoutMs), PlayStep(index) on <paramref name="play"/>'s root its call, and options.screenshot
     /// when <paramref name="play"/> captures the step, so the met frame is shot. Neither parameters nor an error for null or an
-    /// empty dictionary, a paced step; an error for any other answer, or a condition wait_for refuses.
+    /// empty dictionary, a paced step; an error for any other answer, an edge that is not true or false, or a condition wait_for
+    /// refuses.
     /// </summary>
     internal static (JsonObject? Wait, string? Error) UntilWait(JsonNode? answer, int index, string name, int paceMs, UntilPlay play)
     {
@@ -970,14 +971,21 @@ internal sealed class ScratchRun
             return (null, null);
         }
 
-        if (answer is not JsonObject condition)
+        if (answer is not JsonObject given)
         {
             return (null, NotACondition(UntilMethod, index, answer));
         }
 
+        (JsonObject condition, bool edge, string? edgeError) = TakeEdge(given, UntilMethod, index);
+        if (edgeError is not null)
+        {
+            return (null, edgeError);
+        }
+
         try
         {
-            JsonObject wait = PlayStepWait(condition, index, paceMs, play.RootPath, play.Screenshot);
+            WaitOptions options = new(Screenshot: play.Screenshot ? true : null, Edge: edge ? true : null);
+            JsonObject wait = PlayStepWait(condition, index, paceMs, play.RootPath, options);
             wait[LimitGameMsField] = GameMs(play.Guard.TotalSeconds * LoadClock.BackstopFactor * play.TimeScale);
             return (wait, null);
         }
@@ -989,12 +997,12 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The bridge's wait_for parameters for step <paramref name="index"/>'s GetStepShotUntil answer, for a paced step
-    /// options.capture shoots: its condition checked as wait_for checks one, PlayStep(index) on <paramref name="rootPath"/> its
-    /// call, options.screenshot set so the frame the condition first holds is the step's shot, and the step's pace of
-    /// <paramref name="paceMs"/> game ms both its timeoutMs and its limitGameMs, so the bridge ends the wait unmet once the
-    /// pace has run in game time from PlayStep, as a paced step's wait does. Neither parameters nor a refusal for null or an
-    /// empty dictionary, a step shot at the end of its pace; the refusal, the shot's failure, for any other answer or a
-    /// condition wait_for refuses.
+    /// options.capture shoots: its condition checked as wait_for checks one, its edge when the answer asks for one,
+    /// PlayStep(index) on <paramref name="rootPath"/> its call, options.screenshot set so the frame the condition first holds is
+    /// the step's shot, and the step's pace of <paramref name="paceMs"/> game ms both its timeoutMs and its limitGameMs, so the
+    /// bridge ends the wait unmet once the pace has run in game time from PlayStep, as a paced step's wait does. Neither
+    /// parameters nor a refusal for null or an empty dictionary, a step shot at the end of its pace; the refusal, the shot's
+    /// failure, for any other answer, an edge that is not true or false, or a condition wait_for refuses.
     /// </summary>
     internal static (JsonObject? Wait, string? Refusal) ShotUntilWait(JsonNode? answer, int index, int paceMs, string rootPath)
     {
@@ -1003,14 +1011,21 @@ internal sealed class ScratchRun
             return (null, null);
         }
 
-        if (answer is not JsonObject condition)
+        if (answer is not JsonObject given)
         {
             return (null, NotACondition(ShotUntilMethod, index, answer));
         }
 
+        (JsonObject condition, bool edge, string? edgeError) = TakeEdge(given, ShotUntilMethod, index);
+        if (edgeError is not null)
+        {
+            return (null, edgeError);
+        }
+
         try
         {
-            JsonObject wait = PlayStepWait(condition, index, paceMs, rootPath, screenshot: true);
+            WaitOptions options = new(Screenshot: true, Edge: edge ? true : null);
+            JsonObject wait = PlayStepWait(condition, index, paceMs, rootPath, options);
             wait[LimitGameMsField] = paceMs;
             return (wait, null);
         }
@@ -1022,11 +1037,12 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The shot condition a step with an until carries in its until's wait as shotWhen, for step <paramref name="index"/>'s
-    /// GetStepShotUntil answer when options.capture shoots it: its condition built as wait_for builds one, without a timeout, a
-    /// preview or a call of its own, which the bridge checks at each frame drawn while the until polls and whose first holding
-    /// frame is the step's shot. Neither a condition nor a refusal for null or an empty dictionary, a step shot on its until's
-    /// met frame; the refusal, the shot's failure, for any other answer, a condition wait_for refuses, or a signal, gameMs or
-    /// frames condition, which a drawn frame cannot check.
+    /// GetStepShotUntil answer when options.capture shoots it: its condition built as wait_for builds one, its edge when the
+    /// answer asks for one, without a timeout, a preview or a call of its own, which the bridge checks at each frame drawn while
+    /// the until polls and whose first holding frame is the step's shot. Neither a condition nor a refusal for null or an empty
+    /// dictionary, a step shot on its until's met frame; the refusal, the shot's failure, for any other answer, an edge that is
+    /// not true or false, a condition wait_for refuses, or a signal, gameMs, frames, output or uiChanged condition, which a drawn
+    /// frame cannot check.
     /// </summary>
     internal static (JsonObject? ShotWhen, string? Refusal) UntilShotWhen(JsonNode? answer, int index, int paceMs)
     {
@@ -1035,23 +1051,29 @@ internal sealed class ScratchRun
             return (null, null);
         }
 
-        if (answer is not JsonObject condition)
+        if (answer is not JsonObject given)
         {
             return (null, NotACondition(ShotUntilMethod, index, answer));
+        }
+
+        (JsonObject condition, bool edge, string? edgeError) = TakeEdge(given, ShotUntilMethod, index);
+        if (edgeError is not null)
+        {
+            return (null, edgeError);
         }
 
         try
         {
             WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
-            JsonObject shotWhen = RuntimeTools.BuildWaitParameters(until, paceMs, new WaitOptions());
+            JsonObject shotWhen = RuntimeTools.BuildWaitParameters(until, paceMs, new WaitOptions(Edge: edge ? true : null));
             shotWhen.Remove(PreviewMaxWidthField);
             shotWhen.Remove("timeoutMs");
             string kind = shotWhen["kind"]!.GetValue<string>();
-            return kind is "signal" or "gameMs" or "frames"
+            return kind is "signal" or "gameMs" or "frames" or "output" or "uiChanged"
                 ? (
                     null,
                     $"{ShotUntilMethod}({index}) returned a {kind} condition; a step with an until is shot on a condition checked at a "
-                        + "drawn frame, not signal, gameMs or frames"
+                        + "drawn frame, not signal, gameMs, frames, output or uiChanged"
                 )
                 : (shotWhen, null);
         }
@@ -1072,17 +1094,35 @@ internal sealed class ScratchRun
         $"{method}({index}) returned {answer.ToJsonString()}, not a wait_for condition";
 
     /// <summary>
+    /// <paramref name="answer"/>'s condition members without its edge key, the edge it asks for, or why that key is not a JSON
+    /// boolean: wait_for's edge is an option, so a step's condition answer carries it beside the condition's own members, and a
+    /// fresh copy leaves the cached answer as it was read.
+    /// </summary>
+    private static (JsonObject Condition, bool Edge, string? Error) TakeEdge(JsonObject answer, string method, int index)
+    {
+        var condition = (JsonObject)answer.DeepClone();
+        if (!condition.TryGetPropertyValue("edge", out JsonNode? edge))
+        {
+            return (condition, false, null);
+        }
+
+        condition.Remove("edge");
+        return edge is JsonValue value && value.TryGetValue(out bool asked)
+            ? (condition, asked, null)
+            : (condition, false, $"{method}({index}) returned edge {edge?.ToJsonString() ?? "null"}, not true or false");
+    }
+
+    /// <summary>
     /// wait_for parameters for <paramref name="condition"/> with PlayStep(index) on <paramref name="rootPath"/> as its call,
-    /// <paramref name="paceMs"/> its timeoutMs and options.screenshot when <paramref name="screenshot"/>, without a preview.
+    /// <paramref name="paceMs"/> its timeoutMs and <paramref name="options"/>'s screenshot and edge, without a preview.
     /// </summary>
     /// <exception cref="McpException">wait_for refuses the condition.</exception>
     /// <exception cref="JsonException">The condition does not read as one.</exception>
-    private static JsonObject PlayStepWait(JsonObject condition, int index, int paceMs, string rootPath, bool screenshot)
+    private static JsonObject PlayStepWait(JsonObject condition, int index, int paceMs, string rootPath, WaitOptions options)
     {
         WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
         MethodCall call = new(rootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
-        WaitOptions options = new(Screenshot: screenshot ? true : null, Call: call);
-        JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, options);
+        JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, options with { Call = call });
         wait.Remove(PreviewMaxWidthField);
         return wait;
     }
@@ -1179,6 +1219,18 @@ internal sealed class ScratchRun
         string[] unplayed = [.. shots.Except(played).Order().Select(step => string.Create(CultureInfo.InvariantCulture, $"{step} '{names[step]}'"))];
         return unplayed.Length == 0 ? null : $"options.capture names steps this run did not play: {string.Join(", ", unplayed)}";
     }
+
+    /// <summary>
+    /// The warning naming the steps options.capture names for <paramref name="scene"/> that the run does not play
+    /// (<see cref="CaptureNotPlayed"/>); null when the capture gives the scene no steps of its own, which shoots every played step.
+    /// </summary>
+    internal static string? UnplayedShotsWarning(
+        ScratchCapture? capture,
+        string scene,
+        IEnumerable<int> shots,
+        IReadOnlyList<int> played,
+        IReadOnlyList<string> names
+    ) => capture?.StepsFor(scene) is not null ? CaptureNotPlayed(shots, played, names) : null;
 
     /// <summary>
     /// The capture an until's wait_for reply names as screenshot.path, or why there is none: the bridge's warning (a frame not
@@ -1872,7 +1924,7 @@ internal sealed class ScratchRun
     /// <summary>Adds the scene warning naming the steps options.capture.steps names that the run does not play, if any.</summary>
     private void WarnOfUnplayedShots()
     {
-        if (_plan.Capture?.StepsFor(_scene.Name) is not null && CaptureNotPlayed(_shots, _walk.Played, _names) is { } unplayed)
+        if (UnplayedShotsWarning(_plan.Capture, _scene.Name, _shots, _walk.Played, _names) is { } unplayed)
         {
             _warnings.Add(unplayed);
         }
