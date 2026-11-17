@@ -9,16 +9,13 @@ extends RefCounted
 
 const SceneFiles := preload("scene_files.gd")
 const ScenePaths := preload("scene_paths.gd")
+const SceneRecords := preload("scene_records.gd")
 const SceneSplice := preload("scene_splice.gd")
 const SceneTabs := preload("scene_tabs.gd")
 const Json := preload("../bridge/godot_mcp_json.gd")
 const RES_PREFIX := "res://"
-## A packed node record's fields before its property count: parent, owner, type, name, instance.
-const RECORD_HEAD := 5
 ## The type of a packed node record an instanced or inherited scene holds (4.7.2 packed_scene.h).
 const RECORD_TYPE_INSTANTIATED := 0x7FFFFFFF
-## The bits of a stored property's name index that index names; bit 30 marks a deferred node path.
-const PROPERTY_NAME_MASK := (1 << 30) - 1
 ## How many base scenes deep an inherited scene is followed.
 const MAX_BASE_DEPTH := 64
 ## The warning a save returns when leaving out the properties its source did not store would
@@ -401,7 +398,7 @@ static func _trimmed(full: Dictionary, plan: Dictionary) -> Array:
 		if not plan.has(record):
 			return pairs
 		return _source_pairs(bundled, pairs, plan[record], dropped)
-	return [_with_pairs(full.duplicate(), trim), dropped]
+	return [SceneRecords.with_pairs(full.duplicate(), trim), dropped]
 
 
 ## Adds to the stored names of each carried entry of plan the properties trimmed ([bundled,
@@ -493,7 +490,7 @@ static func _restored(base: Dictionary, context: Dictionary) -> Array:
 		bundled: Dictionary, record: int, _head: PackedInt32Array, pairs: PackedInt32Array
 	) -> PackedInt32Array:
 		return _restored_pairs(bundled, pairs, record, context)
-	return [_with_pairs(restored, restore), context["added"]]
+	return [SceneRecords.with_pairs(restored, restore), context["added"]]
 
 
 ## {path: {name: value}} for each record of state: the values the source's record for its node
@@ -548,7 +545,7 @@ static func _restored_pairs(
 	for property: String in missing[path]:
 		var value: Variant = missing[path][property]
 		if typeof(value) != TYPE_OBJECT and Json.same(_loaded_value(node, property, hidden), value):
-			pairs = _with_pair(bundled, pairs, property, value)
+			pairs = SceneRecords.with_pair(bundled, pairs, property, value)
 			var at_path: Dictionary = (context["added"] as Dictionary).get_or_add(path, {})
 			at_path[property] = value
 	return pairs
@@ -656,31 +653,7 @@ static func _with_native_values(bundled: Dictionary, fixes: Dictionary) -> Dicti
 			return pairs
 		var plain: bool = head[2] != RECORD_TYPE_INSTANTIATED and head[4] == -1
 		return _native_pairs(within, pairs, fixes[record], plain)
-	return _with_pairs(bundled, fix)
-
-
-## bundled with each node record's (name index, value index) pairs replaced by what rewrite
-## (bundled, record index, the record's head fields, its pairs) returns for them; the rest of each
-## record as it was.
-static func _with_pairs(bundled: Dictionary, rewrite: Callable) -> Dictionary:
-	var nodes: PackedInt32Array = bundled["nodes"]
-	var rewritten: PackedInt32Array = []
-	var at: int = 0
-	for record in int(bundled["node_count"]):
-		var head: PackedInt32Array = nodes.slice(at, at + RECORD_HEAD)
-		var pairs_start: int = at + RECORD_HEAD + 1
-		var groups_start: int = pairs_start + nodes[at + RECORD_HEAD] * 2
-		var groups_end: int = groups_start + 1 + nodes[groups_start]
-		var pairs: PackedInt32Array = rewrite.call(
-			bundled, record, head, nodes.slice(pairs_start, groups_start)
-		)
-		rewritten.append_array(head)
-		rewritten.append(int(pairs.size() / 2.0))
-		rewritten.append_array(pairs)
-		rewritten.append_array(nodes.slice(groups_start, groups_end))
-		at = groups_end
-	bundled["nodes"] = rewritten
-	return bundled
+	return SceneRecords.with_pairs(bundled, fix)
 
 
 ## pairs, a node record's (name index, value index) pairs, storing the engine's value of each of
@@ -699,13 +672,13 @@ static func _native_pairs(
 		if not plain:
 			base = bases[property]
 		var is_base: bool = Json.same(value, base)
-		var at: int = _pair_at(bundled["names"], pairs, property)
+		var at: int = SceneRecords.pair_at(bundled["names"], pairs, property)
 		if at >= 0 and is_base:
 			pairs = pairs.slice(0, at) + pairs.slice(at + 2)
 		elif at >= 0:
-			pairs[at + 1] = _variant_index(bundled, value)
+			pairs[at + 1] = SceneRecords.variant_index(bundled, value)
 		elif not is_base:
-			pairs = _with_pair(bundled, pairs, property, value)
+			pairs = SceneRecords.with_pair(bundled, pairs, property, value)
 	return pairs
 
 
@@ -798,7 +771,7 @@ static func _source_pairs(
 	var names: PackedStringArray = bundled["names"]
 	var kept: PackedInt32Array = []
 	for at in range(0, pairs.size(), 2):
-		var property: String = names[pairs[at] & PROPERTY_NAME_MASK]
+		var property: String = names[pairs[at] & SceneRecords.PROPERTY_NAME_MASK]
 		var value: Variant = bundled["variants"][pairs[at + 1]]
 		if _droppable(entry, property, value):
 			var at_path: Dictionary = dropped.get_or_add(entry["path"], {})
@@ -943,45 +916,6 @@ static func _plain_path(path: NodePath) -> String:
 	if text.begins_with("./"):
 		text = text.substr(2)
 	return "." if text.is_empty() else text
-
-
-## pairs with a pair for property holding value, placed before the script's pair: instantiation
-## sets the pairs in order, and an engine property set once the script is attached reaches the
-## script's member instead.
-static func _with_pair(
-	bundled: Dictionary, pairs: PackedInt32Array, property: String, value: Variant
-) -> PackedInt32Array:
-	var pair: PackedInt32Array = [_name_index(bundled, property), _variant_index(bundled, value)]
-	var at: int = _pair_at(bundled["names"], pairs, "script")
-	if at < 0:
-		return pairs + pair
-	return pairs.slice(0, at) + pair + pairs.slice(at)
-
-
-## The offset in pairs of the pair whose name is property, or -1.
-static func _pair_at(names: PackedStringArray, pairs: PackedInt32Array, property: String) -> int:
-	for at in range(0, pairs.size(), 2):
-		if names[pairs[at] & PROPERTY_NAME_MASK] == property:
-			return at
-	return -1
-
-
-## The index of property in bundled's names, appended when absent.
-static func _name_index(bundled: Dictionary, property: String) -> int:
-	var names: PackedStringArray = bundled["names"]
-	var index: int = names.find(property)
-	if index < 0:
-		index = names.size()
-		names.append(property)
-		bundled["names"] = names
-	return index
-
-
-## The index of value appended to bundled's variants.
-static func _variant_index(bundled: Dictionary, value: Variant) -> int:
-	var variants: Array = bundled["variants"]
-	variants.append(value)
-	return variants.size() - 1
 
 
 ## The scene an inherited scene's root instances, or null for a scene that inherits nothing.
