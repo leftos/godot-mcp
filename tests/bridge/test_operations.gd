@@ -151,6 +151,32 @@ func test_node_paths_are_relative_to_the_scene_root() -> void:
 	assert_eq(_paths.join_node_path("A", "./B/C"), "A/B/C", "a node inside an instance")
 
 
+func test_a_tree_miss_names_the_deepest_listed_node() -> void:
+	var tree := _scene_tree()
+	assert_eq(
+		_paths.tree_miss(tree, "Nope", "res://l.tscn", "; hint."),
+		"res://l.tscn has no node Nope: its root has no child 'Nope' (children: Boss); hint.",
+		"a missing first segment names the root's children"
+	)
+	assert_eq(
+		_paths.tree_miss(tree, "Boss/Nope", "res://l.tscn", "; hint."),
+		"res://l.tscn has no node Boss/Nope: Boss has no child 'Nope' (children: Sprite); hint.",
+		"a missing last segment names its parent's children"
+	)
+
+
+func test_a_tree_miss_of_a_root_with_no_children_says_none() -> void:
+	var tree: Dictionary = {
+		"nodes": {".": {"path": ".", "name": "Root", "type": "Node", "groups": []}},
+		"children": {".": []},
+	}
+	assert_eq(
+		_paths.tree_miss(tree, "Nope", "res://l.tscn", "; hint."),
+		"res://l.tscn has no node Nope: its root has no child 'Nope' (children: none); hint.",
+		"a root without children lists none"
+	)
+
+
 func test_an_instancing_node_lays_its_values_over_the_instance() -> void:
 	var tree: Dictionary = {"nodes": {}, "children": {}}
 	_ops.merge_node(tree, ".", _facts("Main", "Node2D", {}))
@@ -349,3 +375,14 @@ func _facts(node_name: String, type: String, extra: Dictionary) -> Dictionary:
 	var facts: Dictionary = {"name": node_name, "type": type, "groups": []}
 	facts.merge(extra, true)
 	return facts
+
+
+## A scene file tree as operations.gd builds it: a root holding Boss, which holds Sprite.
+func _scene_tree() -> Dictionary:
+	var nodes: Dictionary = {
+		".": {"path": ".", "name": "Root", "type": "Node", "groups": []},
+		"Boss": {"path": "Boss", "name": "Boss", "type": "Node", "groups": []},
+		"Boss/Sprite": {"path": "Boss/Sprite", "name": "Sprite", "type": "Sprite2D", "groups": []},
+	}
+	var children: Dictionary = {".": ["Boss"], "Boss": ["Boss/Sprite"], "Boss/Sprite": []}
+	return {"nodes": nodes, "children": children}

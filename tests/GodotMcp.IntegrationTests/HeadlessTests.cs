@@ -517,7 +517,8 @@ public sealed class HeadlessTests : IAsyncDisposable
 
         Assert.Equal(["Boss", "Boss/Sprite"], Paths(result));
         Assert.Equal(
-            "get_scene_file_tree failed: res://level.tscn has no node Nope; get_scene_file_tree without root lists its nodes",
+            "get_scene_file_tree failed: res://level.tscn has no node Nope: its root has no child 'Nope' "
+                + "(children: Boss); get_scene_file_tree without root lists its nodes.",
             unknown.Message
         );
     }

@@ -150,6 +150,62 @@ func test_more_than_ten_children_are_cut_at_ten() -> void:
 	root.free()
 
 
+func test_a_missing_unique_name_is_worded_as_a_unique_name() -> void:
+	var root := _plate_tree()
+	assert_eq(
+		_edit.node_or_error(root, "%Nope", "res://s.tscn"),
+		{
+			"error":
+			"res://s.tscn has no node %Nope: the scene has no node with the unique name '%Nope'."
+		},
+		"a missing unique name at the root names the scene"
+	)
+	assert_eq(
+		_edit.node_or_error(root, "Plate/%Gone", "res://s.tscn"),
+		{
+			"error":
+			(
+				"res://s.tscn has no node Plate/%Gone: Plate's scene has no node with"
+				+ " the unique name '%Gone'."
+			)
+		},
+		"a missing unique name below the root names that node's scene"
+	)
+	root.free()
+
+
+func test_a_dot_segment_is_read_as_the_node_itself() -> void:
+	var root := _plate_tree()
+	assert_eq(
+		_edit.node_or_error(root, "./Nope", "res://s.tscn"),
+		{
+			"error":
+			"res://s.tscn has no node ./Nope: its root has no child 'Nope' (children: Plate)."
+		},
+		"a . segment is the node itself"
+	)
+	root.free()
+
+
+func test_exactly_ten_children_have_no_remainder() -> void:
+	var root := Node.new()
+	root.name = "Root"
+	for index in 10:
+		_child_named(root, "C%d" % index)
+	assert_eq(
+		_edit.node_or_error(root, "Nope", "res://s.tscn"),
+		{
+			"error":
+			(
+				"res://s.tscn has no node Nope: its root has no child 'Nope' (children:"
+				+ " C0, C1, C2, C3, C4, C5, C6, C7, C8, C9)."
+			)
+		},
+		"ten children are listed with no remainder"
+	)
+	root.free()
+
+
 func test_a_path_that_exists_returns_its_node() -> void:
 	var root := _plate_tree()
 	assert_eq(

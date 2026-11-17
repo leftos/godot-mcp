@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Changed
+
+- A headless node path missing a `%Name` names the unique name, and `get_scene_file_tree`'s missing `root` names the nearest node and its children.
+
 ### Fixed
 
 - A scratch scene whose game quits with code 0 just as its exit hold's wait expires no longer fails as an unreadable hold.

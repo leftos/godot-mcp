@@ -1368,6 +1368,24 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task GetNodePropertiesWordsAMissingUniqueName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+
+        JsonNode read = await PropertiesAsync(probe.Directory, "level.tscn", [new NodePropertyQuery("%Rows")], cancellation);
+
+        JsonArray results = read["results"]!.AsArray();
+        Assert.Equal("%Rows", results[0]!["nodePath"]!.GetValue<string>());
+        Assert.Equal(
+            "res://level.tscn has no node %Rows: the scene has no node with the unique name '%Rows'.",
+            results[0]!["error"]!.GetValue<string>()
+        );
+        Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
+    }
+
     private const string EditableScene =
         "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://enemy.tscn\" id=\"1\"]\n\n"
         + "[node name=\"Level\" type=\"Node2D\"]\n\n[node name=\"Boss\" parent=\".\" instance=ExtResource(\"1\")]\n\n[editable path=\"Boss\"]\n";
@@ -1573,7 +1591,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("add_node failed: nodeType 'NoSuchNode' is not a Node class, a script class_name or a scene.", unknown.Message);
         Assert.Equal("add_node failed: nodeType 'Resource' is not a Node class, a script class_name or a scene.", notANode.Message);
         Assert.Equal(
-            "add_node failed: res://level.tscn has no node Nope: its root has no child 'Nope' " + "(children: Boss, Box, Pic, Holder).",
+            "add_node failed: res://level.tscn has no node Nope: its root has no child 'Nope' (children: Boss, Box, Pic, Holder).",
             noParent.Message
         );
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));

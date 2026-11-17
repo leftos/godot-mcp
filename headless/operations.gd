@@ -278,8 +278,8 @@ static func _scene_file_tree(params: Dictionary) -> Dictionary:
 	add_state(scene.get_state(), ".", tree, 0)
 	var root_path: String = ScenePaths.normalise_node_path(str(params.get("root", ".")))
 	if not tree["nodes"].has(root_path):
-		var hint := "get_scene_file_tree without root lists its nodes"
-		return {"ok": false, "error": "%s has no node %s; %s" % [scene_path, root_path, hint]}
+		var hint := "; get_scene_file_tree without root lists its nodes."
+		return {"ok": false, "error": ScenePaths.tree_miss(tree, root_path, scene_path, hint)}
 	var listed: Array = []
 	list_nodes(tree, root_path, int(params.get("maxDepth", -1)), listed)
 	return {"ok": true, "result": {"nodes": listed}}
