@@ -434,9 +434,10 @@ public sealed class ScratchUntilTests
         );
 
     [Fact]
-    public void AnUnmetUntilWithGameTimeJustUnderHalfItsGuardIsTheStoodStillText() =>
+    public void AnUnmetUntilWithGameTimeJustUnderHalfItsGuardSaysHowMuchTheClockRan() =>
         Assert.Equal(
-            "step 0 'wait': its until was not met within 15 s: the game's clock stood still (is it paused?)",
+            "step 0 'wait': its until was not met within 15 s: the game's clock ran only 7499 of 15000 game ms "
+                + "(paused partway, or slowed by a time scale or a starved game)",
             ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 7499, 15010, 900), GuardSeconds, 1)
         );
 
@@ -458,7 +459,30 @@ public sealed class ScratchUntilTests
     public void AnUnmetUntilWhoseGamesClockStoodStillIsTheStoodStillText() =>
         Assert.Equal(
             "step 0 'wait': its until was not met within 10.5 s: the game's clock stood still (is it paused?)",
+            ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 0, 10520, 600), 10.5, 1)
+        );
+
+    [Fact]
+    public void AnUnmetUntilWhoseClockRanALittleSaysHowMuchItRan() =>
+        Assert.Equal(
+            "step 0 'wait': its until was not met within 10.5 s: the game's clock ran only 16 of 10500 game ms "
+                + "(paused partway, or slowed by a time scale or a starved game)",
             ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 16, 10520, 600), 10.5, 1)
+        );
+
+    [Fact]
+    public void AnUnmetPaceThatRanPartOfItsGameTimeSaysHowMuchRan() =>
+        Assert.Equal(
+            "wait_for 2000 game ms was not met within 12 s: the game's clock ran only 700 of them "
+                + "(paused partway, or slowed by a time scale or a starved game)",
+            ScratchRun.PaceNotMet(2000, 700, TimeSpan.FromSeconds(12))
+        );
+
+    [Fact]
+    public void AnUnmetPaceWhoseClockRanNothingIsTheStoodStillText() =>
+        Assert.Equal(
+            "wait_for 2000 game ms was not met within 12 s: the game's clock stood still (is it paused?)",
+            ScratchRun.PaceNotMet(2000, 0, TimeSpan.FromSeconds(12))
         );
 
     // Godot refusing PlayStep's own callv, the text its log entry carries and the bridge's call_now returns as the refusal.

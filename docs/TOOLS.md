@@ -813,7 +813,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A step's until that counts frames or physics ticks (`frames`, `settled`) sees N times fewer frames per second of game time at scale N, and at a high N one frame's delta can exceed a short span it counts: such a scene may need a longer span or the opt-out.
 
-  A game that sets `Engine.time_scale` itself (an autoload, a scene) overrides the launch's scale, and the divided kill bound then cuts its long steps short with the "clock stood still" message below: such a scene should opt out with `"timeScale": 1` in its profile pace.
+  A game that sets `Engine.time_scale` itself (an autoload, a scene) overrides the launch's scale, and the divided kill bound then cuts its long steps short with the "clock ran only" message below: such a scene should opt out with `"timeScale": 1` in its profile pace.
 
   A root that also has a public `GetStepUntil(i)` (C# or GDScript; an optional fifth method, found by `has_method`) gives each step a `wait_for` condition, as `{node, property, equals}` or `{expression}` would be written (an empty dictionary, or null, for a paced step, which plays as above).
 
@@ -843,7 +843,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The errors read `step <i> '<name>': its until hung at its guard of 15 s of load-adjusted time (its condition never held); check the condition GetStepUntil gives` (a step with a `guard` names it: `its guard of <guard> s`), `step <i> '<name>': its until was refused: <why>`, `GetStepUntil(<i>) returned <value>, not a wait_for condition`.
 
-  The last two errors read `step <i> '<name>': its until was not met within 15 s: the game's clock stood still (is it paused?)` (the wait ended with under half the step's pace of game time played) and `step <i> '<name>': its until's wait failed: <message>` (the connection or session failed).
+  The unmet-until errors read `step <i> '<name>': its until was not met within 15 s: the game's clock stood still (is it paused?)` (the wait ended with no game time played), `step <i> '<name>': its until was not met within 15 s: the game's clock ran only <ran> of <guard game ms> game ms (paused partway, or slowed by a time scale or a starved game)` (under half the guard's game time played, but some).
+
+  The until's wait failing reads `step <i> '<name>': its until's wait failed: <message>` (the connection or session failed).
 
   An until's wait refused because Godot refused `PlayStep`'s own callv reads as its feed entry, `<message> (<file>:<line>)`, as a paced step's does; a `PlayStep` that throws or logs an error inside does not refuse.
 
@@ -865,7 +867,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   When the wait fails, or the game closes inside it, the window falls back to a marker the runner has the game print afterwards and takes every error so far, and the server logs `scratch: step <n> window fell back to the runner's marker: the bridge did not end the wait` (or `…: the feed has no mark <marker>`; `pace` in place of `step <n>` for the exit's window) to stderr.
 
-  A paced `PlayStep` that fails as a call reads `PlayStep failed: The bridge refused 'call_method': <why>`; a `PlayStep` that returns a coroutine is not awaited before its pace starts, as an until step's never was. A paced step's wait runs on a paused tree, so its `PlayStep` may unpause it; a tree its `PlayStep` leaves paused fails the step as a clock that stood still.
+  A paced `PlayStep` that fails as a call reads `PlayStep failed: The bridge refused 'call_method': <why>`; a `PlayStep` that returns a coroutine is not awaited before its pace starts, as an until step's never was. A paced step's wait runs on a paused tree, so its `PlayStep` may unpause it; a tree its `PlayStep` leaves paused fails the step as a clock that stood still (`wait_for <ms> game ms was not met within <s> s: the game's clock stood still (is it paused?)`).
+
+  A paced step whose clock ran only part of the pace reads `…: the game's clock ran only <ran> of them (paused partway, or slowed by a time scale or a starved game)`.
 
   `failedAt` is the first failed step and `failures` lists every failed step in order (`index`, `name`, `error`; one entry without `keepGoing`), both absent for a scene with no failed step, and each failed step in `details` carries its `error`.
 

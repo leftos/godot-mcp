@@ -1284,15 +1284,37 @@ internal sealed class ScratchRun
         + $"load-adjusted time (its condition never held); check the condition {UntilMethod} gives";
 
     /// <summary>
-    /// Why a step whose until's wait ended unmet failed: <see cref="UntilNotMet"/> when it ended at its hang guard; else less than
-    /// half its <paramref name="guardSeconds"/> at the scene's <paramref name="timeScale"/> ran in game time, so the game's clock
-    /// stood still.
+    /// Why a step whose until's wait ended unmet failed: <see cref="UntilNotMet"/> when it ended at its hang guard; else the game
+    /// clock ran less than half the guard's <see cref="GameMs"/> of <paramref name="guardSeconds"/> at the scene's
+    /// <paramref name="timeScale"/>, and the text says how much of it ran: none, so it stood still, or some part, so it was paused
+    /// partway or slowed by a time scale or a starved game.
     /// </summary>
-    internal static string UntilMissed(int index, string name, ScratchUntil until, double guardSeconds, double timeScale) =>
-        until.GameMs * 2 < GameMs(guardSeconds * timeScale)
-            ? $"step {index} '{name}': its until was not met within "
-                + $"{guardSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s: the game's clock stood still (is it paused?)"
+    internal static string UntilMissed(int index, string name, ScratchUntil until, double guardSeconds, double timeScale)
+    {
+        int guardGameMs = GameMs(guardSeconds * timeScale);
+        if (until.GameMs <= 0)
+        {
+            return UntilStoodStill(index, name, guardSeconds);
+        }
+
+        return until.GameMs * 2 < guardGameMs
+            ? UntilRanShort(index, name, until.GameMs, guardGameMs, guardSeconds)
             : UntilNotMet(index, name, guardSeconds);
+    }
+
+    /// <summary>Why a step's until ended unmet with none of its guard's game time run: its game clock stood still.</summary>
+    private static string UntilStoodStill(int index, string name, double guardSeconds) =>
+        $"step {index} '{name}': its until was not met within "
+        + $"{guardSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s: the game's clock stood still (is it paused?)";
+
+    /// <summary>
+    /// Why a step's until ended unmet with only <paramref name="ranMs"/> of its guard's <paramref name="guardGameMs"/> game ms run:
+    /// the game clock was paused partway, or slowed by a time scale or a starved game.
+    /// </summary>
+    private static string UntilRanShort(int index, string name, int ranMs, int guardGameMs, double guardSeconds) =>
+        $"step {index} '{name}': its until was not met within "
+        + $"{guardSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s: the game's clock ran only {ranMs} of {guardGameMs} game ms "
+        + "(paused partway, or slowed by a time scale or a starved game)";
 
     /// <summary>Why a step failed when its until was refused, by the server's checks or the bridge.</summary>
     internal static string UntilRefused(int index, string name, string refusal) => $"step {index} '{name}': its until was refused: {refusal}";
@@ -2308,8 +2330,8 @@ internal sealed class ScratchRun
         {
             JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
             ScratchUntil figures = UntilFigures(reply);
-            string? stoodStill = figures.GameMs < gameMs ? PaceNotMet(gameMs, release) : null;
-            return new StepPlay(stoodStill, null, null)
+            string? notMet = figures.GameMs < gameMs ? PaceNotMet(gameMs, figures.GameMs, release) : null;
+            return new StepPlay(notMet, null, null)
             {
                 Reply = figures.Met ? reply : null,
                 ShotFailure = figures.Met ? null : ShotNotHeld,
@@ -2872,7 +2894,10 @@ internal sealed class ScratchRun
         try
         {
             JsonNode? reply = await session.SendAsync("wait_for", parameters, release + ReplyAllowance, limit, release);
-            string? notMet = reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet ? PaceNotMet(gameMs, release) : null;
+            string? notMet =
+                reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && !isMet
+                    ? PaceNotMet(gameMs, Figure(reply, "last"), release)
+                    : null;
             return (notMet, false, EndMarked(reply));
         }
         catch (IOException e)
@@ -2899,9 +2924,18 @@ internal sealed class ScratchRun
             ? $"The bridge refused 'call_method': {message[BridgeRefusalPrefix.Length..]}"
             : message;
 
-    /// <summary>Why a step failed when the game's clock did not run its pace of <paramref name="gameMs"/> before its release.</summary>
-    private static string PaceNotMet(int gameMs, TimeSpan release) =>
-        $"wait_for {gameMs} game ms was not met within {release.TotalSeconds:0.#} s: the game's clock stood still (is it paused?)";
+    /// <summary>
+    /// Why a step failed when the game's clock did not run its pace of <paramref name="gameMs"/> before its release: with
+    /// <paramref name="ranMs"/> of the pace run, the clock ran only that part of it (paused partway, or slowed by a time scale or a
+    /// starved game); with none run, it stood still.
+    /// </summary>
+    internal static string PaceNotMet(int gameMs, int ranMs, TimeSpan release)
+    {
+        string window = $"wait_for {gameMs} game ms was not met within {release.TotalSeconds:0.#} s: ";
+        return ranMs <= 0
+            ? window + "the game's clock stood still (is it paused?)"
+            : window + $"the game's clock ran only {ranMs} of them (paused partway, or slowed by a time scale or a starved game)";
+    }
 
     /// <summary>Why a step failed when the wait of its pace of <paramref name="gameMs"/> failed with <paramref name="message"/>.</summary>
     private static string PaceFailed(int gameMs, string message) => $"wait_for {gameMs} game ms failed: {message}";

@@ -467,7 +467,7 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   A scratch step's `GetStepUntil` wait: `ScratchUntilTests` (unit) covers the answer turned into one `wait_for` (a null or empty answer a paced step, the pace as `timeoutMs` and five times the hang guard in game time at the scene's time scale as `limitGameMs`, `PlayStep` as the call), the early read before the walk and its cache, and the ceiling counting an until step at its guard.
 
-  It also covers the step errors for a refused, hung or non-condition until and a clock that stood still, a refused `PlayStep` callv reading as its feed entry, the figures of a wait reply, and an unmet until stopping the scene under `keepGoing`.
+  It also covers the step errors for a refused, hung or non-condition until and a clock that stood still or ran only part of its guard, a refused `PlayStep` callv reading as its feed entry, the figures of a wait reply, and an unmet until stopping the scene under `keepGoing`.
 
   It also covers `ScratchRun.Unreproduced`, which leaves over the early-read entries a step's own window does not log again (a multiset match on type, message, file, line and function, a new sequence number not counting).
 

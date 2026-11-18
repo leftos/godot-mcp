@@ -162,7 +162,7 @@ An until step fails as hung after a guard of 15 s of load-adjusted time. A step 
 
 A step whose until is given and whose pace (in wall time, at the time scale) is longer than its guard gets a scene warning before it plays, since the guard ends the step in its pace's place: give it a `guard` above the pace if its condition can take that long.
 
-An until that counts frames or physics ticks (`frames`, `settled`) sees that many times fewer frames per second of game time, and at a high scale one frame's delta can exceed a short span it counts, so such a scene may need a longer span. A game that sets `Engine.time_scale` itself overrides the launch's scale and has its long steps cut short with a "clock stood still" error: that scene opts out with `"timeScale": 1` in its profile pace object (`{seconds, reason, timeScale: 1}`).
+An until that counts frames or physics ticks (`frames`, `settled`) sees that many times fewer frames per second of game time, and at a high scale one frame's delta can exceed a short span it counts, so such a scene may need a longer span. A game that sets `Engine.time_scale` itself overrides the launch's scale and has its long steps cut short with a "clock ran only" error: that scene opts out with `"timeScale": 1` in its profile pace object (`{seconds, reason, timeScale: 1}`).
 
 Its folder, paces, ceilings, setup steps (`setup {"<scene>": [step, ...]}`, an index or an exact step name, for a partial run whose selected steps need earlier ones; `{"always": [...], "steps": {"<step>": [...]}}` instead keys the list per selected step), known-red scenes, patterns and the lines a scene must print (`expect`, `expectFor {"<scene>": [...]}`) live in `godot-mcp.json`'s `scratch` section.
 
