@@ -299,6 +299,41 @@ func test_clearing_the_mark_resets_the_noted_over() -> void:
 	_free_rig(rig)
 
 
+## The handled flag after the push reads as a game's kept event only for a ui_cancel press with no
+## tooltip popup standing at it: the engine's own Escape cancel of a showing one marks it handled
+## too (scene/main/viewport.cpp L2300-2306 in 4.7.2), and its GUI marks a press or gesture it
+## handles itself (L1752-1767, L2000-2013).
+func test_kept_by_game_needs_handled_and_no_popup_at_the_event() -> void:
+	var rig: Array = _hover_rig()
+	var hover: Node = rig[2]
+	hover._cancel_was_ui_cancel = true
+	hover._popup_at_cancel = false
+	assert_eq(hover._kept_by_game(true), true, "handled with no popup at the event is a game's")
+	hover._popup_at_cancel = true
+	assert_eq(hover._kept_by_game(true), false, "a popup at the event means the engine cancelled")
+	hover._popup_at_cancel = false
+	assert_eq(hover._kept_by_game(false), false, "an unhandled event is the engine's to cancel on")
+	hover._cancel_was_ui_cancel = false
+	assert_eq(hover._kept_by_game(true), false, "a handled press or gesture is the GUI's own")
+	_free_rig(rig)
+
+
+## An event noted outside the tree records no popup, since the rigs are never in one, and clearing
+## the mark drops what it recorded.
+func test_a_cancel_noted_outside_the_tree_records_no_popup() -> void:
+	var rig: Array = _hover_rig()
+	var gestures: Node = rig[0]
+	var hover: Node = rig[2]
+	gestures._on_window_input(_key(KEY_ESCAPE, true))
+	assert_eq(hover._popup_at_cancel, false, "an event noted outside the tree records no popup")
+	assert_eq(hover._cancel_was_ui_cancel, true, "an Escape press is a ui_cancel")
+	hover._popup_at_cancel = true
+	hover._clear_mark()
+	assert_eq(hover._popup_at_cancel, false, "clearing the mark drops the popup the event saw")
+	assert_eq(hover._cancel_was_ui_cancel, false, "and whether the event was a ui_cancel")
+	_free_rig(rig)
+
+
 ## The result a drag that ends without releasing records: released false, guiDragStarted as the
 ## motions found it, and no releasedOn or dropAccepted, nothing having been released.
 func test_a_drag_that_ends_without_a_release_records_released_false() -> void:

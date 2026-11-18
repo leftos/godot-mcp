@@ -889,7 +889,7 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   The mark clears on a real mouse motion, on an injected no-button motion more than 5 px from where the cancel stood (L2117, L2138), and when the hover leaves the Control or is on none; a held-button motion or a smaller move keeps it.
 
-  A real event the bridge swallows during a gesture marks nothing, and on the first frame a still-standing tooltip (not queued for free, so the engine never cancelled it, as when a game's `_input` handles Escape) clears the mark. A tooltip whose delay was still running when the game kept the cancel is not told apart, and is dropped.
+  A real event the bridge swallows during a gesture marks nothing, and on the first frame a still-standing tooltip (not queued for free, so the engine never cancelled it, as when a game's `_input` handles Escape) clears the mark. A tooltip whose delay was still running when the game's `_input` kept an Escape is kept: the root's `is_input_handled()` read at `frame_pre_draw`, with no tooltip popup standing when the event came, says the GUI never ran its cancel; a kept press or gesture is not told apart (the GUI marks those handled itself), so its pending tooltip is still dropped, and the last event pushed in a frame decides.
 
   The drop runs only while the bridge owns the pointer and `repickHover` is on; then a re-arm by the game's own re-pick at the OS cursor is dropped too. A game's own `cancel_tooltip()` call or a focus loss is not seen.
 

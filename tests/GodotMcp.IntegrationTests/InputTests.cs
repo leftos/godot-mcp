@@ -1407,6 +1407,26 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameThatHandlesEscapeKeepsATooltipStillPending()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(AddEscapeEater);
+
+        try
+        {
+            await _tools.HoverAsync(new InputTarget(null, 80, 90), new HoverOptions(Tooltip: false), cancellationToken: cancellation);
+            await _tools.KeyAsync("Escape", "tap", null, cancellationToken: cancellation);
+            JsonNode? tooltip = await RunAsync(AwaitTooltipThroughTheDelay);
+
+            Assert.True(tooltip is JsonObject, "the bridge dropped a tooltip still pending when the game kept the Escape");
+        }
+        finally
+        {
+            await RunAsync(FreeEscapeEater);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AHugTooltipOverThePointerStaysShown()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

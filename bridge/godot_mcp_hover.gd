@@ -48,6 +48,14 @@ var _cancel_point: Vector2 = Vector2.ZERO
 ## freed one does not run that check again and take the next Control's tooltip: a freed object
 ## compares equal to null (core/variant/variant_op.h L484-488 in 4.7.2).
 var _over_noted: bool = false
+## Whether a tooltip popup was visible when the cancelling event arrived: the engine's own Escape
+## cancel of a showing popup also marks the event handled (scene/main/viewport.cpp L2300-2306 in
+## 4.7.2), so the handled flag reads as a game's kept event only with none standing.
+var _popup_at_cancel: bool = false
+## Whether the cancelling event was a ui_cancel press: only that cancel is told apart by the
+## handled flag, since the engine's GUI marks a press or gesture it handled itself
+## (scene/main/viewport.cpp L1752-1767, L2000-2013 in 4.7.2).
+var _cancel_was_ui_cancel: bool = false
 
 
 ## The Control whose tooltip Godot shows at a viewport point over the hovered control, or null
@@ -337,8 +345,8 @@ func dismiss_tooltips() -> void:
 
 
 ## Marks the tooltip the engine cancels from an event the window saw, injected ones included, and
-## clears the mark on a motion that would let the engine re-arm one. Touches no tree, since the
-## unit tests call it outside one.
+## clears the mark on a motion that would let the engine re-arm one. Reads the tree only for the
+## tooltip popup standing at the event, and only inside one, since the unit tests call it outside.
 func note_input(event: InputEvent) -> void:
 	if _swallowed(event):
 		return
@@ -351,6 +359,8 @@ func note_input(event: InputEvent) -> void:
 		_cancelled_over = null
 		_over_noted = false
 		_cancel_point = gestures.bridge._pointer
+		_popup_at_cancel = is_inside_tree() and _tooltip_popup_visible()
+		_cancel_was_ui_cancel = _ui_cancel_press(event)
 
 
 ## Whether the bridge swallowed this event: while a gesture plays or injected input holds a button,
@@ -373,22 +383,31 @@ func _motion_clears(event: InputEventMouseMotion) -> bool:
 	return event.button_mask == 0 and event.position.distance_squared_to(_cancel_point) > 25.0
 
 
-## Clears the mark, the Control it held and the note that the first frame recorded one.
+## Clears the mark, the Control it held, the note that the first frame recorded one, and what the
+## cancelling event saw: the popup standing then, and whether it was a ui_cancel.
 func _clear_mark() -> void:
 	_tooltip_cancelled = false
 	_cancelled_over = null
 	_over_noted = false
+	_popup_at_cancel = false
+	_cancel_was_ui_cancel = false
 
 
 ## Whether the engine cancels a tooltip on this event: any mouse button press (scene/main/
 ## viewport.cpp L2011 in 4.7.2), any gesture (L2246), or a ui_cancel press that is no echo
-## (L2297-2299). is_action_pressed on an action the InputMap lacks logs an error, so the InputMap
-## is asked first.
+## (L2297-2299).
 func _cancels_tooltip(event: InputEvent) -> bool:
 	if event is InputEventMouseButton:
 		return (event as InputEventMouseButton).pressed
 	if event is InputEventGesture:
 		return true
+	return _ui_cancel_press(event)
+
+
+## Whether this event is a ui_cancel press that is no echo, the one cancel only the engine's GUI
+## makes (scene/main/viewport.cpp L2297-2299 in 4.7.2). is_action_pressed on an action the
+## InputMap lacks logs an error, so the InputMap is asked first.
+func _ui_cancel_press(event: InputEvent) -> bool:
 	if not event.is_action_type():
 		return false
 	return InputMap.has_action(&"ui_cancel") and event.is_action_pressed(&"ui_cancel")
@@ -427,16 +446,19 @@ func _drops_here() -> bool:
 
 
 ## Records the Control the pointer hovers on the first frame after the cancel, and clears the mark
-## when that Control is null, or when a visible tooltip for its owner is not queued for free: the
-## engine re-arms only with an over (scene/main/viewport.cpp L2104, L2136 in 4.7.2), and every
-## cancel frees the showing popup (L1561-1562), whose delete queue empties before frame_pre_draw
-## (scene/main/scene_tree.cpp L735), so a popup still standing means a game's _input handled the
-## Escape. A re-armed tooltip cannot show yet: this runs before the re-pick that would start its
-## timer.
+## when the engine's GUI never ran, when that Control is null, or when a visible tooltip for its
+## owner is not queued for free: the engine re-arms only with an over (scene/main/viewport.cpp
+## L2104, L2136 in 4.7.2), and every cancel frees the showing popup (L1561-1562), whose delete
+## queue empties before frame_pre_draw (scene/main/scene_tree.cpp L735), so a popup still standing
+## means a game's _input handled the Escape. A re-armed tooltip cannot show yet: this runs before
+## the re-pick that would start its timer.
 func _note_cancelled_over(over: Control, point: Vector2) -> void:
 	_over_noted = true
 	_cancelled_over = over
 	if over == null:
+		_clear_mark()
+		return
+	if _kept_by_game(get_tree().root.is_input_handled()):
 		_clear_mark()
 		return
 	var tooltip_owner_control: Control = tooltip_owner(over, point)
@@ -445,6 +467,24 @@ func _note_cancelled_over(over: Control, point: Vector2) -> void:
 	var popup: Window = _owner_tooltip(tooltip_owner_control)
 	if popup != null and not popup.is_queued_for_deletion():
 		_clear_mark()
+
+
+## Whether the event the engine would cancel on was kept from it: the root's GUI never ran when
+## its input was already handled after the push (scene/main/viewport.cpp L3526-3546 in 4.7.2),
+## which with no tooltip popup standing at the event (the engine's own Escape cancel of a showing
+## one also marks it handled, L2300-2306) means a game's _input or a subwindow took it. Only a
+## ui_cancel is told apart: the GUI marks a press or gesture it handled itself (L1752-1767,
+## L2000-2013), so the flag cannot separate those from a game's _input.
+func _kept_by_game(handled: bool) -> bool:
+	return _cancel_was_ui_cancel and handled and not _popup_at_cancel
+
+
+## Whether a tooltip popup is visible among the root's embedded subwindows.
+func _tooltip_popup_visible() -> bool:
+	for window: Window in get_tree().root.get_embedded_subwindows():
+		if window.visible and gestures.bridge._ui_snapshot.is_tooltip(window):
+			return true
+	return false
 
 
 ## Drops the tooltip the engine re-armed for the Control the pointer stayed on: hidden before it is
