@@ -408,7 +408,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `disarm_project`
 
-- **Does:** ends an arm: `armed.json` is removed, and `override.cfg` too unless a live session uses the folder: `{projectPath, overrideRemoved}`. Dormant games stop waiting (a window a quiet arm parked comes back on screen); attached sessions stay attached, and their games go idle at their detach.
+- **Does:** ends an arm: `armed.json` is removed, and `override.cfg` too unless a live session uses the folder: `{projectPath, overrideRemoved}`. Dormant games stop waiting (a window a quiet arm parked comes back on screen); attached sessions stay attached, and their games go idle at their detach. When removing `armed.json` or `override.cfg` fails, the call fails and the folder stays owed that removal: `stop_project {projectPath}` on it retries, and so does the server's exit.
 - **Use:** when you are done joining games on the folder.
 
 ### `stop_project`
@@ -423,7 +423,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `projectPath` in place of `session` frees a folder: it stops the warm headless host there (waiting for a headless call running on it) and the session running there, if one does; with `session` too both must name the same folder, and several live sessions there are refused, naming them.
 
-  With no session running there, `projectPath` also clears a dead server's leftover `override.cfg` and `.godot/godot-mcp/armed.json`, and the result is `{projectPath, headlessHostStopped, overrideRemoved?, armedRemoved?, warning?, gameStillRunning?}`: `headlessHostStopped` can be false, and `overrideRemoved`, `armedRemoved` (booleans) and `warning` are left out when false or null.
+  With no session running there, `projectPath` also clears a dead server's leftover `override.cfg` and `.godot/godot-mcp/armed.json`, and an `armed.json` or `override.cfg` that this server's own `disarm_project` failed to release (`armedRemoved: true` when it removes the former), and the result is `{projectPath, headlessHostStopped, overrideRemoved?, armedRemoved?, warning?, gameStillRunning?}`: `headlessHostStopped` can be false, and `overrideRemoved`, `armedRemoved` (booleans) and `warning` are left out when false or null.
 
   Each file is removed only when every godot-mcp server its owners line names has exited (a file with no owners line counts as stale; an owner entry that cannot be parsed counts as live), and an `override.cfg` without godot-mcp's marker is never touched. `attach.json`, join, dormant and scratch status files and the `.git/info/exclude` line are left alone.
 
@@ -435,7 +435,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A release that cannot remove the file after the game stopped (a run or attached session, and `detach_project`) does not fail the call: `warning` gains "override.cfg in {projectDir} could not be removed ({ExceptionType}: {message}); this server's owner entry stays on it until stop_project {projectPath} on the folder or the server's exit."
 
-  The server remembers such a folder: `stop_project {projectPath}` on it, when no session or arm of this server holds it, removes the file and reports `overrideRemoved: true`; when a live peer still co-owns the file it takes only this server's entry off, `overrideRemoved: false` with `warning: "this server's owner entry was taken off override.cfg, which stays for the live owner it names (pid N)"`. The server's exit releases every such folder too.
+  The server remembers such a folder: `stop_project {projectPath}` on it, when no session or arm of this server holds it, removes the file and reports `overrideRemoved: true`; when a live peer still co-owns the file it takes only this server's entry off, `overrideRemoved: false` with `warning: "this server's owner entry was taken off override.cfg, which stays for the live owner it names (pid N)"`; a retry that takes this server off an `armed.json` a live peer keeps warns "This server's owner entry was taken off armed.json, which stays for the live owner it names (pid N)." (plural: "the live owners it names (pids N, M)."), alone or beside the `override.cfg` clause. A folder owed only an `armed.json` release whose file is already gone is refused as below, falling through to the leftover clear. The server's exit releases every such folder too.
 
   A write or release whose owners list (`override-folders.txt`) stays busy past its 2 s budget goes ahead without the list and logs it; it is not refused.
 
@@ -594,7 +594,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `owners` has one entry per owners-line entry of both files, `{file, pid?, startedAt (UTC), alive, thisServer, serverVersion?, readable, entry?}`: `serverVersion` is the installed `versions\<name>` folder the owner's executable runs from, left out when unknown (a dev build); an entry that does not parse has no `pid`, counts as alive and carries its text as `entry`. `sessions` names this server's live sessions on the folder and `armed` says whether this server armed it.
 
-  `stopProjectWouldRemove` says whether `stop_project {projectPath}` would remove a file: the owners judge it stale. A handle another process holds open at stop time, or a busy owners list, still keeps it.
+  `stopProjectWouldRemove` says whether `stop_project {projectPath}` would remove a file: the owners judge it stale, or this server owes the folder a release of `armed.json` or `override.cfg` (the `reason` names the owed release). A handle another process holds open at stop time, or a busy owners list, still keeps it.
 
   `reason`, left out when every file there would go, says why nothing would be removed or which file is kept.
 

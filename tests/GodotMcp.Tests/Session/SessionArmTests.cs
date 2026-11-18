@@ -316,6 +316,207 @@ public sealed class SessionArmTests : IAsyncDisposable
         Assert.Empty(_harness.Sessions.ListArmed());
     }
 
+    [Fact]
+    public async Task AFailedDisarmReleaseIsRetriedAtShutdown()
+    {
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, TestContext.Current.CancellationToken);
+
+        using (StopFolderReleaseFailureTests.HoldOverrideOpen(alpha))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+        }
+
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+        _harness.Sessions.Shutdown();
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task AFailedDisarmArmFileReleaseIsRetriedAtShutdown()
+    {
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, TestContext.Current.CancellationToken);
+
+        // Read and write are shared, delete is not, so the disarm's removal of the arm file throws.
+        using (new FileStream(ArmFile.PathIn(alpha), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+        }
+
+        Assert.True(File.Exists(ArmFile.PathIn(alpha)));
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+        _harness.Sessions.Shutdown();
+        Assert.False(File.Exists(ArmFile.PathIn(alpha)));
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task AFailedDisarmArmFileReleaseIsRetriedByStopProject()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
+
+        // Read and write are shared, delete is not, so the disarm's removal of the arm file throws.
+        using (new FileStream(ArmFile.PathIn(alpha), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+        }
+
+        await _harness.Sessions.StopFolderAsync(alpha, session: null, cancellation);
+
+        Assert.False(File.Exists(ArmFile.PathIn(alpha)));
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task AFailedDisarmArmFileReleaseSurvivesAStopProjectUntilShutdown()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
+
+        // The stop's retry meets the file still held, so its failure is reported and the arm file stays owed until the exit.
+        using (new FileStream(ArmFile.PathIn(alpha), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+            await Assert.ThrowsAsync<SessionException>(() => _harness.Sessions.StopFolderAsync(alpha, session: null, cancellation));
+        }
+
+        _harness.Sessions.Shutdown();
+
+        Assert.False(File.Exists(ArmFile.PathIn(alpha)));
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task AnArmFileDebtWhoseFileIsGoneStopsAsNothingOwed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
+
+        // The live session holds the override, so the failed arm release leaves only the arm file owed.
+        using (new FileStream(ArmFile.PathIn(alpha), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+        }
+
+        await _harness.Sessions.StopAsync("server", cancellation);
+
+        // A peer's sweep deleted the file, so the debt names nothing any more and the stop falls through as having nothing owed.
+        File.Delete(ArmFile.PathIn(alpha));
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.StopFolderAsync(alpha, session: null, cancellation)
+        );
+
+        Assert.StartsWith($"No Godot session or warm headless host runs in {alpha}.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnArmFileDebtOnASharedFileNamesTheOwnerItLeft()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
+        OverrideOwner foreign = StartForeignOwner();
+        string armFile = ArmFile.PathIn(alpha);
+        File.WriteAllText(
+            armFile,
+            $"{{\"quiet\":false,\"shutOutRealGamepads\":false,\"mute\":false,\"owners\":[\"{OverrideOwner.Current}\",\"{foreign}\"]}}"
+        );
+
+        // Read-only sharing lets the disarm read the owners and refuses its rewrite, so the release fails with the file shared.
+        using (new FileStream(armFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+        }
+
+        HostStopResult stopped = Assert.IsType<HostStopResult>(await _harness.Sessions.StopFolderAsync(alpha, session: null, cancellation));
+
+        Assert.False(stopped.ArmedRemoved);
+        Assert.Contains(
+            $"this server's owner entry was taken off {ArmFile.FileName}, which stays for the live owner it names (pid {foreign.ProcessId})",
+            stopped.Warning,
+            StringComparison.Ordinal
+        );
+        Assert.True(File.Exists(armFile));
+    }
+
+    [Fact]
+    public async Task AStopTakingOffAnArmEntryWithTheOverrideGoneSaysSo()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
+        OverrideOwner foreign = StartForeignOwner();
+        string armFile = ArmFile.PathIn(alpha);
+        File.WriteAllText(
+            armFile,
+            $"{{\"quiet\":false,\"shutOutRealGamepads\":false,\"mute\":false,\"owners\":[\"{OverrideOwner.Current}\",\"{foreign}\"]}}"
+        );
+        using (new FileStream(armFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+        }
+
+        // The override its own retry owes was removed meanwhile, so only the arm entry's taking off is left to report.
+        File.Delete(OverrideFile.PathIn(alpha));
+
+        HostStopResult stopped = Assert.IsType<HostStopResult>(await _harness.Sessions.StopFolderAsync(alpha, session: null, cancellation));
+
+        Assert.False(stopped.OverrideRemoved);
+        Assert.False(stopped.ArmedRemoved);
+        Assert.Contains($"this server's owner entry was taken off {ArmFile.FileName}", stopped.Warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheHoldersViewPredictsAnArmFileDebtsRemoval()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
+
+        using (new FileStream(ArmFile.PathIn(alpha), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Throws<IOException>(() => _harness.Sessions.Disarm(alpha));
+        }
+
+        // The session's own stop releases the override, leaving the arm file as the only file stop_project would remove.
+        await _harness.Sessions.StopAsync("server", cancellation);
+        FolderHoldersView view = _harness.Sessions.Holders(alpha);
+
+        Assert.True(view.StopProjectWouldRemove);
+        Assert.Equal("armed.json still names this server, whose earlier release of it failed, so stop_project would remove it", view.Reason);
+    }
+
+    [Fact]
+    public async Task AFailedArmReleaseIsRetriedAtShutdown()
+    {
+        string alpha = _harness.Project("alpha");
+        Directory.CreateDirectory(ArmFile.PathIn(alpha));
+        _harness.Sessions.ReleaseOverride = _ => throw new IOException("the test keeps the file from being released");
+
+        try
+        {
+            Exception? failed = await Record.ExceptionAsync(() => _harness.Sessions.ArmAsync(alpha, Loud, TestContext.Current.CancellationToken));
+            Assert.IsType<UnauthorizedAccessException>(failed);
+        }
+        finally
+        {
+            _harness.Sessions.ReleaseOverride = OverrideFile.Release;
+        }
+
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+        Directory.Delete(ArmFile.PathIn(alpha));
+        _harness.Sessions.Shutdown();
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
     /// <summary>A child process that runs until the test ends, as the owner another live server would be.</summary>
     private OverrideOwner StartForeignOwner()
     {

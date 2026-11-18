@@ -68,6 +68,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     // again; a later successful release, override write, arm or disarm on the folder drops it.
     private readonly HashSet<string> _unreleased = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
+    // The folders whose release of armed.json failed in a disarm, by normalised path, under _lock: this server's entry may still
+    // be on their file. stop_project on the folder, while no session or arm of this server holds it, and the shutdown release
+    // them again; a successful release, a successful re-arm or a later disarm on the folder drops it.
+    private readonly HashSet<string> _armUnreleased = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     internal BridgeListener Listener => listener;
 
     /// <summary>The clock every ceiling the sessions enforce runs on: the listener's.</summary>
@@ -162,6 +167,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <see cref="RunKill.OpenIfStartedWithin"/> unless set, as a unit test sets it to stand in for the process boundary.
     /// </summary>
     internal Func<int, StartWindow?, UnprovenOpen> OpenUnprovenGame { get; set; } = (pid, window) => RunKill.OpenIfStartedWithin(pid, window, logger);
+
+    /// <summary>
+    /// Releases the folder's override.cfg when an arm failed after writing it: <see cref="OverrideFile.Release"/> unless set, as a
+    /// unit test sets it to make that release fail. No other release uses it.
+    /// </summary>
+    internal Func<string, bool> ReleaseOverride { get; set; } = OverrideFile.Release;
 
     /// <summary>
     /// How a run's process is created, from the start info the launch built and whether the run is quiet:
@@ -340,7 +351,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     /// <summary>
     /// Disarms a folder this server armed: takes this server off its armed.json's owners, then releases its override.cfg unless
-    /// a live session of this server uses the folder. Attached sessions stay attached.
+    /// a live session of this server uses the folder. Attached sessions stay attached. A release that fails leaves the folder
+    /// owed one, which stop_project on the folder and the shutdown retry.
     /// </summary>
     /// <exception cref="SessionException">The project is missing, or this server has not armed the folder.</exception>
     public DisarmResult Disarm(string projectPath)
@@ -357,8 +369,34 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                         throw new SessionException($"{projectDir} is not armed; arm_project arms it.");
                     }
 
-                    ArmFile.Release(projectDir);
-                    bool removed = !HasLiveSessionOn(projectDir, except: null) && OverrideFile.Release(projectDir);
+                    // Under the same lock as the hold test, so no session can register on the folder in between.
+                    try
+                    {
+                        ArmFile.Release(projectDir);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        _armUnreleased.Add(projectDir);
+                        if (!HasLiveSessionOn(projectDir, except: null))
+                        {
+                            _unreleased.Add(projectDir);
+                        }
+
+                        throw;
+                    }
+
+                    bool removed;
+                    try
+                    {
+                        removed = !HasLiveSessionOn(projectDir, except: null) && OverrideFile.Release(projectDir);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        _unreleased.Add(projectDir);
+                        throw;
+                    }
+
+                    _armUnreleased.Remove(projectDir);
                     _unreleased.Remove(projectDir);
                     return new DisarmResult(projectDir, removed);
                 }
@@ -717,22 +755,22 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Clears a folder no session runs in for stop_project: this server's own release of its override.cfg, when an earlier one
-    /// failed and no session or arm of this server holds the folder (<see cref="RetryRelease"/>), else a dead server's leftovers
-    /// (<see cref="OverrideFolders.ClearStale"/>). A retry's outcome, released or failed, is the clear's whole outcome: the
-    /// strict clear would find nothing of this server's left, and a busy owners list it waited past would only refuse. The
-    /// caller holds the folder's prep lock.
+    /// Clears a folder no session runs in for stop_project: this server's own release of its override.cfg or armed.json, when an
+    /// earlier one failed and no session or arm of this server holds the folder (<see cref="RetryRelease"/>), else a dead
+    /// server's leftovers (<see cref="OverrideFolders.ClearStale"/>). A retry's outcome, released or failed, is the clear's whole
+    /// outcome: the strict clear would find nothing of this server's left, and a busy owners list it waited past would only
+    /// refuse. The caller holds the folder's prep lock.
     /// </summary>
-    /// <returns>The clear, and whether a retry took this server off the file.</returns>
+    /// <returns>The clear, and whether a retry released without failing.</returns>
     private (LeftoverClear Cleared, bool Released) ClearIdleFolder(string projectDir) =>
         RetryRelease(projectDir) is { } retried ? (retried, retried.Failure is null) : (OverrideFolders.ClearStale(projectDir), false);
 
     /// <summary>
-    /// Releases the folder's override.cfg again when an earlier release of it failed (<see cref="ReleaseFolder"/>), unless a live
-    /// session or the arm of this server holds the folder, under the list's hold as that release runs.
+    /// Releases again the override.cfg or armed.json a failed release left owed (<see cref="ReleaseFolder"/>, <see cref="Disarm"/>),
+    /// unless a live session or the arm of this server holds the folder, under the list's hold as that release runs.
     /// </summary>
     /// <returns>
-    /// Null when the folder was owed no release, is held, or the file was already gone; else the file's removal, this server's
+    /// Null when the folder was owed no release, is held, or the files were already gone; else their removal, this server's
     /// entry taken off a file a live owner keeps (<see cref="EntryTakenOff"/>), or the retry's failure, which keeps the folder owed.
     /// </returns>
     private LeftoverClear? RetryRelease(string projectDir)
@@ -740,54 +778,165 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         string folder = ProjectPaths.Normalise(projectDir);
         lock (_lock)
         {
-            if (!_unreleased.Contains(folder))
+            if (!_unreleased.Contains(folder) && !_armUnreleased.Contains(folder))
             {
                 return null;
             }
         }
 
-        try
-        {
-            return OverrideFolders.Hold(
-                $"releasing {projectDir}",
-                () =>
+        return OverrideFolders.Hold(
+            $"releasing {projectDir}",
+            () =>
+            {
+                lock (_lock)
                 {
-                    lock (_lock)
+                    if ((!_unreleased.Contains(folder) && !_armUnreleased.Contains(folder)) || IsFolderHeld(projectDir, except: null))
                     {
-                        if (!_unreleased.Contains(folder) || IsFolderHeld(projectDir, except: null))
-                        {
-                            return null;
-                        }
-
-                        bool removed = OverrideFile.Release(projectDir);
-                        _unreleased.Remove(folder);
-                        return removed ? new LeftoverClear(OverrideRemoved: true, ArmedRemoved: false, [], Failure: null) : EntryTakenOff(projectDir);
+                        return null;
                     }
+
+                    return RetryReleases(projectDir, folder);
                 }
-            );
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            Log.OverrideRemovalFailed(logger, e, projectDir);
-            return new LeftoverClear(OverrideRemoved: false, ArmedRemoved: false, [], new LeftoverFailure(OverrideFile.FileName, e));
-        }
+            }
+        );
     }
 
     /// <summary>
-    /// A retry's outcome when its release kept the file: this server's entry taken off, the file left to the live owners it still
-    /// names, as the clause the stop's warning says; null when the file is gone or names none.
+    /// Releases the two files a folder may owe, under the list's hold and the registry's lock: its armed.json first, then its
+    /// override.cfg; a failed release is the retry's result and keeps that file owed.
     /// </summary>
-    private static LeftoverClear? EntryTakenOff(string projectDir)
+    private LeftoverClear? RetryReleases(string projectDir, string folder)
     {
-        int[] pids = [.. OverrideFile.LiveOwners(projectDir).Where(owner => owner != OverrideOwner.Current).Select(owner => owner.ProcessId)];
-        if (pids.Length == 0)
+        ArmRetry? armed;
+        try
+        {
+            armed = RetryArmRelease(projectDir, folder);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.CleanupFailed(logger, e, ArmFile.FileName, projectDir);
+            return new LeftoverClear(OverrideRemoved: false, ArmedRemoved: false, [], new LeftoverFailure(ArmFile.FileName, e));
+        }
+
+        bool armedRemoved = armed?.Removed ?? false;
+        string[] armLeft = armed?.Left ?? [];
+        if (_unreleased.Contains(folder))
+        {
+            return RetryOverrideRelease(projectDir, folder, armedRemoved, armLeft);
+        }
+
+        return armed is { } released ? new LeftoverClear(OverrideRemoved: false, ArmedRemoved: released.Removed, released.Left, Failure: null) : null;
+    }
+
+    /// <summary>
+    /// Releases the folder's armed.json when a disarm's failed release of it left it owed, dropping it from those owed once the
+    /// release returns: null when the file is gone, else what the release removed or left behind.
+    /// </summary>
+    private ArmRetry? RetryArmRelease(string projectDir, string folder)
+    {
+        if (!_armUnreleased.Contains(folder))
         {
             return null;
         }
 
-        string owners = pids.Length == 1 ? $"the live owner it names (pid {pids[0]})" : $"the live owners it names (pids {string.Join(", ", pids)})";
-        return new LeftoverClear(false, false, [$"this server's owner entry was taken off {OverrideFile.FileName}, which stays for {owners}"], null);
+        bool removed = ArmFile.Release(projectDir);
+        _armUnreleased.Remove(folder);
+        if (removed)
+        {
+            return new ArmRetry(Removed: true, []);
+        }
+
+        return File.Exists(ArmFile.PathIn(projectDir)) ? new ArmRetry(Removed: false, [ArmTakenOffClause(projectDir)]) : null;
     }
+
+    /// <summary>
+    /// The clause naming what keeps a folder's armed.json this server was taken off; a listing that cannot be read says so rather
+    /// than failing a stop that already took this server off the file.
+    /// </summary>
+    private string ArmTakenOffClause(string projectDir)
+    {
+        int[] pids;
+        try
+        {
+            pids = [.. ArmFile.LiveOwners(projectDir).Where(owner => owner != OverrideOwner.Current).Select(owner => owner.ProcessId)];
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.CleanupFailed(logger, e, ArmFile.FileName, projectDir);
+            return $"this server's owner entry was taken off {ArmFile.FileName}, whose remaining owners could not be read ({e.Message})";
+        }
+
+        return pids.Length == 0
+            ? $"this server's owner entry was taken off {ArmFile.FileName}"
+            : $"this server's owner entry was taken off {ArmFile.FileName}, which stays for {OwnersPhrase(pids)}";
+    }
+
+    /// <summary>Releases the folder's override.cfg, dropping it from those owed once it returns; a throw keeps it owed and is the result.</summary>
+    private LeftoverClear? RetryOverrideRelease(string projectDir, string folder, bool armedRemoved, string[] armLeft)
+    {
+        bool removed;
+        try
+        {
+            removed = OverrideFile.Release(projectDir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.OverrideRemovalFailed(logger, e, projectDir);
+            return new LeftoverClear(OverrideRemoved: false, ArmedRemoved: armedRemoved, armLeft, new LeftoverFailure(OverrideFile.FileName, e));
+        }
+
+        _unreleased.Remove(folder);
+        return removed
+            ? new LeftoverClear(OverrideRemoved: true, ArmedRemoved: armedRemoved, armLeft, Failure: null)
+            : EntryTakenOff(projectDir, armedRemoved, armLeft);
+    }
+
+    /// <summary>
+    /// A retry's outcome when its release kept the file: this server's entry taken off, the file left to the live owners it still
+    /// names, as the clause the stop's warning says; null when the file is gone or names none and nothing else was removed or left
+    /// behind. A listing that cannot be read is a clause of the successful result, not a failed stop.
+    /// </summary>
+    private LeftoverClear? EntryTakenOff(string projectDir, bool armedRemoved, string[] armLeft)
+    {
+        int[] pids;
+        try
+        {
+            pids = [.. OverrideFile.LiveOwners(projectDir).Where(owner => owner != OverrideOwner.Current).Select(owner => owner.ProcessId)];
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.CleanupFailed(logger, e, OverrideFile.FileName, projectDir);
+            return new LeftoverClear(
+                OverrideRemoved: false,
+                ArmedRemoved: armedRemoved,
+                [
+                    .. armLeft,
+                    $"this server's owner entry was taken off {OverrideFile.FileName}, whose remaining owners could not be read ({e.Message})",
+                ],
+                Failure: null
+            );
+        }
+
+        if (pids.Length == 0)
+        {
+            return armedRemoved || armLeft.Length > 0
+                ? new LeftoverClear(OverrideRemoved: false, ArmedRemoved: armedRemoved, armLeft, Failure: null)
+                : null;
+        }
+
+        string takenOff = $"this server's owner entry was taken off {OverrideFile.FileName}, which stays for {OwnersPhrase(pids)}";
+        return new LeftoverClear(OverrideRemoved: false, ArmedRemoved: armedRemoved, [.. armLeft, takenOff], Failure: null);
+    }
+
+    /// <summary>The phrase a taken-off clause names a file's live other owners with.</summary>
+    private static string OwnersPhrase(int[] pids) =>
+        pids.Length == 1 ? $"the live owner it names (pid {pids[0]})" : $"the live owners it names (pids {string.Join(", ", pids)})";
+
+    /// <summary>
+    /// What a retry's release of the folder's armed.json did: whether it removed the file, and the clause saying what keeps a file
+    /// a live peer still names. <see cref="RetryArmRelease"/>'s null means the file is gone.
+    /// </summary>
+    private readonly record struct ArmRetry(bool Removed, string[] Left);
 
     private static bool RemovedAny(LeftoverClear cleared) => cleared.OverrideRemoved || cleared.ArmedRemoved;
 
@@ -795,7 +944,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// What an idle folder stop that cleared without failing reports: what it waited for, stopped and removed, and why each file
     /// left stayed.
     /// </summary>
-    /// <param name="released">Whether the stop took this server off the folder's override.cfg, which it reports even when the file stays.</param>
+    /// <param name="released">
+    /// Whether a retry released without failing, taking this server off whichever file it owed, which the stop reports even when
+    /// that file stays.
+    /// </param>
     /// <exception cref="SessionException">Nothing was waited for, stopped, released or removed; names why a file was left in place.</exception>
     private static HostStopResult IdleStopResult(string projectDir, bool hostStopped, LeftoverClear cleared, KilledGamesWait? waited, bool released)
     {
@@ -849,6 +1001,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         if (cleared.OverrideRemoved)
         {
             done.Add($"removed {OverrideFile.FileName}");
+        }
+
+        if (cleared.ArmedRemoved)
+        {
+            done.Add($"removed {ArmFile.FileName}");
         }
 
         string failed = $"clearing {failure.File}";
@@ -961,6 +1118,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         GodotSession[] sessions;
         string[] armed;
         string[] unreleased;
+        string[] armUnreleased;
         Task gamesStopped;
         lock (_lock)
         {
@@ -968,6 +1126,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             sessions = [.. _sessions.Values];
             armed = [.. _armed.Keys];
             unreleased = [.. _unreleased];
+            armUnreleased = [.. _armUnreleased];
             _armed.Clear();
             GodotSession[] uncovered = [.. sessions.Where(_shutDown.Add)];
 
@@ -995,7 +1154,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             }
             finally
             {
-                OverrideFolders.Hold("the shutdown cleanup", () => ReleaseAtShutdown(sessions, armed, unreleased));
+                OverrideFolders.Hold("the shutdown cleanup", () => ReleaseAtShutdown(sessions, armed, unreleased, armUnreleased));
             }
         }
     }
@@ -1158,12 +1317,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Takes this server off the armed.json of every armed folder, then off the override.cfg of every folder it used, its
-    /// <paramref name="unreleased"/> ones, whose earlier release failed, included.
+    /// Takes this server off the armed.json of every armed folder and of its <paramref name="armUnreleased"/> ones, whose earlier
+    /// release of it failed, then off the override.cfg of every folder it used, its <paramref name="unreleased"/> ones included.
     /// </summary>
-    private static void ReleaseAtShutdown(GodotSession[] sessions, string[] armed, string[] unreleased)
+    private static void ReleaseAtShutdown(GodotSession[] sessions, string[] armed, string[] unreleased, string[] armUnreleased)
     {
-        foreach (string projectDir in armed)
+        foreach (string projectDir in armed.Concat(armUnreleased).Distinct(ProjectPaths.FolderComparer))
         {
             AtShutdown(projectDir, () => ArmFile.Release(projectDir));
         }
@@ -1465,6 +1624,15 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
+    /// <summary>Drops the folder from those owed a release of armed.json, once its file names this server rightfully or not at all.</summary>
+    private void ForgetArmUnreleased(string projectDir)
+    {
+        lock (_lock)
+        {
+            _armUnreleased.Remove(ProjectPaths.Normalise(projectDir));
+        }
+    }
+
     /// <summary>The lock that lets one prep at a time build or import in a project folder.</summary>
     internal SemaphoreSlim PrepLock(string projectDir)
     {
@@ -1615,15 +1783,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         string[] sessions;
         bool armed;
         bool owed;
+        bool armOwed;
         lock (_lock)
         {
             sessions = [.. LiveSessionsIn(projectDir).Select(session => session.Name)];
             armed = _armed.ContainsKey(projectDir);
-            // As stop_project's retry judges it (RetryRelease): owed a failed release, and held by no session or arm of this server.
-            owed = _unreleased.Contains(projectDir) && !IsFolderHeld(projectDir, except: null);
+            // As stop_project's retry judges them (RetryRelease): owed a failed release, and held by no session or arm of this server.
+            bool held = IsFolderHeld(projectDir, except: null);
+            owed = _unreleased.Contains(projectDir) && !held;
+            armOwed = _armUnreleased.Contains(projectDir) && !held;
         }
 
-        return FolderHolders.Inspect(projectDir, sessions, armed, OwnerProbe.Machine, owed);
+        return FolderHolders.Inspect(projectDir, sessions, armed, OwnerProbe.Machine, new OwedReleases(owed, armOwed));
     }
 
     /// <summary>
@@ -2035,6 +2206,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
             OverrideFolders.Hold($"arming {projectDir}", () => ArmFile.Write(projectDir, settings));
             ForgetUnreleased(projectDir);
+            ForgetArmUnreleased(projectDir);
         }
         catch
         {
@@ -2048,7 +2220,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
-    /// <summary>Releases the override.cfg an arm wrote before it failed; a failure is logged, so the arm's own error reaches the caller.</summary>
+    /// <summary>
+    /// Releases the override.cfg an arm wrote before it failed, leaving the folder owed that release when the release itself
+    /// fails and logging it, so the arm's own error reaches the caller.
+    /// </summary>
     private void ReleaseAfterFailedArm(string projectDir)
     {
         try
@@ -2061,7 +2236,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                     {
                         if (!HasLiveSessionOn(projectDir, except: null))
                         {
-                            OverrideFile.Release(projectDir);
+                            ReleaseOverride(projectDir);
                         }
                     }
                 }
@@ -2069,6 +2244,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            lock (_lock)
+            {
+                _unreleased.Add(ProjectPaths.Normalise(projectDir));
+            }
+
             Log.CleanupFailed(logger, e, OverrideFile.FileName, projectDir);
         }
     }

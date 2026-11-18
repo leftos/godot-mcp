@@ -13,6 +13,14 @@ internal sealed record OwnerProbe(Func<OverrideOwner, bool> IsAlive, Func<int, s
 }
 
 /// <summary>
+/// Which of a folder's files this server owes a failed release of, and stop_project's retry would release again: a file whose
+/// release failed and which no session or arm of this server holds.
+/// </summary>
+/// <param name="OverrideCfg">Whether this server's earlier release of the folder's override.cfg failed.</param>
+/// <param name="ArmedJson">Whether its earlier release of the folder's armed.json failed in a disarm.</param>
+internal readonly record struct OwedReleases(bool OverrideCfg, bool ArmedJson);
+
+/// <summary>
 /// The read-only view of who holds a project folder's override.cfg and armed.json: every entry of each file's owners line, and
 /// whether stop_project with the folder would remove a file, judged by the judge it removes with
 /// (<see cref="OverrideFile.KeepReason(string, Func{OverrideOwner, bool})"/>,
@@ -35,19 +43,22 @@ internal static class FolderHolders
     /// <summary>Why stop_project would remove an override.cfg that still names this server: its earlier release failed.</summary>
     private const string OwedReason = "override.cfg still names this server, whose earlier release of it failed, so stop_project would remove it";
 
+    /// <summary>Why stop_project would remove an armed.json that still names this server: its earlier release failed in a disarm.</summary>
+    private const string ArmOwedReason = "armed.json still names this server, whose earlier release of it failed, so stop_project would remove it";
+
     /// <summary>Who holds the folder's files, and whether stop_project would remove one.</summary>
     /// <param name="projectDir">The project folder, normalised.</param>
     /// <param name="sessions">This server's live sessions on the folder, the ones stop_project would stop there.</param>
     /// <param name="armed">Whether this server armed the folder.</param>
     /// <param name="probe">Whether an owner still runs, and its server version.</param>
     /// <param name="owed">
-    /// Whether this server's earlier release of the folder's override.cfg failed and no session or arm of this server holds the
-    /// folder, so stop_project would release it again: this server's own entry then keeps the file no longer.
+    /// Which files this server owes a failed release of and no session or arm of this server holds the folder, so stop_project
+    /// would release them again: this server's own entry then keeps a file no longer.
     /// </param>
-    public static FolderHoldersView Inspect(string projectDir, IReadOnlyList<string> sessions, bool armed, OwnerProbe probe, bool owed)
+    public static FolderHoldersView Inspect(string projectDir, IReadOnlyList<string> sessions, bool armed, OwnerProbe probe, OwedReleases owed)
     {
-        Judged overrideCfg = Judge(OverrideFile.FileName, OverrideFile.PathIn(projectDir), text => JudgeOverride(text, probe, owed));
-        Judged armedJson = Judge(ArmFile.FileName, ArmFile.PathIn(projectDir), text => JudgeArm(text, probe));
+        Judged overrideCfg = Judge(OverrideFile.FileName, OverrideFile.PathIn(projectDir), text => JudgeOverride(text, probe, owed.OverrideCfg));
+        Judged armedJson = Judge(ArmFile.FileName, ArmFile.PathIn(projectDir), text => JudgeArm(text, probe, owed.ArmedJson));
         (bool wouldRemove, string? reason) = Verdict(overrideCfg, armedJson, sessions);
         return new FolderHoldersView(
             projectDir,
@@ -64,7 +75,7 @@ internal static class FolderHolders
     }
 
     /// <summary>How a stop left the folder: read from its files as they are now, with the machine's processes.</summary>
-    public static FolderState After(string projectDir) => StateOf(Inspect(projectDir, [], false, OwnerProbe.Machine, owed: false));
+    public static FolderState After(string projectDir) => StateOf(Inspect(projectDir, [], false, OwnerProbe.Machine, owed: default));
 
     /// <summary>
     /// The folder as stop_project reports it: clean when neither file is there, else the owners that read as running ones.
@@ -168,8 +179,15 @@ internal static class FolderHolders
 
     private static bool IsThisServer(string entry) => OverrideOwner.TryParse(entry, out OverrideOwner owner) && owner == OverrideOwner.Current;
 
-    private static Judged JudgeArm(string text, OwnerProbe probe) =>
-        new(Marked, Owners(ArmFile.FileName, ArmFile.OwnerEntries(text), probe), ArmFile.KeepReason(text, probe.IsAlive));
+    private static Judged JudgeArm(string text, OwnerProbe probe, bool owed)
+    {
+        IReadOnlyList<string>? entries = ArmFile.OwnerEntries(text);
+        LeftoverRemoval? keep =
+            owed && entries is not null
+                ? LeftoverFile.KeepReason(entries.Where(entry => !IsThisServer(entry)), probe.IsAlive)
+                : ArmFile.KeepReason(text, probe.IsAlive);
+        return new Judged(Marked, Owners(ArmFile.FileName, entries, probe), keep) { Owed = owed };
+    }
 
     private static List<HolderEntry> Owners(string file, IReadOnlyList<string>? entries, OwnerProbe probe) =>
         [.. (entries ?? []).Select(entry => Entry(file, entry, probe))];
@@ -203,10 +221,14 @@ internal static class FolderHolders
             return (false, NothingToRemove);
         }
 
-        string? owed = overrideCfg.Owed && overrideCfg.Removable ? OwedReason : null;
-        string[] reasons = [.. new[] { owed, Kept(OverrideFile.FileName, overrideCfg), Kept(ArmFile.FileName, armedJson) }.OfType<string>()];
+        string? owed = OwedClause(overrideCfg, OwedReason);
+        string? armOwed = OwedClause(armedJson, ArmOwedReason);
+        string[] reasons = [.. new[] { owed, armOwed, Kept(OverrideFile.FileName, overrideCfg), Kept(ArmFile.FileName, armedJson) }.OfType<string>()];
         return (overrideCfg.Removable || armedJson.Removable, reasons.Length == 0 ? null : string.Join("; ", reasons));
     }
+
+    /// <summary>Why stop_project would remove the file, when this server owes it a failed release; null otherwise.</summary>
+    private static string? OwedClause(Judged judged, string reason) => judged.Owed && judged.Removable ? reason : null;
 
     private static string? Kept(string file, Judged judged) =>
         (judged.Clause ?? (judged.Keep is { } keep ? OverrideFolders.LeftClause(file, keep) : null)) is { } clause
