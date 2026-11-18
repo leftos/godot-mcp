@@ -5,8 +5,6 @@
 ## Do first
 
 - [!] GMCP-592 Find the unit test that flaked in CI run 42982648818 · release vNext — Urgent · Singles
-- [/] GMCP-638 ScratchFolderTests.TheScratchFolderPlaysEachSceneToItsVerdict flakes: ScratchPauseUnpause killed on an unanswered ping under the full itest run · release vNext — Urgent · Singles
-- [/] GMCP-633 run_project prepare never: warn when the C# assembly it loads is older than the sources · release vNext — High · Singles
 
 ## Ideas from the survey and the projects
 
@@ -18,7 +16,6 @@
   - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill
   - [ ] GMCP-74 Report frame-rate drops below a floor in the game's output
   - [ ] GMCP-75 Give bridge replies stable error codes and answer malformed frames
-- [/] GMCP-614 hover game tooltips: first C# load vs the reply allowance, a self-freeing node, tree-order tests · release vNext
 - [ ] GMCP-115 fired: a point click over a SubViewport listens on the container, not the inner Control
 - [ ] GMCP-202 Prove WriteWatch.Unwatch: a unit test, the real run_csharp path, a scoped suspend
 - [ ] GMCP-207 Test a failing GetStepUntil call and rule a step that pauses the tree
@@ -64,7 +61,7 @@
 - [ ] GMCP-629 gdtest runner: count errors logged at a test file's load and after the last test; clear run.ps1's PSScriptAnalyzer warnings
 - [ ] GMCP-631 TimeTests.AWaitMetOnAnUndrawnFrameWarnsWithNoImage waits on a 1 ms wall timer and a 300 ms sleep
 
-### Prep and validate (5/9 done)
+### Prep and validate (6/9 done)
 - [ ] GMCP-465 Process sessions: join the own-work job or say in ARCHITECTURE.md that their CPU counts as load
 - [ ] GMCP-495 validate reports a csproj-level MSBuild error with no code as a red build with no errors
 - [ ] GMCP-520 Prep: an asset in a folder Godot skips makes an import due on every request
@@ -126,7 +123,7 @@
 - [ ] GMCP-195 Record a cursor action log beside every clip
 - [ ] GMCP-238 Replace the deadline file's move retry with a POSIX-semantics rename
 - [ ] GMCP-320 Capture helper: make its other wall-clock waits outlast the server's load-adjusted ones
-- [ ] GMCP-321 A real-time clip's timeline shrinks when a starved ffmpeg reads frames late
+- [ ] GMCP-321 A real-time clip's timeline shrinks when a starved ffmpeg reads frames late · release vNext+1
 - [ ] GMCP-345 Server shutdown never cuts a Movie Maker recording's clips
 - [ ] GMCP-360 Server exit: a clip delivery already copying across volumes when the exit begins can leave its temp
 - [ ] GMCP-370 record_mark and wait_for then.record: a mark on a recording whose run ended is reported as placed
@@ -185,14 +182,16 @@
 - [ ] GMCP-585 The restart refusal suggests stop_project, which cannot cut a restart short
 - [ ] GMCP-586 A process session that cannot start says Godot could not be started
 - [ ] GMCP-587 Split the two bridge scripts that sit at gdlint's file length limit
-- [ ] GMCP-597 stop_project: name a quit game's leftover child it could not open, or open it with wait rights only · release vNext
-- [ ] GMCP-600 stop_project: a folder stop during the first stop's leftover wait misses the leftovers · release vNext
 - [ ] GMCP-627 call_method: itests for a refused callv and for an inner propagate_call refusal through real engine text
 - [ ] GMCP-635 Scratch runner: let a slowed but correct game pass its paced steps and untils with a stall guard on the game's clock · release vNext+1
 - [ ] GMCP-636 validate shaders: include-path case, uid includes, a scene's shader errors twice, and preprocessor hints · release vNext+1
 - [ ] GMCP-637 batch_drive: CancelledEntry takes 6 positional parameters, over the limit of 5 · release vNext+1
 - [ ] GMCP-639 stop_project re-stop: a process-list miss after the held handle proved the game present counts it as gone · release vNext+1
 - [ ] GMCP-640 run.ps1 format-check skips the C# line-length check that prek runs · release vNext+1
+- [ ] GMCP-643 scratch itest group runs at 272 s of its 300 s ceiling after the stop's silence wait moved to a minute in the harness · release vNext
+- [ ] GMCP-644 itest harness: give the stop's silence wait its minute under production graces too, and the 2 s only to stuck-on-purpose tests · release vNext
+- [ ] GMCP-645 stop_project re-stop: keep a refused leftover's wait-rights handle through the wait instead of reopening it by pid · release vNext+1
+- [ ] GMCP-646 prepare off: stop running the stale-assembly check on scratch scenes' and the preview's own launches · release vNext+1
 
 ## Docs
 
