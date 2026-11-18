@@ -4,7 +4,12 @@
 
 ## Do first
 
+- [ ] GMCP-622 MultiSessionTests.AGuestsMetStampFallsAfterTheHostsClickStart flakes on a wall-clock bound under the lifecycle group · release vNext — Urgent · Singles
 - [!] GMCP-592 Find the unit test that flaked in CI run 42982648818 · release vNext — Urgent · Singles
+- [ ] GMCP-632 validate: take a .gdshader target and report its compile errors · release vNext — High · Singles
+- [ ] GMCP-633 run_project prepare never: warn when the C# assembly it loads is older than the sources · release vNext — High · Singles
+- [ ] GMCP-626 batch_drive: a capture-heavy batch's result outgrows the client; give it a summary or file-path result mode · release vNext — High · Singles
+- [ ] GMCP-625 crop_screenshot: take an output path instead of always writing beside the source image · release vNext — High · Singles
 
 ## Ideas from the survey and the projects
 
@@ -34,19 +39,16 @@
 
 ## Singles
 
-### Tests and the itest harness (8/35 done)
+### Tests and the itest harness (12/39 done)
 - [ ] GMCP-82 Let run.ps1 drive run twice in one tree under its own log names
 - [ ] GMCP-103 Map scratch fixture changes to the scratch itest group alone
-- [ ] GMCP-617 gdtest: run its gate with -NoMarkers so a test that logs an engine error on purpose can pass · release vNext
 - [ ] GMCP-159 itest: move scratch and reads out of the timing lane
-- [ ] GMCP-161 TimeTests: step 10 frames, not 120, in the no-draw deadline test · release vNext
 - [ ] GMCP-162 itest: give prep, headless, scene, nodes and scratch light gate slots
 - [ ] GMCP-163 itest: one shared Godot fixture per group instead of per class
 - [ ] GMCP-165 itest headless: reuse one probe copy and warm host per class
 - [ ] GMCP-217 run.ps1: spell gated test commands so they route to the builder from a worktree
 - [ ] GMCP-241 ScratchCSharpStateTests: warm the C# helper before the first C# until, as CSharpStateTests now does
 - [ ] GMCP-244 Turn the remaining must-beat wall-clock bounds in lifecycle, time, TempDirectory and GodotRun into hang guards · release vNext
-- [ ] GMCP-249 Let run.ps1 run one test method, for a load-burn of one case · release vNext
 - [ ] GMCP-257 Run every teardown step in RegistryHarness and HangProbeTests when an earlier one throws
 - [ ] GMCP-262 Upload .tmp logs as a CI artifact when the job fails
 - [ ] GMCP-275 prek: run independent hooks in parallel priority groups
@@ -62,13 +64,15 @@
 - [ ] GMCP-467 A prep's Godot import failed once under load; root-cause it from the next failure's full text
 - [ ] GMCP-489 BridgeConnectionTests: short real-time read and wait bounds should be hang guards
 - [ ] GMCP-521 Unit tests: a default SessionRegistry opens the machine-wide override list
+- [ ] GMCP-629 gdtest runner: count errors logged at a test file's load and after the last test; clear run.ps1's PSScriptAnalyzer warnings
+- [ ] GMCP-631 TimeTests.AWaitMetOnAnUndrawnFrameWarnsWithNoImage waits on a 1 ms wall timer and a 300 ms sleep
 
-### Prep and validate (4/7 done)
+### Prep and validate (4/9 done)
 - [ ] GMCP-465 Process sessions: join the own-work job or say in ARCHITECTURE.md that their CPU counts as load
 - [ ] GMCP-495 validate reports a csproj-level MSBuild error with no code as a red build with no errors
 - [ ] GMCP-520 Prep: an asset in a folder Godot skips makes an import due on every request
 
-### Session lifecycle and override.cfg (7/18 done)
+### Session lifecycle and override.cfg (7/19 done)
 - [ ] GMCP-243 Count the server-exit ShutdownCap on the load-adjusted clock · release vNext
 - [ ] GMCP-265 Lead a backstop's failure text with the wall time that passed
 - [ ] GMCP-266 Log a launch's handshake times
@@ -80,9 +84,9 @@
 - [ ] GMCP-362 A session stays live while Godot's console wrapper outlives its game
 - [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time'
 - [ ] GMCP-529 Session exit hardening: no process-lock reads under the registry locks, and the restart-after-exit window
+- [ ] GMCP-630 list_sessions holders view: judge an unreadable owner entry as the release does
 
-### Scratch runner (11/19 done)
-- [ ] GMCP-616 Scratch runner: RefusalFailure's feed-error match looks dead since calls keep their errors · release vNext
+### Scratch runner (12/21 done)
 - [ ] GMCP-149 Keep run_scratches' exit lines as short as a failing step's
 - [ ] GMCP-204 run_scratches until: clearer refusals for raw JSON errors, output/uiChanged kinds, and a paused tree
 - [ ] GMCP-316 run_scratches steps: the bridge's PlayStep refusal form, a duplicate map key, the options summary
@@ -90,8 +94,10 @@
 - [ ] GMCP-366 Scratch walk: the ping before a kill and the kill path's watch collection still count wall time in the itests
 - [ ] GMCP-393 run_scratches: a voice still playing at the game's exit can be judged a leak
 - [ ] GMCP-474 --run-scratches CLI: take --session like run_scratches' options.session
+- [ ] GMCP-620 Exit hold: a debugger-lag refusal on the hold probe reads as unreadable while the game quits
+- [ ] GMCP-628 Scratch until steps: seed MidShot's edge baseline before PlayStep, so an edge shotWhen sees a rise PlayStep makes
 
-### Headless scene edits (1/13 done)
+### Headless scene edits (1/15 done)
 - [ ] GMCP-430 A scene named with an upper-case extension loses its uid on each in-place save
 - [ ] GMCP-435 attach_script writes a script's .uid before a refusal and never reports it
 - [ ] GMCP-436 A headless edit can lose what Godot drops with a warning
@@ -104,8 +110,10 @@
 - [ ] GMCP-448 stamp_uids: report and fix uids two files share
 - [ ] GMCP-523 Split the scene keep logic out of headless/scene_edit.gd
 - [ ] GMCP-524 move_node: the current page moved out of a TabContainer saves as hidden
+- [ ] GMCP-623 get_scene_file_tree ignores a node's index= field, so its order can differ from the instanced scene
+- [ ] GMCP-624 Headless node-path misses: pin a %segment walk through an existing unique name and a miss below an instance
 
-### Captures and time steps (3/11 done)
+### Captures and time steps (3/12 done)
 - [ ] GMCP-106 Count capture_frames' start timeout as wait_for counts its timeout
 - [ ] GMCP-176 capture_frames: an edge start with a call is met in the call's own frame
 - [ ] GMCP-193 Capture an HDR 2D view, and resize an embedded game beside a CompositorEffect
@@ -129,7 +137,7 @@
 - [ ] GMCP-375 dropIdle: a call the server stopped waiting for leaves the clip though the game still runs it
 - [ ] GMCP-376 wait_for then.record: its mark does not close the other calls open at its frame
 
-### Output destinations and screenshots (2/10 done)
+### Output destinations and screenshots (2/11 done)
 - [ ] GMCP-327 engineArgs can write any file through --log-file and --write-movie
 - [ ] GMCP-329 Small gaps: baseline device names, ScenePlan's parameter count, save_screenshot's git calls
 - [ ] GMCP-334 save_screenshot: off Windows a capture symlink is followed and copied (final-path checks skipped)
@@ -164,7 +172,6 @@
 - [ ] GMCP-158 Give transforms a structured JSON form in tool results, and compare settled transforms as numbers
 - [ ] GMCP-177 run_script: take a script path as well as inline source
 - [ ] GMCP-278 Find which engine or .NET phase makes a headless game's teardown take up to 3 s
-- [ ] GMCP-618 Callv refusal match: require the refused method's name so an inner callv refusal is not the call's · release vNext
 - [ ] GMCP-391 Property paths: take the ClassDB route on every segment a script member could hide
 - [ ] GMCP-447 watch: the unknown-monitor refusal does not name frame_work_ms
 - [ ] GMCP-534 RuntimeTools.ReadInt cannot read an int-backed JsonValue built in memory
@@ -183,20 +190,12 @@
 - [ ] GMCP-585 The restart refusal suggests stop_project, which cannot cut a restart short
 - [ ] GMCP-586 A process session that cannot start says Godot could not be started
 - [ ] GMCP-587 Split the two bridge scripts that sit at gdlint's file length limit
-- [ ] GMCP-593 Test that a per-scene capture map warns of a shot step its partial run does not play · release vNext
-- [ ] GMCP-594 Let a scratch step's until or shot condition ask for an edge · release vNext
-- [ ] GMCP-595 run_scratches: refuse output and uiChanged shot conditions on a step with an until, and name a not-drawn until · release vNext
-- [ ] GMCP-596 Record a failed disarm or failed-arm override release for the shutdown to retry · release vNext
 - [ ] GMCP-597 stop_project: name a quit game's leftover child it could not open, or open it with wait rights only · release vNext
 - [ ] GMCP-600 stop_project: a folder stop during the first stop's leftover wait misses the leftovers · release vNext
 - [ ] GMCP-601 stop_project re-stop: a killed game's identity is checked through one handle and killed through another opened by pid · release vNext
-- [ ] GMCP-602 headless/scene_edit.gd is at gdlint's 1000-line cap; split a family out · release vNext
-- [ ] GMCP-603 get_scene_file_tree: a root the scene does not hold names no deepest existing node · release vNext
-- [ ] GMCP-604 Headless node-path miss: word a missing %Unique segment as the live bridge does · release vNext
 - [ ] GMCP-608 Scratch runner: paced-step and until releases fail a slowed but correct game and call its clock stopped · release vNext
-- [ ] GMCP-609 Scratch runner: a game that quits with code 0 as the exit hold's window expires can read as an unreadable hold · release vNext
 - [ ] GMCP-611 Hover re-pick: keep a pending tooltip the game kept by handling the cancel · release vNext
-- [ ] GMCP-612 Hover re-pick: a border-hugged tooltip over the pointer blinks every delay · release vNext
+- [ ] GMCP-627 call_method: itests for a refused callv and for an inner propagate_call refusal through real engine text
 
 ## Docs
 
@@ -204,7 +203,6 @@
 - [ ] GMCP-194 godot-agent-sweep: point at godot-mcp's Filing friction section
 - [ ] GMCP-196 docs: Task Index rows for the itest layout, a clip's cut and a bridge reply, and the settle-frames glossary entry
 - [ ] GMCP-222 Re-read the implementer overlay against run.ps1's commits since 2026-10-16
-- [ ] GMCP-619 Groom the plan: 26 commits since the hygiene stamp
 - [ ] GMCP-396 Re-read docs/csharp-runtime-tools.md against its named files' 10 commits since 2026-10-26
 - [ ] GMCP-410 Create docs/agents/orchestrator.md and move the profile's orchestration rules into it (CC-567)
 - [ ] GMCP-411 Durable docs: drop counts and this repo's path:line references, pointing by symbol, heading or test name
