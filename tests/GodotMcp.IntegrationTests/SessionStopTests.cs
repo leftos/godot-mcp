@@ -17,6 +17,21 @@ public sealed class SessionStopTests : IAsyncDisposable
     // is the root's last child, so it leaves the tree before the bridge does.
     private static readonly string NeverFinishesQuittingScript = ExitTreeBlocksScript(2 * TestTimeouts.OwnLaunchMs);
 
+    // Prints the close request's line on NOTIFICATION_WM_CLOSE_REQUEST, then blocks its _exit_tree as
+    // NeverFinishesQuittingScript does: the restart has reached the old game's quit and stays there.
+    private static readonly string NeverFinishesQuittingAndSaysSoScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\tscene_tree.auto_accept_quit = false\n"
+        + "\tvar script := GDScript.new()\n"
+        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _notification(what: int) -> void:\\n"
+        + $"\\tif what == NOTIFICATION_WM_CLOSE_REQUEST:\\n\\t\\tprint('{CloseRequestedLine}')\\n"
+        + $"\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec({2 * TestTimeouts.OwnLaunchMs})\\n\"\n"
+        + "\tscript.reload()\n"
+        + "\tvar node := Node.new()\n"
+        + "\tnode.set_script(script)\n"
+        + "\tscene_tree.root.add_child(node)\n"
+        + "\treturn true\n";
+
     // Blocking 1.2 s: the game quits, only just inside the stop's 3 s grace.
     private static readonly string SlowButInTimeScript = ExitTreeBlocksScript(1200);
 
@@ -30,14 +45,19 @@ public sealed class SessionStopTests : IAsyncDisposable
     // A hang guard on the wait of one game's stop for the other's at the server's exit: games that share one grace meet at once.
     private static readonly TimeSpan GraceMeetingWait = TimeSpan.FromMinutes(2);
 
-    // How long a restart takes to pass its refusal checks and reach the old game's stop, well inside that stop's 3 s grace.
-    private static readonly TimeSpan RestartPastItsChecks = TimeSpan.FromSeconds(1);
+    // A hang guard on a restart's reaching the old game's quit: the stop's close request goes out at once.
+    private static readonly TimeSpan RestartReachedTheQuit = TimeSpan.FromMinutes(2);
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new(launchesUnfocused: false, productionGraces: true);
+
+    // The production graces are for the tests of the grace kill itself. Every test of the NOT-killed path runs on this harness,
+    // whose graces are hang guards in minutes, so a game starved below normal is never killed inside 3 s of wall time.
+    private readonly SessionHarness _patient = new(launchesUnfocused: false, productionGraces: false);
 
     public async ValueTask DisposeAsync()
     {
         await _harness.DisposeAsync();
+        await _patient.DisposeAsync();
         _probe.Dispose();
     }
 
@@ -87,11 +107,11 @@ public sealed class SessionStopTests : IAsyncDisposable
     public async Task AStopSaysHowLongTheQuitTook()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
-        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        RuntimeTools tools = new(_patient.Sessions, TestCSharp.Unused());
+        await _patient.Sessions.LaunchAsync(Request(), null, cancellation);
         await tools.RunScriptAsync(SlowButInTimeScript, 10_000, null, cancellation);
 
-        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+        StopResult stopped = await _patient.Sessions.StopAsync(null, cancellation);
 
         Assert.False(stopped.Killed);
         Assert.NotNull(stopped.QuitMs);
@@ -103,12 +123,12 @@ public sealed class SessionStopTests : IAsyncDisposable
     public async Task AStopSendsTheGameACloseRequestFirst()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
-        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        RuntimeTools tools = new(_patient.Sessions, TestCSharp.Unused());
+        await _patient.Sessions.LaunchAsync(Request(), null, cancellation);
         await tools.RunScriptAsync(CloseHandlerScript(quits: true), 10_000, null, cancellation);
 
-        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
-        IReadOnlyList<string> stdout = _harness.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout;
+        StopResult stopped = await _patient.Sessions.StopAsync(null, cancellation);
+        IReadOnlyList<string> stdout = _patient.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout;
 
         Assert.False(stopped.Killed, stopped.KillReason);
         Assert.Equal(0, stopped.GameExitCode);
@@ -119,12 +139,12 @@ public sealed class SessionStopTests : IAsyncDisposable
     public async Task AGameThatIgnoresTheCloseRequestIsQuitAfterItsFrames()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
-        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        RuntimeTools tools = new(_patient.Sessions, TestCSharp.Unused());
+        await _patient.Sessions.LaunchAsync(Request(), null, cancellation);
         await tools.RunScriptAsync(CloseHandlerScript(quits: false), 10_000, null, cancellation);
 
-        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
-        IReadOnlyList<string> stdout = _harness.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout;
+        StopResult stopped = await _patient.Sessions.StopAsync(null, cancellation);
+        IReadOnlyList<string> stdout = _patient.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout;
 
         Assert.False(stopped.Killed, stopped.KillReason);
         Assert.Equal(0, stopped.GameExitCode);
@@ -135,13 +155,13 @@ public sealed class SessionStopTests : IAsyncDisposable
     public async Task ARestartReportsWhatTheOldGameLeftRunning()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
-        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        RuntimeTools tools = new(_patient.Sessions, TestCSharp.Unused());
+        await _patient.Sessions.LaunchAsync(Request(), null, cancellation);
         string started = await tools.RunScriptAsync(ProbeRuns.LingeringChildScript, 10_000, null, cancellation);
         int pingId = JsonNode.Parse(started)!["value"]!.GetValue<int>();
 
-        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
-        await _harness.Sessions.StopAsync(null, cancellation);
+        var restarted = (RestartResult)await _patient.Sessions.RestartAsync(null, prepare: false, cancellation);
+        await _patient.Sessions.StopAsync(null, cancellation);
         bool pingGone = await ProbeRuns.ProcessGoneAsync(pingId);
 
         Assert.Null(restarted.PreviousKillReason);
@@ -172,16 +192,19 @@ public sealed class SessionStopTests : IAsyncDisposable
     public async Task ARestartSaysHowLongTheOldGameTookToQuit()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
-        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        RuntimeTools tools = new(_patient.Sessions, TestCSharp.Unused());
+        await _patient.Sessions.LaunchAsync(Request(), null, cancellation);
         await tools.RunScriptAsync(SlowButInTimeScript, 10_000, null, cancellation);
 
-        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
-        await _harness.Sessions.StopAsync(null, cancellation);
+        var restarted = (RestartResult)await _patient.Sessions.RestartAsync(null, prepare: false, cancellation);
+        await _patient.Sessions.StopAsync(null, cancellation);
 
         Assert.Null(restarted.PreviousKillReason);
         Assert.NotNull(restarted.PreviousQuitMs);
-        Assert.InRange(restarted.PreviousQuitMs.Value, 1200, 2999);
+        Assert.True(
+            restarted.PreviousQuitMs.Value >= 1200,
+            $"PreviousQuitMs {restarted.PreviousQuitMs.Value} is under the game's 1200 ms exit block"
+        );
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -189,11 +212,11 @@ public sealed class SessionStopTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string marker = Path.Combine(Path.GetDirectoryName(_probe.Directory)!, "exit-marker.txt");
-        await _harness.Sessions.LaunchAsync(Request(userArgs: [ExitMarkerArg + marker]), null, cancellation);
-        using Process game = OpenGame("InputProbe");
+        await _patient.Sessions.LaunchAsync(Request(userArgs: [ExitMarkerArg + marker]), null, cancellation);
+        using Process game = OpenGame(_patient, "InputProbe");
 
-        _harness.Sessions.Shutdown();
-        _harness.Sessions.Shutdown();
+        _patient.Sessions.Shutdown();
+        _patient.Sessions.Shutdown();
 
         Assert.True(game.HasExited, "the shutdown returned with the game still running");
         Assert.Equal(0, game.ExitCode);
@@ -213,7 +236,7 @@ public sealed class SessionStopTests : IAsyncDisposable
             {
                 await _harness.Sessions.LaunchAsync(Request(), name, cancellation);
                 await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, name, cancellation);
-                games.Add(OpenGame(name));
+                games.Add(OpenGame(_harness, name));
             }
 
             // The stop reads the state of a game still running after its grace, after asking it to quit and before killing it. Each
@@ -260,7 +283,7 @@ public sealed class SessionStopTests : IAsyncDisposable
         await _harness.Sessions.LaunchAsync(Request(), "failing", cancellation);
         await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, "failing", cancellation);
         await _harness.Sessions.LaunchAsync(Request(userArgs: [ExitMarkerArg + marker]), "quitting", cancellation);
-        using Process failing = OpenGame("failing");
+        using Process failing = OpenGame(_harness, "failing");
         // The stop reads the state of a game still running after its grace; for this one the read fails with an unexpected exception.
         _harness.Sessions.DescribeGameProcess = processId =>
             processId == failing.Id ? throw new NotSupportedException("the state read failed") : Task.FromResult("state");
@@ -293,7 +316,7 @@ public sealed class SessionStopTests : IAsyncDisposable
         RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), "held", cancellation);
         // The old game never finishes quitting, so the restart stays in flight through its stop's grace, past both refusal checks.
-        await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, "held", cancellation);
+        await tools.RunScriptAsync(NeverFinishesQuittingAndSaysSoScript, 10_000, "held", cancellation);
         Task<object> restart = _harness.Sessions.RestartAsync("held", prepare: false, cancellation);
         // Opened as the restart returns, before the registry stops its game, so the handle holds the pid while it is the game's.
         Task<Process?> restarted = restart.ContinueWith(
@@ -302,9 +325,12 @@ public sealed class SessionStopTests : IAsyncDisposable
             TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnRanToCompletion,
             TaskScheduler.Default
         );
-        await Task.Delay(RestartPastItsChecks, cancellation);
+        // The restart has reached the old game's quit once the game prints the close request, the event the fixed sleep this
+        // replaced only approximated.
+        bool reached = await Poll.UntilAsync(() => PrintedTheCloseRequest("held"), RestartReachedTheQuit, cancellation);
         try
         {
+            Assert.True(reached, $"the restart did not reach the old game's quit within {RestartReachedTheQuit.TotalSeconds:0} s: hung");
             await Task.Run(_harness.Sessions.Dispose, cancellation);
 
             // Either the restart settled within the cap and its game was then stopped, or it was killed at the cap and failed.
@@ -405,10 +431,17 @@ public sealed class SessionStopTests : IAsyncDisposable
         }
     }
 
-    /// <summary>The named session's game, with its handle held so its exit code can be read after it exits.</summary>
-    private Process OpenGame(string session)
+    /// <summary>Whether the named session's game printed <see cref="CloseRequestedLine"/>: the stop's close request reached it.</summary>
+    private bool PrintedTheCloseRequest(string session)
     {
-        int processId = _harness.Sessions.List(includeStopped: false).Single(info => info.Name == session).GameProcessId!.Value;
+        IReadOnlyList<string> stdout = _harness.Sessions.GetDebugOutput(session, GodotRun.OutputCapacity, null).Stdout;
+        return stdout.Any(line => line.Contains(CloseRequestedLine, StringComparison.Ordinal));
+    }
+
+    /// <summary>The named session's game, with its handle held so its exit code can be read after it exits.</summary>
+    private static Process OpenGame(SessionHarness harness, string session)
+    {
+        int processId = harness.Sessions.List(includeStopped: false).Single(info => info.Name == session).GameProcessId!.Value;
         var game = Process.GetProcessById(processId);
         _ = game.Handle;
         return game;

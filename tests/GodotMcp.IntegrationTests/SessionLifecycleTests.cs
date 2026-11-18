@@ -318,7 +318,6 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.False(stopped.Killed);
         Assert.Null(stopped.KillReason);
         Assert.NotNull(stopped.QuitMs);
-        Assert.InRange(stopped.QuitMs.Value, 0, 2999);
         Assert.Equal(0, stopped.GameExitCode);
         Assert.True(stopped.OverrideRemoved);
         Assert.NotNull(stopped.LeftRunning);

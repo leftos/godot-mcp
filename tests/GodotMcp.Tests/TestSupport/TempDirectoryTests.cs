@@ -33,18 +33,14 @@ public sealed class TempDirectoryTests
     [Fact]
     public void DisposeGivesUpOnAFileHeldPastTheBudget()
     {
-        TempDirectory temp = new();
+        TempDirectory temp = new() { RetryBudget = TimeSpan.Zero };
         string held = temp.Combine("held.txt");
         File.WriteAllText(held, "held");
 
         var handle = new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None);
         try
         {
-            var clock = Stopwatch.StartNew();
             Assert.Throws<IOException>(temp.Dispose);
-            clock.Stop();
-
-            Assert.True(clock.ElapsedMilliseconds >= 2000, $"Dispose gave up after {clock.ElapsedMilliseconds} ms");
         }
         finally
         {

@@ -15,8 +15,8 @@ namespace GodotMcp.IntegrationTests.Fixtures;
 /// </summary>
 internal sealed class SessionHarness : IAsyncDisposable
 {
-    /// <summary>How long a killed game gets to let go of its project folder before the test fails.</summary>
-    private static readonly TimeSpan GameExitWait = TimeSpan.FromSeconds(10);
+    /// <summary>A guard a passing run never reaches: how long a killed game gets to let go of its project folder.</summary>
+    private static readonly TimeSpan HangGuard = TimeSpan.FromMinutes(2);
 
     // The listener's clock is wall time, so the ceiling texts the timing-lane tests assert do not change under another build's
     // load; the unit tests cover the load on fakes. The bounds a starved game must not be held to are named where they are
@@ -316,27 +316,14 @@ internal sealed class SessionHarness : IAsyncDisposable
 
     /// <summary>
     /// Kills a game with its tree at once, since a stopped or detached game that is still running never exits on its own, then
-    /// waits for it to let go of the folder; one that outlives the wait is a leak, not a slow exit.
+    /// waits on every process of its tree; one that outlives the hang guard is a leak, not a slow exit, and fails as hung
+    /// naming its pid.
     /// </summary>
     private static async Task KillAsync(Process game)
     {
         using (game)
         {
-            try
-            {
-                game.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // The game exited between the handle's opening and the kill; the wait below still waits for its signal.
-            }
-
-            if (!await ProcessExit.WaitUntilGoneAsync(game, GameExitWait))
-            {
-                throw new InvalidOperationException(
-                    $"the game (pid {game.Id}) still holds its project folder {GameExitWait.TotalSeconds:0} s after it was killed"
-                );
-            }
+            await ProcessTree.KillAndWaitAsync(game, HangGuard);
         }
     }
 

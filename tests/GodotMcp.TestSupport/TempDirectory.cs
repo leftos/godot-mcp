@@ -18,7 +18,6 @@ public sealed class TempDirectory : IDisposable
     private const string MarkerSuffix = ".owner";
 
     private const int RetryIntervalMs = 20;
-    private const int RetryBudgetMs = 2000;
     private const int FolderNameLength = 32;
     private const int SweepNotStarted = 0;
     private const int SweepStarted = 1;
@@ -53,11 +52,17 @@ public sealed class TempDirectory : IDisposable
     /// </summary>
     public Action AfterRefusedAttempt { get; set; } = static () => { };
 
+    /// <summary>
+    /// How long a delete of the folder is retried while another process holds it, before the refusal is thrown: a guard a
+    /// passing run never reaches.
+    /// </summary>
+    public TimeSpan RetryBudget { get; set; } = TimeSpan.FromSeconds(60);
+
     public string Combine(params string[] parts) => System.IO.Path.Combine([Path, .. parts]);
 
     /// <summary>
-    /// Deletes the folder, retrying for up to 2 s one that another process still holds, and then its marker: a refused
-    /// folder delete throws once the budget is spent, and a refused marker delete is reported and left to the next sweep.
+    /// Deletes the folder, retrying for <see cref="RetryBudget"/> one that another process still holds, and then its marker: a
+    /// refused folder delete throws once the budget is spent, and a refused marker delete is reported and left to the next sweep.
     /// </summary>
     public void Dispose()
     {
@@ -133,7 +138,7 @@ public sealed class TempDirectory : IDisposable
         }
     }
 
-    /// <summary>Deletes the folder, retrying for up to 2 s one that another process still holds.</summary>
+    /// <summary>Deletes the folder, retrying for <see cref="RetryBudget"/> one that another process still holds.</summary>
     private void DeleteFolderRetrying()
     {
         var clock = Stopwatch.StartNew();
@@ -144,7 +149,7 @@ public sealed class TempDirectory : IDisposable
                 DeleteAttempt();
                 return;
             }
-            catch (Exception e) when (IsFileSystemRefusal(e) && clock.ElapsedMilliseconds < RetryBudgetMs)
+            catch (Exception e) when (IsFileSystemRefusal(e) && clock.Elapsed < RetryBudget)
             {
                 if (!Directory.Exists(Path))
                 {
