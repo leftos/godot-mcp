@@ -41,8 +41,9 @@ internal sealed class ScreenshotCropTool
             + "never a network path), with no session and no re-capture, and scales the crop up nearest-neighbour to read small "
             + "detail. rect is in the PNG's own pixels from its top-left, not viewport coordinates. A rect partly outside the "
             + "image is clipped to it; one wholly outside is refused, and so is a crop over 4096 px on an edge after scaling. "
-            + "Writes <stem>-crop-<n>.png, n the first free number from 1: beside the source when it is an untracked file under "
-            + "the project's .godot/godot-mcp/ or in the .tmp folder of the project's git checkout or main checkout, else into "
+            + "With options.path, writes the crop there instead (a .png in the checkout's .tmp, as take_screenshot's path); "
+            + "otherwise writes <stem>-crop-<n>.png, n the first free number from 1: beside the source when it is an untracked "
+            + "file under the project's .godot/godot-mcp/ or in the .tmp folder of the project's git checkout or main checkout, else into "
             + "the checkout's .tmp folder (the project's .godot/godot-mcp/screenshots/ when the project is in no checkout); the "
             + "source is never changed. Returns the cropped image and {path, width, height, rect}: rect is the source rectangle "
             + "used after clipping. Windows only."
@@ -55,7 +56,12 @@ internal sealed class ScreenshotCropTool
         )]
             string image,
         [Description("{x, y, width, height}: the rectangle to keep, in the PNG's own pixels.")] CropRect rect,
-        [Description("How many times to repeat each pixel across and down, 1 to 8.")] int scale = 1
+        [Description("How many times to repeat each pixel across and down, 1 to 8.")] int scale = 1,
+        [Description(
+            "{path, overwrite}: where to write the crop instead of beside the source, as take_screenshot takes its path, and "
+                + "whether to replace a file there."
+        )]
+            CropOptions? options = null
     )
     {
         if (!OperatingSystem.IsWindows())
@@ -65,6 +71,8 @@ internal sealed class ScreenshotCropTool
 
         CheckArguments(rect, scale);
         OutputPlaces places = Places(projectPath, FinalPath.DriveType);
+        OutputTarget? target = TmpDestination(options, places);
+        bool overwrite = options?.Overwrite ?? false;
         string source = Source(places, image);
         (byte[] bytes, string final) = ReadChecked(image, source);
         var original = PngImage.Decode(bytes, source);
@@ -72,9 +80,7 @@ internal sealed class ScreenshotCropTool
         CheckEdge(used, scale);
         PngImage cropped = original.Crop(used.X, used.Y, used.Width, used.Height, scale);
         byte[] png = cropped.Encode();
-        CropOrigin origin = CropSource.Place(places, final, Log.Ambient);
-        // The crop is named after the name the caller passed, never the one a link led to.
-        string path = Write(origin.Output, Path.GetFileNameWithoutExtension(source), png, Path.Exists);
+        string path = target is null ? WriteBeside(places, final, source, png) : WriteIn(png, target, overwrite);
         string text = JsonSerializer.Serialize(
             new
             {
@@ -105,6 +111,14 @@ internal sealed class ScreenshotCropTool
             throw new McpException($"rect width and height must be at least 1; got {rect.Width}x{rect.Height}");
         }
     }
+
+    /// <summary>
+    /// The file <paramref name="options"/>' path names for the crop, checked and held to the .tmp folders before the source
+    /// is read; null without one.
+    /// </summary>
+    /// <exception cref="McpException">The path breaks the .tmp rule or names an existing file without options.overwrite.</exception>
+    private static OutputTarget? TmpDestination(CropOptions? options, OutputPlaces places) =>
+        options?.Path is { } path ? ScreenshotTarget.ResolveInTmp(places, path, options.Overwrite, ToolName) : null;
 
     /// <summary>
     /// The project's folder and the places its outputs may lie in; the folder must be on a local drive, checked before git or
@@ -210,6 +224,21 @@ internal sealed class ScreenshotCropTool
                 $"the crop would be {width}x{height}; {ToolName} writes at most {MaxEdge} px on an edge, so use a smaller rect or scale"
             );
         }
+    }
+
+    /// <summary>
+    /// Writes the crop beside <paramref name="source"/>, or wherever its redirect rule sends it, named after the name the
+    /// caller passed, never the one a link led to.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static string WriteBeside(OutputPlaces places, string final, string source, byte[] png) =>
+        Write(CropSource.Place(places, final, Log.Ambient).Output, Path.GetFileNameWithoutExtension(source), png, Path.Exists);
+
+    /// <summary>Writes the crop to <paramref name="target"/>, and returns the file's full path.</summary>
+    private static string WriteIn(byte[] png, OutputTarget target, bool overwrite)
+    {
+        ScreenshotTarget.WriteInTmp(png, target, overwrite, ToolName);
+        return target.FullPath;
     }
 
     /// <summary>

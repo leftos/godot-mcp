@@ -21,9 +21,19 @@ internal sealed record TakeScreenshotOptions(
     [property: Description("Replace an existing file at path; without it, saving over an existing file is refused.")] bool Overwrite = false
 );
 
+/// <summary>crop_screenshot's options: the file it writes the crop to instead of beside the source.</summary>
+internal sealed record CropOptions(
+    [property: Description(
+        "Where to write the crop instead of beside the source: a .png in the .tmp folder of the project's git checkout or main "
+            + "checkout (relative paths starting .tmp/ resolve against the checkout), as take_screenshot's path is."
+    )]
+        string? Path = null,
+    [property: Description("Replace an existing file at options.path; without it, writing over an existing file is refused.")] bool Overwrite = false
+);
+
 /// <summary>
 /// The file save_screenshot writes a capture to: a .png in one of the <see cref="OutputPlaces"/>, held to the rule of
-/// <see cref="OutputDestination"/>; and the file take_screenshot, wait_for and capture_frames write one to, held besides to
+/// <see cref="OutputDestination"/>; and the file take_screenshot, wait_for, capture_frames and crop_screenshot write one to, held besides to
 /// the checkout's and the main checkout's .tmp folders. The capture itself and its preview stay in
 /// .godot/godot-mcp/screenshots/; only the full-size PNG is copied here.
 /// </summary>
@@ -133,6 +143,25 @@ internal static class ScreenshotTarget
     {
         CheckInTmp(target, tool);
         Save(capturePath, target, overwrite);
+    }
+
+    /// <summary>
+    /// Holds the target to the .tmp folders again, then writes <paramref name="png"/> to it, replacing the file there only
+    /// when <paramref name="overwrite"/>.
+    /// </summary>
+    /// <exception cref="McpException">The target lies outside both .tmp folders now, or the write failed.</exception>
+    internal static void WriteInTmp(byte[] png, OutputTarget target, bool overwrite, string tool)
+    {
+        CheckInTmp(target, tool);
+        try
+        {
+            using MemoryStream source = new(png);
+            OutputDestination.CopyReplacing(source, target.FullPath, overwrite);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new McpException($"saving the crop to {target.Requested} failed: {e.Message}", e);
+        }
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - A `prepare: never` launch of `run_project`, `run_editor` or `restart_project` notes a missing Debug C# assembly, or one older than its sources.
+- `crop_screenshot` takes `options.path` to write the crop to a `.png` in the checkout's `.tmp`, instead of beside the source.
 
 ### Fixed
 

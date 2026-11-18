@@ -468,6 +468,88 @@ public sealed class CropScreenshotTests : IDisposable
     }
 
     [Fact]
+    public void APathInTheCheckoutsTmpWritesTheCropThereAndNotBesideTheSource()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string image = Path.Combine(project, "art.png");
+        File.WriteAllBytes(image, Source().Encode());
+
+        (JsonElement result, PngImage cropped) = CropIn(project, image, new CropRect(1, 2, 3, 2), options: new CropOptions(Path: ".tmp/crop.png"));
+
+        string written = Path.Combine(checkout, ".tmp", "crop.png");
+        Assert.Equal(written, result.GetProperty("path").GetString());
+        Assert.Equal(Expected(1, 2, 3, 2, 1), PngImage.Decode(File.ReadAllBytes(written), "crop").Pixels);
+        Assert.Equal(Expected(1, 2, 3, 2, 1), cropped.Pixels);
+        Assert.Equal(["crop.png"], Directory.GetFiles(Path.Combine(checkout, ".tmp")).Select(Path.GetFileName));
+        Assert.False(File.Exists(Path.Combine(project, "art-crop-1.png")));
+        Assert.False(File.Exists(Path.Combine(ScreenshotTarget.CaptureFolder(project), "art-crop-1.png")));
+    }
+
+    [Fact]
+    public void APathOutsideTheTmpIsRefusedWithTheTmpOnlyTextNamingCropScreenshot()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string image = Path.Combine(project, "art.png");
+        File.WriteAllBytes(image, Source().Encode());
+
+        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1), options: new CropOptions(Path: "shots/out.png"));
+
+        Assert.Equal("options.path on crop_screenshot writes only into the checkout's or the main checkout's .tmp folder", refused.Message);
+    }
+
+    [Fact]
+    public void AnExistingFileAtThePathIsRefusedWithoutOverwriteAndReplacedWithIt()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string image = Path.Combine(project, "art.png");
+        File.WriteAllBytes(image, Source().Encode());
+        string written = Path.Combine(Directory.CreateDirectory(Path.Combine(checkout, ".tmp")).FullName, "crop.png");
+        File.WriteAllBytes(written, [1, 2, 3]);
+
+        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 2, 2), options: new CropOptions(Path: ".tmp/crop.png"));
+
+        Assert.Equal(".tmp/crop.png exists; pass options.overwrite true to replace it", refused.Message);
+
+        (JsonElement result, _) = CropIn(project, image, new CropRect(0, 0, 2, 2), options: new CropOptions(Path: ".tmp/crop.png", Overwrite: true));
+
+        Assert.Equal(written, result.GetProperty("path").GetString());
+        Assert.Equal(Expected(0, 0, 2, 2, 1), PngImage.Decode(File.ReadAllBytes(written), "crop").Pixels);
+    }
+
+    [Fact]
+    public void APathNotEndingInPngIsRefused()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string image = Path.Combine(project, "art.png");
+        File.WriteAllBytes(image, Source().Encode());
+
+        McpException refused = RefusedIn(project, image, new CropRect(0, 0, 1, 1), options: new CropOptions(Path: ".tmp/crop.jpg"));
+
+        Assert.Equal("path must end in .png: .tmp/crop.jpg", refused.Message);
+    }
+
+    [Fact]
+    public void ARefusedPathIsCheckedBeforeTheSourceIsRead()
+    {
+        using TempDirectory temp = new();
+        string checkout = Repository(temp, "game/project.godot");
+        string project = Path.Combine(checkout, "game");
+        string missing = Path.Combine(project, "gone.png");
+
+        McpException refused = RefusedIn(project, missing, new CropRect(0, 0, 1, 1), options: new CropOptions(Path: "shots/out.png"));
+
+        Assert.Equal("options.path on crop_screenshot writes only into the checkout's or the main checkout's .tmp folder", refused.Message);
+    }
+
+    [Fact]
     public void AnImageInTheMainCheckoutsTmpIsCropped()
     {
         using TempDirectory main = new();
@@ -1161,11 +1243,16 @@ public sealed class CropScreenshotTests : IDisposable
 
     private McpException Refused(string image, CropRect rect, int scale = 1) => RefusedIn(_project, image, rect, scale);
 
-    private static (JsonElement Result, PngImage Image) CropIn(string project, string image, CropRect rect, int scale = 1) =>
-        Decode(ScreenshotCropTool.CropScreenshot(project, image, rect, scale));
+    private static (JsonElement Result, PngImage Image) CropIn(
+        string project,
+        string image,
+        CropRect rect,
+        int scale = 1,
+        CropOptions? options = null
+    ) => Decode(ScreenshotCropTool.CropScreenshot(project, image, rect, scale, options));
 
-    private static McpException RefusedIn(string project, string image, CropRect rect, int scale = 1) =>
-        Assert.Throws<McpException>(() => ScreenshotCropTool.CropScreenshot(project, image, rect, scale).ToList());
+    private static McpException RefusedIn(string project, string image, CropRect rect, int scale = 1, CropOptions? options = null) =>
+        Assert.Throws<McpException>(() => ScreenshotCropTool.CropScreenshot(project, image, rect, scale, options).ToList());
 
     private static (JsonElement Result, PngImage Image) Decode(IEnumerable<ContentBlock> blocks)
     {

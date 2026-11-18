@@ -697,12 +697,14 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ### `crop_screenshot`
 
 - **Does:** cuts a rectangle out of a PNG already captured and enlarges it, to read small text or a detail without another capture. Needs no game, no session and no Godot launch. Returns a text block `{path, width, height, rect}` (`rect` the source rectangle after clipping) then an image/png block of the crop.
-- **Use:** `projectPath`, a folder on a local drive; `image`, a PNG on a local drive (absolute or project-relative): a capture, a committed screenshot or any other, tracked by git or not, inside the project's checkout or outside it; `rect {x, y, width, height}` in the PNG's own pixels, not viewport coordinates (a capture can be a pixel short of the window); `scale`, an integer 1 to 8 (1 by default), enlarged nearest-neighbour so pixels stay sharp.
+- **Use:** `projectPath`, a folder on a local drive; `image`, a PNG on a local drive (absolute or project-relative): a capture, a committed screenshot or any other, tracked by git or not, inside the project's checkout or outside it; `rect {x, y, width, height}` in the PNG's own pixels, not viewport coordinates (a capture can be a pixel short of the window); `scale`, an integer 1 to 8 (1 by default), enlarged nearest-neighbour so pixels stay sharp; `options {path, overwrite}`, where to write the crop instead of beside the source (see Edges).
 - **Edges:** the crop is written as `<stem>-crop-<n>.png`, `n` the first free number from 1, named after the stem of the name the caller passed (a link `shot.png` leading to `secret.png` crops as `shot-crop-1.png`, never after its target); it never replaces a file or a folder of that name, and a writer that takes that `n` meanwhile moves this one to the next, up to 100 tries. The source is never changed.
 
   Where it lands: beside the source when that is an untracked file under the project's `.godot/godot-mcp/` or in the `.tmp` folder of the project's checkout or main checkout (the main checkout's only for a source outside the project's own checkout), with no `.git` file or folder and no name ending in a space or a dot in its folder or the folders above it below that root, and git saying it does not track it.
 
   Any other source (tracked, outside those folders, or in a folder with a `.git` of its own) is cropped into the checkout's `.tmp`, made if missing. A project in no checkout, or a checkout whose `.tmp` is a link, uses `<project>/.godot/godot-mcp/screenshots/` instead (made if missing; refused when it or a folder on its way is a link). When git cannot answer, a source is cropped beside only for a project in no checkout, under `.godot/godot-mcp/`.
+
+  `options.path` writes the crop to that file instead: a `.png` in the `.tmp` folder of the project's checkout or main checkout, under the rule `take_screenshot`'s `options.path` follows (a relative path starting `.tmp/` is taken from the checkout), with an existing file replaced only when `options.overwrite` is true. The result's `path` is that file's full path; the image block and the rest of the result are unchanged. The path is checked before the source is read. Refusals: "options.path on crop_screenshot writes only into the checkout's or the main checkout's .tmp folder", "path must end in .png: <path>", "<path> exists; pass options.overwrite true to replace it" and "saving the crop to <path> failed: <reason>".
 
   A `rect` partly outside the image is clipped to it. One wholly outside is refused: "rect <x>,<y> <width>x<height> lies wholly outside <path>, which is <w>x<h>". An output edge over 4096 px is refused: "the crop would be <W>x<H>; crop_screenshot writes at most 4096 px on an edge, so use a smaller rect or scale".
 
@@ -724,7 +726,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   It reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; any other (16-bit, palette colour type 3, interlaced, wider or taller than Godot's 16384 px edge, damaged) is refused with "crop_screenshot reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; <path> is <what it is>".
 
-  Other refusals: "scale must be 1 to 8; got <scale>" and "rect width and height must be at least 1; got <w>x<h>"; off Windows, "crop_screenshot runs only on Windows, where its link and network checks are made". It is in the `read` class and `readOnly`: it writes only its crop, in one of those folders.
+  Other refusals: "scale must be 1 to 8; got <scale>" and "rect width and height must be at least 1; got <w>x<h>"; off Windows, "crop_screenshot runs only on Windows, where its link and network checks are made". It is in the `read` class and `readOnly`: it writes only its crop, in one of those folders, or at `options.path` in a `.tmp` folder.
 
 ### `get_ui_elements`
 

@@ -679,6 +679,42 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(capture)!, Path.GetFileName(written))), written);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACropWithAPathWritesItThereWithTheReturnedPixels()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode shot = JsonNode.Parse(Text(await _tools.TakeScreenshotAsync("path_only", null, cancellationToken: cancellation)))!;
+        string capture = shot["path"]!.GetValue<string>();
+        string folder = Path.Combine(_shared.ProbeDirectory, ".tmp", $"crop-{Guid.NewGuid():N}");
+        string named = Path.Combine(folder, "crop.png");
+        try
+        {
+            List<ContentBlock> blocks =
+            [
+                .. ScreenshotCropTool.CropScreenshot(
+                    _shared.ProbeDirectory,
+                    capture,
+                    new CropRect(0, 0, 8, 8),
+                    2,
+                    new CropOptions(Path: $".tmp/{Path.GetFileName(folder)}/crop.png")
+                ),
+            ];
+            JsonNode crop = JsonNode.Parse(Text(blocks))!;
+            byte[] png = Image(blocks);
+
+            Assert.Equal(named, crop["path"]!.GetValue<string>());
+            Assert.Equal(png, File.ReadAllBytes(named));
+            Assert.Equal((16.0, 16.0), PngSize(png));
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
     private static string MagentaBoundsScript(string path) =>
         $"var image := Image.load_from_file(\"{path.Replace('\\', '/')}\")\n\t"
         + "var low := Vector2i(image.get_width(), image.get_height())\n\t"
