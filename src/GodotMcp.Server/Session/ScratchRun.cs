@@ -1089,6 +1089,9 @@ internal sealed class ScratchRun
     /// <summary>Why a step's shot failed when its shot condition did not hold before its until was met.</summary>
     internal const string ShotNotHeldBeforeUntil = "its shot condition did not hold before its until was met";
 
+    /// <summary>Why a step's shot failed when no frame was drawn while its until waited, so its shot check never ran.</summary>
+    internal const string ShotNotDrawn = "no frame was drawn while its until waited (is the window minimized, or the game in low-processor mode?)";
+
     /// <summary>A step method's refusal of an answer that is not a wait_for condition.</summary>
     private static string NotACondition(string method, int index, JsonNode answer) =>
         $"{method}({index}) returned {answer.ToJsonString()}, not a wait_for condition";
@@ -1307,9 +1310,9 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Why a step failed when the bridge refused its until's wait with <paramref name="error"/>: when the step's feed
-    /// <paramref name="errors"/> logged that same error (PlayStep, the wait's call, raised it), that feed entry as a paced step's
-    /// thrown PlayStep reads (its message, then its file and line when it has them); else the until's refusal, the bridge's
-    /// wrapper cut from the text.
+    /// <paramref name="errors"/> logged that same message (Godot refusing PlayStep's own callv logs it, and the bridge's call_now
+    /// returns it as the refusal), that feed entry as a paced step's refused PlayStep reads (message, then file and line when it
+    /// has them); else the until's refusal, the bridge's wrapper cut from the text.
     /// </summary>
     /// <returns>The step's error, and the feed entry it was read from, or null when it is the until's refusal.</returns>
     internal static (string Error, ErrorEntry? Raised) UntilFailure(int index, string name, string error, IReadOnlyList<ErrorEntry> errors) =>
@@ -1317,15 +1320,19 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Why a step failed when the bridge refused its shot condition's wait with <paramref name="error"/>, judged as an until's
-    /// refusal is (<see cref="UntilFailure"/>): the feed entry that logged the same error, else the shot condition's refusal.
+    /// refusal is (<see cref="UntilFailure"/>): when the step's feed errors logged that same message (Godot refusing PlayStep's
+    /// own callv logs it, and the bridge's call_now returns it as the refusal), that feed entry as a paced step's refused PlayStep
+    /// reads (message, then file and line when it has them); else the shot condition's refusal.
     /// </summary>
     /// <returns>The step's error, and the feed entry it was read from, or null when it is the shot condition's refusal.</returns>
     internal static (string Error, ErrorEntry? Raised) ShotWaitFailure(int index, string name, string error, IReadOnlyList<ErrorEntry> errors) =>
         RefusalFailure(error, errors, said => ShotRefused(index, name, said));
 
     /// <summary>
-    /// A wait's refusal <paramref name="error"/>, the bridge's wrapper cut: the feed entry in <paramref name="errors"/> that
-    /// logged that same error, as a paced step's thrown PlayStep reads; else <paramref name="refused"/> of the cut text.
+    /// A wait's refusal <paramref name="error"/>, the bridge's wrapper cut: when the step's feed <paramref name="errors"/> logged
+    /// that same message (Godot refusing PlayStep's own callv logs it, and the bridge's call_now returns it as the refusal), that
+    /// feed entry, as a paced step's refused PlayStep reads (message, then file and line when it has them); else
+    /// <paramref name="refused"/> of the cut text.
     /// </summary>
     private static (string Error, ErrorEntry? Raised) RefusalFailure(string error, IReadOnlyList<ErrorEntry> errors, Func<string, string> refused)
     {
@@ -2530,18 +2537,30 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Why the shot of step <paramref name="index"/>, whose until's wait carried shotWhen, failed, from the wait's
-    /// <paramref name="reply"/>: the bridge's refusal of the shot condition (shotError), else that it did not hold before the
-    /// until was met (<see cref="ShotNotHeldBeforeUntil"/>); null once it held.
+    /// <paramref name="reply"/>: the bridge's refusal of the shot condition (shotError), else that no frame was drawn while the
+    /// until waited (<see cref="ShotNotDrawn"/>), else that it did not hold before the until was met
+    /// (<see cref="ShotNotHeldBeforeUntil"/>); null once it held.
     /// </summary>
     internal static string? UntilShotFailure(JsonNode? reply, int index)
     {
-        if (reply?["shotError"] is JsonValue error && error.TryGetValue(out string? text))
+        if (ReplyText(reply, "shotError") is { } text)
         {
             return $"{ShotUntilMethod}({index}) was refused: {text}";
         }
 
-        return reply?["shotHeld"] is JsonValue held && held.TryGetValue(out bool shot) && shot ? null : ShotNotHeldBeforeUntil;
+        return ReplyFlag(reply, "shotHeld") == true ? null : NotDrawnText(reply);
     }
+
+    /// <summary>Why a shot that did not hold failed: no frame was drawn, else that it did not hold before the until.</summary>
+    private static string NotDrawnText(JsonNode? reply) => ReplyFlag(reply, "shotDrawn") == false ? ShotNotDrawn : ShotNotHeldBeforeUntil;
+
+    /// <summary><paramref name="reply"/>'s <paramref name="field"/> as a string, or null when it is absent or not one.</summary>
+    private static string? ReplyText(JsonNode? reply, string field) =>
+        reply?[field] is JsonValue value && value.TryGetValue(out string? text) ? text : null;
+
+    /// <summary><paramref name="reply"/>'s <paramref name="field"/> as a boolean, or null when it is absent or not one.</summary>
+    private static bool? ReplyFlag(JsonNode? reply, string field) =>
+        reply?[field] is JsonValue value && value.TryGetValue(out bool flag) ? flag : null;
 
     /// <summary>
     /// How a step's play went: why it failed, or the bridge's refusal of its until's wait or its shot condition's wait, the

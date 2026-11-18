@@ -32,8 +32,26 @@ func test_a_shot_condition_that_never_holds_leaves_the_wait_unshot() -> void:
 	var outcome: Dictionary = await rig["time"]._poll_and_capture(_two_draws(rig), 0, params)
 	assert_eq(outcome["result"]["met"], true, "the wait is met")
 	assert_eq(outcome["result"].get("shotHeld"), false, "its shot condition never held")
+	assert_eq(outcome["result"].get("shotDrawn"), true, "its check ran at both draws")
 	assert_true(not outcome["result"].has("screenshot"), "no screenshot: %s" % outcome)
 	assert_true(not outcome["result"].has("warning"), "no warning: %s" % outcome)
+	_assert_no_mid_shot_left(rig)
+	_free(rig)
+
+
+## A wait met with no frame drawn during it says its shot check never ran:
+## no frame was drawn (a minimized window, or low-processor mode), which is not a
+## shot condition that failed to hold.
+func test_a_wait_with_no_draw_says_its_shot_check_never_drew() -> void:
+	var rig: Dictionary = _rig()
+	var params: Dictionary = {"screenshot": true, "shotWhen": {"kind": "exists", "node": "Flash"}}
+	var outcome: Dictionary = await rig["time"]._poll_and_capture(
+		func() -> Array: return [true, 1], 0, params
+	)
+	assert_eq(outcome["result"]["met"], true, "the wait is met")
+	assert_eq(outcome["result"].get("shotHeld"), false, "no draw, so its shot condition never held")
+	assert_eq(outcome["result"].get("shotDrawn"), false, "and no frame was drawn while it waited")
+	assert_true(not outcome["result"].has("screenshot"), "no screenshot: %s" % outcome)
 	_assert_no_mid_shot_left(rig)
 	_free(rig)
 

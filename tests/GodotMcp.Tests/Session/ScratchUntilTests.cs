@@ -382,8 +382,11 @@ public sealed class ScratchUntilTests
     // A step with an until whose wait carried shotWhen: the bridge's refusal of the shot condition, its hold, or why it is unshot.
     [Theory]
     [InlineData("{\"met\": true, \"shotHeld\": false, \"shotError\": \"unknown condition kind 'bogus'\"}", "refused")]
+    [InlineData("{\"met\": true, \"shotHeld\": false, \"shotDrawn\": false, \"shotError\": \"unknown condition kind 'bogus'\"}", "refused")]
     [InlineData("{\"met\": true, \"shotHeld\": true}", null)]
     [InlineData("{\"met\": true, \"shotHeld\": false}", "not held")]
+    [InlineData("{\"met\": true, \"shotHeld\": false, \"shotDrawn\": true}", "not held")]
+    [InlineData("{\"met\": true, \"shotHeld\": false, \"shotDrawn\": false}", "not drawn")]
     [InlineData("{\"met\": true}", "not held")]
     [InlineData("null", "not held")]
     public void AStepWithAnUntilsShotFailureIsTheShotConditionsRefusalOrThatItDidNotHold(string reply, string? failure) =>
@@ -392,6 +395,7 @@ public sealed class ScratchUntilTests
             {
                 "refused" => "GetStepShotUntil(3) was refused: unknown condition kind 'bogus'",
                 "not held" => ScratchRun.ShotNotHeldBeforeUntil,
+                "not drawn" => ScratchRun.ShotNotDrawn,
                 _ => null,
             },
             ScratchRun.UntilShotFailure(JsonNode.Parse(reply), 3)
@@ -457,14 +461,18 @@ public sealed class ScratchUntilTests
             ScratchRun.UntilMissed(0, "wait", new ScratchUntil(false, 16, 10520, 600), 10.5, 1)
         );
 
+    // Godot refusing PlayStep's own callv, the text its log entry carries and the bridge's call_now returns as the refusal.
+    private const string CallvRefusal =
+        "Error calling method from 'callv': 'Node(level.gd)::PlayStep': Method expected 1 argument(s), but called with 0.";
+
     [Fact]
     public void ABridgeErrorThatTheStepsFeedAlsoLoggedReadsAsThatFeedEntryWithItsFileAndLine()
     {
-        IReadOnlyList<ErrorEntry> errors = [Entry("error", "scratch step threw")];
+        IReadOnlyList<ErrorEntry> errors = [Entry("error", CallvRefusal)];
 
         Assert.Equal(
-            ("scratch step threw (res://scene.gd:3)", errors[0]),
-            ScratchRun.UntilFailure(0, "throws", "The bridge refused 'wait_for': scratch step threw", errors)
+            ($"{CallvRefusal} (res://scene.gd:3)", errors[0]),
+            ScratchRun.UntilFailure(0, "throws", "The bridge refused 'wait_for': " + CallvRefusal, errors)
         );
     }
 
@@ -531,11 +539,11 @@ public sealed class ScratchUntilTests
     [Fact]
     public void AShotConditionsWaitRefusalThatTheStepsFeedAlsoLoggedReadsAsThatFeedEntryWithItsFileAndLine()
     {
-        IReadOnlyList<ErrorEntry> errors = [Entry("error", "scratch step threw")];
+        IReadOnlyList<ErrorEntry> errors = [Entry("error", CallvRefusal)];
 
         Assert.Equal(
-            ("scratch step threw (res://scene.gd:3)", errors[0]),
-            ScratchRun.ShotWaitFailure(0, "throws", "The bridge refused 'wait_for': scratch step threw", errors)
+            ($"{CallvRefusal} (res://scene.gd:3)", errors[0]),
+            ScratchRun.ShotWaitFailure(0, "throws", "The bridge refused 'wait_for': " + CallvRefusal, errors)
         );
     }
 

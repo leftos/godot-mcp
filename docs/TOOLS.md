@@ -845,9 +845,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The last two errors read `step <i> '<name>': its until was not met within 15 s: the game's clock stood still (is it paused?)` (the wait ended with under half the step's pace of game time played) and `step <i> '<name>': its until's wait failed: <message>` (the connection or session failed).
 
-  A `PlayStep` that throws inside an until reads as its feed entry, `<message> (<file>:<line>)`, as a paced step's does.
+  An until's wait refused because Godot refused `PlayStep`'s own callv reads as its feed entry, `<message> (<file>:<line>)`, as a paced step's does; a `PlayStep` that throws or logs an error inside does not refuse.
 
-  A step's shot condition (`GetStepShotUntil`, with `options.capture`) has the same two wait errors, `step <i> '<name>': its shot condition's wait was refused: <why>` and `step <i> '<name>': its shot condition's wait failed: <message>`, and a `PlayStep` that throws inside it reads as its feed entry too; a shot condition that never holds is a warning, not an error (see `capture` below).
+  A step's shot condition (`GetStepShotUntil`, with `options.capture`) has the same two wait errors, `step <i> '<name>': its shot condition's wait was refused: <why>` and `step <i> '<name>': its shot condition's wait failed: <message>`, and a refusal from Godot refusing `PlayStep`'s own callv reads as its feed entry too; a shot condition that never holds is a warning, not an error (see `capture` below).
 
   On a step with an until the shot condition rides the until's own wait, so the bridge's refusal of it is the shot's failure, not a red step: `GetStepShotUntil(<i>) was refused: <why>`.
 
@@ -1102,9 +1102,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A shot that fails is a scene warning `the screenshot at step <index> '<name>' failed: <reason>`, never a red step, and an until whose met frame could not be saved stays met.
 
-  A shot condition that does not hold within a paced step's pace is the warning `the screenshot at step <index> '<name>' failed: its shot condition did not hold within its pace`, and the step stays green; on a step with an until it is `the screenshot at step <index> '<name>' failed: its shot condition did not hold before its until was met`. A `GetStepShotUntil` answer that is not a `wait_for` condition, or one `wait_for` refuses, is that warning too.
+  A shot condition that does not hold within a paced step's pace is the warning `the screenshot at step <index> '<name>' failed: its shot condition did not hold within its pace`, and the step stays green; on a step with an until it is `the screenshot at step <index> '<name>' failed: its shot condition did not hold before its until was met`.
 
-  A script error inside `GetStepShotUntil` turns its step red as one inside `GetStepUntil` does. The bridge's refusal of the shot condition's wait (`options.call` included) is red and stops the scene even with `options.keepGoing`: `step <i> '<name>': its shot condition's wait was refused: <why>` (a `PlayStep` that threw reads as its feed entry, as in an until), and a connection or session failure of that wait is red as `step <i> '<name>': its shot condition's wait failed: <message>`.
+  When no frame was drawn while the until waited (the until reply's `shotDrawn` is false), it is `the screenshot at step <index> '<name>' failed: no frame was drawn while its until waited (is the window minimized, or the game in low-processor mode?)`. A `GetStepShotUntil` answer that is not a `wait_for` condition, or one `wait_for` refuses, is that warning too.
+
+  A script error inside `GetStepShotUntil` turns its step red as one inside `GetStepUntil` does. The bridge's refusal of the shot condition's wait (`options.call` included) is red and stops the scene even with `options.keepGoing`: `step <i> '<name>': its shot condition's wait was refused: <why>` (a refused `PlayStep` callv reads as its feed entry, as in an until), and a connection or session failure of that wait is red as `step <i> '<name>': its shot condition's wait failed: <message>`.
 
   `capture.steps` naming steps the run does not play (an `options.steps` selection leaving them out) adds the warning `options.capture names steps this run did not play: <index> '<name>', ...`, ascending.
 

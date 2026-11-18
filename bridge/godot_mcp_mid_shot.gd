@@ -15,8 +15,8 @@ extends Node
 var time: Node:
 	get:
 		return get_parent()
-## The running check {params, probe?, error?, image?}, the params those of the wait it rides on;
-## empty while none runs.
+## The running check {params, draws, probe?, error?, image?}: the params those of the wait it
+## rides on, draws the drawn frames its probe ran at; empty while none runs.
 var _check: Dictionary = {}
 
 
@@ -33,7 +33,7 @@ func start(params: Dictionary) -> void:
 	if not shot_when is Dictionary:
 		return
 	drop()
-	_check = {"params": params}
+	_check = {"params": params, "draws": 0}
 	var failures: Dictionary = {}
 	var kind: String = str(shot_when.get("kind", ""))
 	var probe: Variant = time.bridge._conditions.make_probe(kind, shot_when, failures)
@@ -44,13 +44,15 @@ func start(params: Dictionary) -> void:
 	RenderingServer.frame_post_draw.connect(_check_draw)
 
 
-## Ends the running check into result: shotHeld, and shotError for a refused probe or a failed
+## Ends the running check into result: shotHeld, shotDrawn (whether its check ran at a drawn
+## frame; present whenever this ends a check), and shotError for a refused probe or a failed
 ## check. Returns the held frame's image, or null when it did not hold or no check ran.
 func finish(result: Dictionary) -> Variant:
 	if _check.is_empty():
 		return null
 	var image: Variant = _check.get("image")
 	result["shotHeld"] = image != null
+	result["shotDrawn"] = int(_check["draws"]) > 0
 	if _check.has("error"):
 		result["shotError"] = _check["error"]
 	drop()
@@ -109,6 +111,7 @@ func drop() -> void:
 func _check_draw() -> void:
 	if not _check.has("probe"):
 		return
+	_check["draws"] += 1
 	var seen: Array = (_check["probe"] as Callable).call()
 	if seen.size() > 2:
 		_check["error"] = str(seen[2])

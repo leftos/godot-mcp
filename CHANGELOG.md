@@ -17,6 +17,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A scratch step with an until whose shot failed because no frame was drawn now says so instead of calling the condition unheld.
 - A disarm or failed arm whose release of `override.cfg` or `armed.json` fails now leaves it owed, retried by `stop_project` and at the server's exit.
 - A native tooltip that hugs the window border over a still driven pointer stays shown instead of blinking every tooltip delay.
 - A scratch scene whose game quits with code 0 just as its exit hold's wait expires no longer fails as an unreadable hold.
