@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.45.0 - 2026-11-18
 
 ### Added
 
@@ -17,6 +17,16 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - On a busy machine the server's exit gives its games 10 s of load-adjusted time to quit, up to 20 s of wall time, before killing them.
 - A tooltip still pending when the game's own `_input` handles an Escape now shows after its delay instead of being dropped.
 - A second `stop_project` no longer risks killing an unrelated process that took a stopped game's pid between its check and its kill.
+
+### For agents
+
+- `crop_screenshot`: `options {path, overwrite}`; `options.path` writes the crop to a `.png` in the checkout's or main checkout's `.tmp` instead of beside the source (`overwrite` to replace a file there); the result's `path` is that file.
+- `batch_drive`: a reply past 20000 characters comes back as a per-step summary with `full` (the path of `.godot/godot-mcp/batch-result-*.json`, the whole result) and `cut` (what was left out); `options.result: "full"` never cuts, `"summary"` always does. Failed steps stay whole; a passed result over 1000 characters becomes a digest that keeps its `errors`, with `resultOmitted`.
+- `validate`: takes `.gdshader` and `.gdshaderinc` targets; each compile error comes back as `{message, file, line}` (an include's own path and line for an error inside it); a missing include reads `Shader include file does not exist: <path>` on its `#include` line; an include is checked through the shaders that include it, and a new `notes` field says when none does. The no-target sweep includes `.gdshader` files.
+- `run_project`, `run_editor`, `restart_project` with `prepare: "never"`: `prep.note` says when the Debug C# assembly the run loads is missing or older than the project's sources, naming both times.
+- `run_scratches`: a step whose game clock ran only part of its pace or until guard now says `the game's clock ran only <n> of ...`; `stood still (is it paused?)` means it ran 0 ms.
+- `hover`: a tooltip still pending when the game's own `_input` handles an Escape now shows after its delay.
+- `stop_project`: a second stop on a stopped game's folder names a pid it could not open only when no other program holds it.
 
 ## 0.44.0 - 2026-11-17
 
