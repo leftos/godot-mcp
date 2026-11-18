@@ -99,6 +99,26 @@ internal sealed partial class HeldProcess : IDisposable
     }
 
     /// <summary>
+    /// Opens the process with <paramref name="pid"/> with <paramref name="rights"/> only to read its creation time and whether it
+    /// is still running (its handle is not signalled), and closes the handle before returning: the pid is not held.
+    /// </summary>
+    /// <returns>What the probe read; null when no process has the pid or its creation time cannot be read.</returns>
+    /// <exception cref="UnauthorizedAccessException">A process has the pid but refuses the open: it is not gone.</exception>
+    public static ProcessProbe? Probe(int pid, uint rights)
+    {
+        using SafeProcessHandle handle = OpenProcess(rights, inheritHandle: false, pid);
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            return error == ErrorAccessDenied
+                ? throw new UnauthorizedAccessException($"Process {pid} refused to be opened.", new Win32Exception(error))
+                : null;
+        }
+
+        return CreationTime(handle) is { } created ? new ProcessProbe(created, WaitForSingleObject(handle, 0) == WaitTimeout) : null;
+    }
+
+    /// <summary>
     /// Holds <paramref name="process"/>, whose own handle is already opened and kept on it and was what its identity was proven
     /// through, as a held process; its creation time is read through that handle, the default when it cannot be. Disposing the
     /// held process disposes <paramref name="process"/>.
@@ -151,3 +171,9 @@ internal sealed partial class HeldProcess : IDisposable
     [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
 }
+
+/// <summary>
+/// What <see cref="HeldProcess.Probe"/> read of a process: its creation time, in local time as <see cref="Process.StartTime"/>
+/// gives it, and whether it was still running.
+/// </summary>
+internal readonly record struct ProcessProbe(DateTime Created, bool Running);

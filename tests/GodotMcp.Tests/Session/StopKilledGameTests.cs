@@ -732,6 +732,49 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.Null(result.Warning);
     }
 
+    // A folder stop that comes while the first stop waits for the quit game's child, the wrapper already killed so the session
+    // is no longer live, finds that child as a leftover and waits for it, rather than reporting the folder free.
+    [Fact]
+    public async Task AFolderStopDuringTheFirstStopsLeftoverWaitWaitsForTheLeftover()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe and ping.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        (Process game, Process child, _) = await StartGameWithRunningChildAsync();
+        using FakeBridge bridge = await LaunchAsync(project, game.Id);
+        FakeRunProcess run = _launched.First();
+
+        Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
+        await QuitAsync(bridge, game, withItsChildren: false);
+        await AdvanceUntilAsync(() => run.Process.HasExited, stop);
+        Task<object> folder = _sessions.StopFolderAsync(project, null, cancellation);
+        // The child ends now, with the fake time standing still, so neither wait can run out before it is gone.
+        child.Kill();
+        object stopped = await folder.WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        Assert.True(child.WaitForExit(0), "the folder stop returned before the leftover was gone");
+        HostStopResult result = Assert.IsType<HostStopResult>(stopped);
+        Assert.Null(result.GameStillRunning);
+        _ = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
+    }
+
+    [Fact]
+    public void ALeftoverStillRunningAndOneUnopenedAreNamedInThatOrder()
+    {
+        LeftBehind.ListedProcess stillRunning = new(1, 10, "a.exe");
+        LeftBehind.ListedProcess unopened = new(2, 10, "b.exe");
+        KilledGamesWait waited = new([1], Warning: null) { After = "5 s of load-adjusted time" };
+
+        string? warning = GodotSession.DescribeLeftBehind([stillRunning, unopened], waited, [unopened]);
+
+        Assert.Equal(
+            "The game left a.exe (pid 1) running, and it was still running after 5 s of load-adjusted time; "
+                + "its project folder stays in use until it is gone. "
+                + "The game left b.exe (pid 2) running, which the stop could not open to wait for; it may keep its project folder in use.",
+            warning
+        );
+    }
+
     // The game's hello names a pid the server cannot open, so the run holds no handle on the game: the silent game's stop kills
     // the wrapper alone and says the game itself was not waited for.
     [Fact]

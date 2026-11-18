@@ -105,6 +105,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private volatile SessionClock _clock = new();
     private GodotRun? _run;
 
+    /// <summary><see cref="LeftStillRunning"/>, replaced whole on the stop's thread and read on a registry thread.</summary>
+    private IReadOnlyList<LeftBehind.Remembered> _leftStillRunning = [];
+
     public string Name { get; } = spec.Name;
 
     public string ProjectDir { get; } = spec.ProjectDir;
@@ -155,10 +158,15 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public StartWindow? GameStartWindow { get; private set; }
 
     /// <summary>
-    /// The processes the last run's quit game left that were still running after the stop's kill wait, for a later stop to wait
-    /// for again; empty from each new run's hello. Replaced as a whole, never changed in place, as a later stop reads it unlocked.
+    /// The processes the last run's quit game left, for a later stop to wait for again: during the stop's kill wait every child
+    /// it opened, and after it those still running; empty from each new run's hello. Replaced as a whole, never changed in
+    /// place, as a later stop reads it unlocked.
     /// </summary>
-    public IReadOnlyList<LeftBehind.Remembered> LeftStillRunning { get; private set; } = [];
+    public IReadOnlyList<LeftBehind.Remembered> LeftStillRunning
+    {
+        get => Volatile.Read(ref _leftStillRunning);
+        private set => Volatile.Write(ref _leftStillRunning, value);
+    }
 
     /// <summary>
     /// The game's main window handle, as its bridge's hello reported it; null before the handshake, from an older bridge, and
@@ -1854,14 +1862,17 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         IReadOnlyList<LeftBehind.ListedProcess> listed = listing.Children;
         IReadOnlyList<string> leftRunning = [.. listed.Select(LeftBehind.Describe)];
         Log.GameLeftProcessesRunning(_logger, run.ProjectDir, leftRunning.Count == 0 ? "no process it could list" : string.Join(", ", leftRunning));
-        List<Process> children = LeftBehind.Open(game, listing, _logger);
+        LeftBehind.OpenedChildren opened = LeftBehind.Open(game, listing, _logger);
+        List<Process> children = opened.Processes;
         try
         {
+            // Published before the wrapper's kill ends the session's liveness, so a folder stop in between finds them to wait for.
+            LeftStillRunning = Remember(children, listed, [.. children.Select(child => child.Id)]);
             // The game quit, so the wrapper still running is no kill the stop reports: its wait is only logged. Only the game's
             // children still running after it are.
             KilledGamesWait waited = await RunKill.KillAndWaitWithAsync(run.Process, children, registry.LaunchClock, _logger, ProjectDir);
             LeftStillRunning = Remember(children, listed, waited.StillRunning);
-            return new WrapperEnd(leftRunning, DescribeLeftStillRunning(listed, waited));
+            return new WrapperEnd(leftRunning, DescribeLeftBehind(listed, waited, opened.Unopened));
         }
         finally
         {
@@ -1873,13 +1884,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// The warning naming the processes of <paramref name="listed"/> still running when <paramref name="waited"/> ended; null
-    /// when none is.
+    /// The warning naming the processes of <paramref name="listed"/> still running when <paramref name="waited"/> ended, then
+    /// those of <paramref name="unopened"/>, which the stop could not open to wait for; null when there is neither.
     /// </summary>
-    private static string? DescribeLeftStillRunning(IReadOnlyList<LeftBehind.ListedProcess> listed, KilledGamesWait waited) =>
-        LeftBehind.DescribeStillRunning(
-            [.. listed.Where(process => waited.StillRunning.Contains(process.Id)).Select(LeftBehind.Describe)],
-            waited.After
+    internal static string? DescribeLeftBehind(
+        IReadOnlyList<LeftBehind.ListedProcess> listed,
+        KilledGamesWait waited,
+        IReadOnlyList<LeftBehind.ListedProcess> unopened
+    ) =>
+        JoinWarnings(
+            LeftBehind.DescribeStillRunning(
+                [.. listed.Where(process => waited.StillRunning.Contains(process.Id)).Select(LeftBehind.Describe)],
+                waited.After
+            ),
+            LeftBehind.DescribeUnopened([.. unopened.Select(LeftBehind.Describe)])
         );
 
     /// <summary>

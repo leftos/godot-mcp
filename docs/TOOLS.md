@@ -473,6 +473,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A leftover still running after that wait adds to `warning`: `The game left <name> (pid <pid>) running, and it was still running after <spent>; its project folder stays in use until it is gone.` (several: `The game left <name> (pid <pid>), <name> (pid <pid>) running, and they were still running after <spent>; its project folder stays in use until they are gone.`).
 
+  A leftover the stop could not open to wait for (Windows refused the open) adds, after that sentence, `The game left <name> (pid <pid>) running, which the stop could not open to wait for; it may keep its project folder in use.` (several: `The game left <a>, <b> running, which the stop could not open to wait for; they may keep its project folder in use.`); `leftRunning` still lists it, but a later stop neither waits for it nor names it again.
+
   A kill says why in `killReason`: no answer to a ping, no answer to the quit request, still shutting down after the grace, or no bridge connection to ask.
 
   A game whose bridge connection is still open at 3 s is killed then, as before; one that closed it exits within the next 7 s unkilled (`killed: false`, `quitMs` set), and a recording run keeps its 30 s with no teardown phase.
@@ -487,7 +489,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Calling `stop_project` again on that folder (with `projectPath`, or naming the stopped session) waits once more for what the stop left running, all on one 5 s load-adjusted kill wait. Each killed game still running (its pid with the same start time, so a pid since reused by another process counts as gone) is killed again, through the handle that read its start time. A pid the server is refused opening counts as gone when another program's image holds it; otherwise it is named in the could-not-be-opened warning.
 
-  Each process the quit game left that was still running after the first wait (`leftRunning`, the "The game left ..." warning) is waited for, never killed: it is remembered by pid, start time and image name, and reopened only with the same start time.
+  Each process the quit game left that the first stop opened and that was still running after its wait (`leftRunning`, the "... was still running after ..." warning) is waited for, never killed: it is remembered by pid, start time and image name from the moment the first stop opens it, so a `stop_project` on the folder that runs once the game's console wrapper is gone, while the first stop is still waiting for it, waits for it too and returns the folder result rather than refusing; it is reopened only with the same start time.
 
   A killed game the run could not open at its hello (or whose start time could not be read) is remembered with a start window, from the console wrapper's start to the moment the game was taken in after the hello's handshake (UTC). At the second stop a process with that pid started inside the window is killed and waited for; one started outside it, or no process with the pid, counts as gone; one whose handle or start time cannot be read is reported, never killed or waited for.
 

@@ -15,6 +15,7 @@ internal static partial class LeftBehind
 {
     private const uint SnapProcess = 0x00000002;
     private const int NoMoreFiles = 18;
+    private const int AccessDenied = 5;
     private const int MaxPath = 260;
     private static readonly nint InvalidHandle = -1;
 
@@ -55,26 +56,41 @@ internal static partial class LeftBehind
     /// start and the listing, its creation time read through the handle itself. A listed child that exited since the listing may
     /// have had its id taken by another process, which started after the listing and so is never opened; a child of the game
     /// started in the same instant as the listing may be missed with it. One that cannot be opened is logged at Debug and left
-    /// out. The caller disposes every process returned; none is left open when this throws.
+    /// out; one whose open Windows refused (access denied) is returned among the unopened. The caller disposes every process
+    /// returned; none is left open when this throws.
     /// </summary>
     /// <param name="game">The game's process, with its handle still open so its start time stays readable.</param>
     /// <param name="listing">The game's children, as <see cref="ListChildren"/> listed them.</param>
     /// <param name="logger">Where a failed open is logged.</param>
-    public static List<Process> Open(Process game, ChildListing listing, ILogger logger)
+    public static OpenedChildren Open(Process game, ChildListing listing, ILogger logger) =>
+        Open(game, listing, logger, (child, since, until) => OpenStartedBetween(child, since, until, logger));
+
+    /// <inheritdoc cref="Open(Process, ChildListing, ILogger)"/>
+    /// <param name="game">The game's process, with its handle still open so its start time stays readable.</param>
+    /// <param name="listing">The game's children, as <see cref="ListChildren"/> listed them.</param>
+    /// <param name="logger">Where a failed read of the game's start time is logged.</param>
+    /// <param name="open">Opens one listed child from its listing entry, the game's start and the listing's time.</param>
+    internal static OpenedChildren Open(Process game, ChildListing listing, ILogger logger, Func<ListedProcess, DateTime, DateTime, ChildOpen> open)
     {
         List<Process> opened = [];
+        List<ListedProcess> unopened = [];
         if (listing.Children.Count == 0 || StartTimeOf(game, logger) is not { } gameStart)
         {
-            return opened;
+            return new OpenedChildren(opened, unopened);
         }
 
         try
         {
             foreach (ListedProcess child in listing.Children)
             {
-                if (OpenStartedBetween(child.Id, gameStart, listing.ListedAt, logger) is { } process)
+                ChildOpen result = open(child, gameStart, listing.ListedAt);
+                if (result.Process is { } process)
                 {
                     opened.Add(process);
+                }
+                else if (result.Refused)
+                {
+                    unopened.Add(child);
                 }
             }
         }
@@ -88,7 +104,7 @@ internal static partial class LeftBehind
             throw;
         }
 
-        return opened;
+        return new OpenedChildren(opened, unopened);
     }
 
     /// <summary>The listed processes whose parent is <paramref name="parentId"/>.</summary>
@@ -112,6 +128,19 @@ internal static partial class LeftBehind
                 + "its project folder stays in use until they are gone.",
         };
 
+    /// <summary>
+    /// The warning naming the processes a quit game left that the stop could not open to wait for, each of
+    /// <paramref name="described"/> as <see cref="Describe"/> writes it; null when there is none.
+    /// </summary>
+    internal static string? DescribeUnopened(IReadOnlyList<string> described) =>
+        described.Count switch
+        {
+            0 => null,
+            1 => $"The game left {described[0]} running, which the stop could not open to wait for; it may keep its project folder in use.",
+            _ => $"The game left {string.Join(", ", described)} running, which the stop could not open to wait for; "
+                + "they may keep its project folder in use.",
+        };
+
     /// <summary>The game's creation time, in UTC; null, logged at Debug, when it cannot be read.</summary>
     private static DateTime? StartTimeOf(Process game, ILogger logger)
     {
@@ -127,36 +156,67 @@ internal static partial class LeftBehind
     }
 
     /// <summary>
-    /// The process with <paramref name="processId"/>, its handle opened and kept on it before its creation time is read, when it
-    /// started at or after <paramref name="since"/> and no later than <paramref name="until"/>, and has not exited; null otherwise.
+    /// The process of <paramref name="child"/>, its handle opened and kept on it before its creation time is read, when it
+    /// started at or after <paramref name="since"/> and no later than <paramref name="until"/>, and has not exited; no process
+    /// otherwise, marked refused when Windows denied the open of its handle and the process is shown to be the listed child
+    /// still running (<see cref="IsRefusedChild"/>).
     /// </summary>
-    private static Process? OpenStartedBetween(int processId, DateTime since, DateTime until, ILogger logger)
+    private static ChildOpen OpenStartedBetween(ListedProcess child, DateTime since, DateTime until, ILogger logger)
     {
+        int processId = child.Id;
         Process? process = null;
+        bool handleOpened = false;
         try
         {
             process = Process.GetProcessById(processId);
             // Reading Handle opens the process handle and keeps it on the object, so every later read and wait is of this process.
             _ = process.Handle;
+            handleOpened = true;
             DateTime started = process.StartTime.ToUniversalTime();
             if (started < since || started > until || process.HasExited)
             {
-                return null;
+                return new ChildOpen(null, Refused: false);
             }
 
             Process opened = process;
             process = null;
-            return opened;
+            return new ChildOpen(opened, Refused: false);
         }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
         {
             // Gone since the listing, or not ours to open: either way not a process the stop can wait for.
             Log.LeftRunningUnreadable(logger, e, processId);
-            return null;
+            bool refused = !handleOpened && e is Win32Exception { NativeErrorCode: AccessDenied } && IsRefusedChild(child, since, until);
+            return new ChildOpen(null, refused);
         }
         finally
         {
             process?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Whether the process holding <paramref name="child"/>'s pid, whose open Windows refused, is shown to be that child still
+    /// running: a probe with wait rights sees it running and created between <paramref name="since"/> and
+    /// <paramref name="until"/>; or, when the probe is refused too, the process list names it with the child's image name.
+    /// </summary>
+    private static bool IsRefusedChild(ListedProcess child, DateTime since, DateTime until)
+    {
+        try
+        {
+            return HeldProcess.Probe(child.Id, HeldProcess.WaitRights) is { Running: true } probe
+                && probe.Created.ToUniversalTime() is var created
+                && created >= since
+                && created <= until;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // The process list names an image without its ".exe", as Process.ProcessName does; the listing names it with it.
+            return RunKill.ListedName(child.Id) is { } name
+                && (
+                    string.Equals(name, child.Name, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals($"{name}.exe", child.Name, StringComparison.OrdinalIgnoreCase)
+                );
         }
     }
 
@@ -238,6 +298,17 @@ internal static partial class LeftBehind
     /// with is read in UTC too, so a clock change between them cannot move a process across it.
     /// </summary>
     internal readonly record struct ChildListing(IReadOnlyList<ListedProcess> Children, DateTime ListedAt);
+
+    /// <summary>
+    /// The listed children <see cref="Open(Process, ChildListing, ILogger)"/> opened, which the caller disposes, and those whose
+    /// open Windows refused with access denied, which the stop could not wait for.
+    /// </summary>
+    internal readonly record struct OpenedChildren(List<Process> Processes, IReadOnlyList<ListedProcess> Unopened);
+
+    /// <summary>
+    /// One listed child's open: its process with its handle held, or none; <see cref="Refused"/> when Windows denied the open.
+    /// </summary>
+    internal readonly record struct ChildOpen(Process? Process, bool Refused);
 
     /// <summary><c>PROCESSENTRY32W</c>.</summary>
     [StructLayout(LayoutKind.Sequential)]

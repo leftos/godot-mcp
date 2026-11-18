@@ -88,21 +88,21 @@ public sealed partial class LeftBehindTests
         using Process later = Process.Start(
             new ProcessStartInfo("cmd.exe", "/d /c ping -n 600 127.0.0.1 >nul") { UseShellExecute = false, CreateNoWindow = true }
         )!;
-        List<Process> refused = [];
+        List<Process> startedAfter = [];
         List<Process> opened = [];
         try
         {
             LeftBehind.ListedProcess entry = new(later.Id, game.Id, "cmd.exe");
 
-            refused = LeftBehind.Open(game, new LeftBehind.ChildListing([entry], listedAt), NullLogger.Instance);
-            opened = LeftBehind.Open(game, new LeftBehind.ChildListing([entry], DateTime.UtcNow), NullLogger.Instance);
+            startedAfter = LeftBehind.Open(game, new LeftBehind.ChildListing([entry], listedAt), NullLogger.Instance).Processes;
+            opened = LeftBehind.Open(game, new LeftBehind.ChildListing([entry], DateTime.UtcNow), NullLogger.Instance).Processes;
 
-            Assert.Empty(refused);
+            Assert.Empty(startedAfter);
             Assert.Equal([later.Id], opened.Select(process => process.Id));
         }
         finally
         {
-            foreach (Process process in refused.Concat(opened))
+            foreach (Process process in startedAfter.Concat(opened))
             {
                 process.Dispose();
             }
@@ -110,6 +110,57 @@ public sealed partial class LeftBehindTests
             await EndAsync(later, ping: null);
         }
     }
+
+    // The System process (pid 4) refuses a full-access open, but it started at boot, before the game, so it is not the listed
+    // child; were even the wait-rights probe refused, its listed name, "System", is not the listed child's.
+    [Fact]
+    public void OpenDoesNotNameAProtectedProcessOutsideTheWindowAsRefused()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+        using var game = Process.GetCurrentProcess();
+        LeftBehind.ListedProcess entry = new(4, game.Id, "ping.exe");
+
+        LeftBehind.OpenedChildren result = LeftBehind.Open(game, new LeftBehind.ChildListing([entry], DateTime.UtcNow), NullLogger.Instance);
+
+        Assert.Empty(result.Unopened);
+        Assert.Empty(result.Processes);
+    }
+
+    // A listed child Windows refuses to open is not one the stop can wait for, so Open returns it among the unopened.
+    [Fact]
+    public void OpenNamesAListedChildItsOpenWasRefused()
+    {
+        using var game = Process.GetCurrentProcess();
+        LeftBehind.ListedProcess entry = new(1, game.Id, "ping.exe");
+
+        LeftBehind.OpenedChildren result = LeftBehind.Open(
+            game,
+            new LeftBehind.ChildListing([entry], DateTime.UtcNow),
+            NullLogger.Instance,
+            (_, _, _) => new LeftBehind.ChildOpen(null, Refused: true)
+        );
+
+        Assert.Equal([entry], result.Unopened);
+        Assert.Empty(result.Processes);
+    }
+
+    [Fact]
+    public void AChildTheStopCouldNotOpenIsNamedAsOne()
+    {
+        Assert.Equal(
+            "The game left ping.exe (pid 1) running, which the stop could not open to wait for; it may keep its project folder in use.",
+            LeftBehind.DescribeUnopened(["ping.exe (pid 1)"])
+        );
+        Assert.Null(LeftBehind.DescribeUnopened([]));
+    }
+
+    [Fact]
+    public void ChildrenTheStopCouldNotOpenAreNamedTogether() =>
+        Assert.Equal(
+            "The game left ping.exe (pid 1), cmd.exe (pid 2) running, which the stop could not open to wait for; "
+                + "they may keep its project folder in use.",
+            LeftBehind.DescribeUnopened(["ping.exe (pid 1)", "cmd.exe (pid 2)"])
+        );
 
     [Fact]
     public async Task AProcessThatLeftNothingRunningListsNothing()
