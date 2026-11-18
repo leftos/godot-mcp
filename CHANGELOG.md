@@ -7,10 +7,12 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A `hover` over a C# game's own tooltip no longer times out while the game first loads the C# state helper.
+- A stop on a busy machine no longer kills a game that is only slow to answer: its 2 s check counts load-adjusted time.
 
 ### For agents
 
 - `hover`: on a C# session the server waits 30 s more for the reply, as wall time even while recording; a C# tooltip node that frees itself in its state read is skipped.
+- `stop_project`, `restart_project` and an attached game's stop: a game is killed as silent only after 2 s of load-adjusted time without answering its ping.
 
 ## 0.45.0 - 2026-11-18
 

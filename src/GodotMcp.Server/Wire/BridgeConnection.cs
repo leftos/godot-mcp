@@ -326,7 +326,8 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
     /// <summary>
     /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of wall time, whatever the
-    /// machine's load: the pings that tell a busy game from a stuck one, a clock ping, a cancel, and the shutdown.
+    /// machine's load, unless <paramref name="cancellationToken"/> ends the wait first: the hang probe's ping, a clock ping, a
+    /// cancel, and the shutdown. A stop's ping is the exception: it passes an infinite timeout and its load-adjusted deadline's token.
     /// </summary>
     /// <exception cref="TimeoutException">No reply within <paramref name="timeout"/>; a later reply is dropped.</exception>
     /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>

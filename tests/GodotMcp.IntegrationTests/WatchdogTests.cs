@@ -21,7 +21,9 @@ public sealed partial class WatchdogTests : IAsyncDisposable
     // still stuck: only a kill ends it.
     private static readonly string BlockMainThread = $"OS.delay_msec({2 * TestTimeoutMs})\n\treturn true";
     private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
+
+    // Its game blocks its main thread for 30 min, so the stop must judge it silent at the server's own 2 s.
+    private readonly SessionHarness _harness = new(launchesUnfocused: false, productionGraces: false, silenceWait: HangProbe.PingTimeout);
     private readonly RuntimeTools _tools;
 
     public WatchdogTests() => _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());

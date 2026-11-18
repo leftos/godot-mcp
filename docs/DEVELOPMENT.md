@@ -763,11 +763,13 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   In the itests the listener's clock is plain wall time, so every bound started on `registry.Clock` counts wall time there, except the ones the harness floors and the launch handshake and attach wait, which are load-adjusted through `LaunchClock`.
 
-  The harness floors a warm headless host's request ceiling (`HeadlessCeilingFloor`), a stop's two graces, and a scratch scene's bounds (`ScratchBoundFloor`, 10 minutes: its call timeouts, step-marker waits, pace-wait releases, the exit hold's windows (so its walk itests never probe the hold), the server's release of an until wait and the ceiling its paces give).
+  The harness floors a warm headless host's request ceiling (`HeadlessCeilingFloor`), a stop's two graces and its silence wait (`SilenceWait`, 1 minute: the load-adjusted time its ping gives the game to answer before the game is killed as stuck; the harness's `silenceWait` parameter, default the server's 2 s with `productionGraces`), and a scratch scene's bounds (`ScratchBoundFloor`, 10 minutes: its call timeouts, step-marker waits, pace-wait releases, the exit hold's windows (so its walk itests never probe the hold), the server's release of an until wait and the ceiling its paces give).
 
   The hang guard itself (`ScratchUntilGuard`, 10 minutes in the harness unless a test gives seconds) and so the bridge's game-time limit on an until wait are not floored, and a ceiling the call or profile gives is never floored, so `ScratchRunnerTests` still sees a given ceiling kill a scene.
 
-  Still on wall time in the scratch walk: the ping before a kill and the watch collection's reply allowance on the kill path (GMCP-366).
+  A test whose game is stuck on purpose (`WatchdogTests`, `ScratchRunnerTests.AStepPastItsCeilingIsKilledAndItsGameStopped`) passes `silenceWait: HangProbe.PingTimeout` to the harness, so its stop's ping still gives up at the server's 2 s and the game is killed.
+
+  Still on wall time in the scratch walk: the watch collection's reply allowance on the kill path (GMCP-366).
 
   A server limit that encloses a launch (preview_scene's 60 s) starts on the registry's `LaunchClock`, never its `Clock`: the itest harness sets `Clock` to wall time on purpose and only `LaunchClock` to load-adjusted time, so a wall-time limit around a launch cuts it off under load in the itests while production, where both are the same clock, passes.
 
@@ -776,6 +778,8 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
   A test that needs "notification before response" reads the wire: a recorder stream under `StreamClientTransport` over the server's stdout (`WireRecorder` in `McpServerSmokeTests`). A test that only needs "the notification came" waits on a `TaskCompletionSource` its handler completes, with the test's `Timeout` as the hang guard, never a poll window.
 
 - **A failure at one instant is reproduced by suspending Godot, not with the suspend rig.** The rig (`~/.claude/tools/suspend-rig`) slows a whole process evenly and cannot aim at a moment. To reproduce a failure at one instant (a request, a quit), suspend Godot (`NtSuspendProcess`) when its log shows a marker (`[godot-mcp] request <id> <op>` in the headless host log; `scratch pace end` in a scratch run log) and resume it after a hold.
+
+  A stop-time ping is reproduced by an aimed freeze: suspend the game from the last `scratch step {n} end` marker in 2 to 3 s freezes with 2 ms run slices. An even suspend-rig freeze lands the ping in the game's run window and does not reproduce it.
 
   A server's own start is the same case: the rig catches a newly started `godot-mcp` only by chance, so hold it from birth instead, matched by its image path so other worktrees' servers are left alone (GMCP-547 reproduced the MCP client's 60 s initialization timeout that way).
 

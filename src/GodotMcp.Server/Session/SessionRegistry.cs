@@ -153,6 +153,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     internal TimeSpan TeardownGrace { get; init; } = DefaultTeardownGrace;
 
     /// <summary>
+    /// The load-adjusted time a stop's ping gives the game to answer before it is judged stuck and killed at once:
+    /// <see cref="HangProbe.PingTimeout"/> unless set, as the itest harness sets it to a hang guard in minutes, since the gate
+    /// starts the games at BelowNormal and the harness's listener clock is wall time.
+    /// </summary>
+    internal TimeSpan SilenceWait { get; init; } = HangProbe.PingTimeout;
+
+    /// <summary>
     /// Opens the game a stopped session recorded, from its pid and creation time, when it still runs: <see cref="RunKill.OpenIfStillRunning"/>
     /// unless set, as a unit test sets it to stand in for the process boundary.
     /// </summary>

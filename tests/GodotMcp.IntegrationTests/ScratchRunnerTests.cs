@@ -158,15 +158,22 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         Assert.Equal(0, scene["steps"]!["played"]!.GetValue<int>());
     }
 
+    // Its scene spins the game's main thread, so the stop must judge it silent at the server's own 2 s.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepPastItsCeilingIsKilledAndItsGameStopped()
     {
-        JsonObject result = await RunAsync(
-            _probe.Directory,
-            ["ScratchBusy"],
-            new ScratchOptions(Ceilings: JsonSerializer.SerializeToElement(new Dictionary<string, double> { ["ScratchBusy"] = 5 })),
-            TestContext.Current.CancellationToken
-        );
+        await using SessionHarness harness = new(launchesUnfocused: false, productionGraces: false, silenceWait: HangProbe.PingTimeout);
+        ScratchTools scratch = new(harness.Sessions, TestCSharp.Unused());
+        JsonObject result = JsonNode
+            .Parse(
+                await scratch.RunScratchesAsync(
+                    _probe.Directory,
+                    ["ScratchBusy"],
+                    new ScratchOptions(Ceilings: JsonSerializer.SerializeToElement(new Dictionary<string, double> { ["ScratchBusy"] = 5 })),
+                    TestContext.Current.CancellationToken
+                )
+            )!
+            .AsObject();
 
         JsonObject scene = Single(result);
         Assert.Equal("killed", scene["verdict"]!.GetValue<string>());
@@ -175,7 +182,7 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         Assert.Equal((0, "spin"), (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()));
         Assert.True(scene["exit"]!["killed"]!.GetValue<bool>());
         Assert.False(string.IsNullOrEmpty(scene["exit"]!["killReason"]!.GetValue<string>()));
-        Assert.False(_harness.Sessions.GetDebugOutput("InputProbe.scratch-ScratchBusy", 1, before: null).Running);
+        Assert.False(harness.Sessions.GetDebugOutput("InputProbe.scratch-ScratchBusy", 1, before: null).Running);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

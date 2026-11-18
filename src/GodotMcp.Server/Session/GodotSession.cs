@@ -1627,9 +1627,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// Whether the game's bridge left a ping unanswered for <see cref="HangProbe.PingTimeout"/>: its main thread is stuck, so a
-    /// shutdown command would go unread too. A game without a connection, or whose connection ends meanwhile, is not silent:
-    /// it gets the usual shutdown and grace.
+    /// Whether the game's bridge left a ping unanswered for <see cref="SessionRegistry.SilenceWait"/> of load-adjusted time,
+    /// counted on the registry's clock with its backstop: its main thread is stuck, so a shutdown command would go unread too.
+    /// A game without a connection, or whose connection ends meanwhile, is not silent: it gets the usual shutdown and grace.
     /// </summary>
     private async Task<bool> IsSilentAsync(BridgeConnection? bridge)
     {
@@ -1638,14 +1638,16 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             return false;
         }
 
+        using LoadDeadline silence = registry.Clock.Start(registry.SilenceWait);
         try
         {
-            await connection.SendRawAsync("ping", null, HangProbe.PingTimeout, CancellationToken.None);
+            await connection.SendRawAsync("ping", null, Timeout.InfiniteTimeSpan, silence.Token);
             return false;
         }
-        catch (TimeoutException)
+        catch (OperationCanceledException) when (silence.Expired)
         {
-            Log.StopFoundGameStuck(_logger, ProjectDir, HangProbe.PingTimeout.TotalSeconds);
+            string backstop = silence.Reason == DeadlineReason.Backstop ? silence.BackstopClause() : string.Empty;
+            Log.StopFoundGameStuck(_logger, ProjectDir, registry.SilenceWait.TotalSeconds, backstop);
             return true;
         }
         catch (Exception e) when (e is IOException or InvalidOperationException)

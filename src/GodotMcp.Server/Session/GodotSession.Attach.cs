@@ -123,7 +123,7 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
-    /// Ends the attached game as a run's stop ends a run: one silent for <see cref="HangProbe.PingTimeout"/> is killed at once,
+    /// Ends the attached game as a run's stop ends a run: one silent for <see cref="SessionRegistry.SilenceWait"/> is killed at once,
     /// one that answers is asked to quit and its own process killed if it has not exited within the grace. Then the session
     /// ends as a detach ends it. The caller holds the gate.
     /// </summary>

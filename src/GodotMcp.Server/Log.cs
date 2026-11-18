@@ -259,9 +259,9 @@ internal static partial class Log
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "Godot for {Project} did not answer a ping within {Seconds} s; killing it without a shutdown."
+        Message = "Godot for {Project} did not answer a ping within {Seconds} s of load-adjusted time{Backstop}; killing it without a shutdown."
     )]
-    public static partial void StopFoundGameStuck(ILogger logger, string project, double seconds);
+    public static partial void StopFoundGameStuck(ILogger logger, string project, double seconds, string backstop);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The ping before stopping Godot for {Project} failed; shutting it down as usual.")]
     public static partial void StopPingFailed(ILogger logger, Exception exception, string project);

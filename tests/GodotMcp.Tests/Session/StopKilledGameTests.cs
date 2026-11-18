@@ -612,6 +612,67 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.True(game.HasExited, "the game was not killed by the cap's wall time");
     }
 
+    // A game that never answers the stop's ping is judged stuck once the silence wait's 2 s of load-adjusted time have passed on
+    // the registry's clock, and killed at once, before the 10 s backstop. A wait counted in wall time runs out after 2 s of
+    // real time, before the fake clock, stepped slower than real time, has reached 2 s.
+    [Fact]
+    public async Task AStopKillsAGameSilentForTheSilenceWaitOfLoadAdjustedTime()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Process game = StartGame();
+        using FakeBridge bridge = await LaunchAsync(project, game.Id);
+
+        // The bridge never answers the stop's ping.
+        Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
+        _ = await NextRequestAsync(bridge, "ping");
+        DateTimeOffset pinged = _time.GetUtcNow();
+        // The fake clock runs slower than real time here, so a wall-time ping fires before 2 s of the clock's time and a
+        // load-adjusted one at 2 s; the kill then has about 8 s of the clock's time before the backstop's bound.
+        while (!stop.IsCompleted)
+        {
+            _time.Advance(TimeSpan.FromMilliseconds(10));
+            await Task.Delay(5, cancellation);
+        }
+
+        StopResult result = await stop;
+        TimeSpan passed = _time.GetUtcNow() - pinged;
+
+        Assert.True(result.Killed);
+        Assert.Equal(GameKillReason.Silent, result.KillReason);
+        Assert.True(passed >= TimeSpan.FromSeconds(2), $"the game was killed after {passed.TotalSeconds} s of the clock's time");
+        Assert.True(passed < TimeSpan.FromSeconds(10), $"the game was killed after {passed.TotalSeconds} s of the clock's time");
+    }
+
+    // On a machine at a quarter speed, 6 s of wall time are 1.5 s of load-adjusted time, under the silence wait's 2 s and its
+    // 10 s backstop: a game starved of CPU that answers the ping late is asked to quit, not judged stuck and killed.
+    [Fact]
+    public async Task AStopWaitsOutAStarvedGamesPingOnTheLoadClock()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Process game = StartGame();
+        using FakeBridge bridge = await LaunchAsync(project, game.Id);
+        FakeRunProcess run = _launched.First();
+        await MakeMachineBusyAsync();
+
+        Task<StopResult> stop = _sessions.StopAsync("server", cancellation);
+        JsonObject ping = await NextRequestAsync(bridge, "ping");
+        await AdvanceAsync(TimeSpan.FromSeconds(6), TimeSpan.FromMilliseconds(100));
+        Assert.False(game.HasExited, "the starved game was killed before the silence wait's load-adjusted time had passed");
+
+        await bridge.ReplyAsync(ping, new JsonObject { ["pong"] = true }, cancellation);
+        await AnswerAsync(bridge, "shutdown", []);
+        game.Kill(entireProcessTree: true);
+        Assert.True(await ProcessExit.WaitUntilGoneAsync(game, RegistryHarness.HangGuard), "the quitting game was not gone");
+        await AdvanceUntilAsync(() => run.Process.HasExited, stop);
+        StopResult result = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        Assert.False(result.Killed);
+        Assert.Null(result.KillReason);
+    }
+
     // The game quits and leaves a child running, which nothing here ends (the fake wrapper has no job to close): the stop kills
     // the wrapper alone, waits the kill wait for the child, and names it in its warning, with the folder it still holds.
     [Fact]
@@ -924,14 +985,20 @@ public sealed class StopKilledGameTests : IAsyncDisposable
     /// <summary>Answers the next request for <paramref name="command"/> with <paramref name="result"/>, leaving those before it unanswered.</summary>
     private static async Task AnswerAsync(FakeBridge bridge, string command, JsonObject result)
     {
+        JsonObject request = await NextRequestAsync(bridge, command);
+        await bridge.ReplyAsync(request, result, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Reads the next request for <paramref name="command"/>, leaving it and those before it unanswered.</summary>
+    private static async Task<JsonObject> NextRequestAsync(FakeBridge bridge, string command)
+    {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         while (true)
         {
             JsonObject request = await bridge.ReadRequestAsync(cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation);
             if (request["command"]?.GetValue<string>() == command)
             {
-                await bridge.ReplyAsync(request, result, cancellation);
-                return;
+                return request;
             }
         }
     }

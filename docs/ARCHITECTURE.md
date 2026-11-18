@@ -536,7 +536,7 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
   A stop, restart or detach during a `start` still in flight marks it to end its capture as soon as it has started, and reports no recording. From the moment the session's end begins until a launch, restart or attach, a `start` is refused (`Session '<name>' is ending, so a real-time recording cannot start now; start it once the game has restarted.`).
 
   A failed helper, ffmpeg or remux fails `stop` naming its log and keeping the `.mkv`. Files, logs and the encoder order are in [TOOLS.md](./TOOLS.md) (`record_mark`).
-- **Stop** (`stop_project`): a ping first; a game silent for 2 s is stuck and is killed at once with no `shutdown` command.
+- **Stop** (`stop_project`): a ping first; a game silent for 2 s of load-adjusted time is stuck and is killed at once with no `shutdown` command.
 
   One that answers (or whose connection is gone) gets a `shutdown` command and a kill after `SessionRegistry.ExitGrace` (3 s of load-adjusted time by default; a recording run, whose clean quit finalises its movie, gets the longer of 30 s and the registry's grace), with the backstop at 5 x the grace in wall time (`ProcessExit.WaitUntilGoneAsync` with a `LoadDeadline` on `registry.Clock`).
 

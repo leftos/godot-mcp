@@ -54,7 +54,12 @@ internal sealed class SessionHarness : IAsyncDisposable
     /// A scratch until's hang guard (<see cref="SessionRegistry.ScratchUntilGuard"/>), for the tests of an until that never
     /// holds; null gives the harness's 10 min one.
     /// </param>
-    public SessionHarness(bool launchesUnfocused, bool productionGraces, TimeSpan? scratchUntilGuard = null)
+    /// <param name="silenceWait">
+    /// The time a stop's ping gives the game to answer (<see cref="SessionRegistry.SilenceWait"/>), on the harness's wall-time
+    /// registry clock, for the tests of a stuck game's kill; null gives the server's own 2 s with
+    /// <paramref name="productionGraces"/>, else a 1 min hang guard.
+    /// </param>
+    public SessionHarness(bool launchesUnfocused, bool productionGraces, TimeSpan? scratchUntilGuard = null, TimeSpan? silenceWait = null)
     {
         _listener = new(_logging.CreateLogger<BridgeListener>()) { Clock = _wallClock };
         Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
@@ -87,6 +92,10 @@ internal sealed class SessionHarness : IAsyncDisposable
             // test that launches a game carries (TestTimeouts.OwnLaunchMs).
             ExitGrace = productionGraces ? SessionRegistry.DefaultExitGrace : TimeSpan.FromMinutes(1),
             TeardownGrace = productionGraces ? SessionRegistry.DefaultTeardownGrace : TimeSpan.FromMinutes(1),
+            // A hang guard in minutes, not a bound a starved game must beat to answer a stop's ping: the listener's clock is wall
+            // time, and a game judged silent is killed. It is under the xUnit hang guard a test that launches a game carries
+            // (TestTimeouts.OwnLaunchMs).
+            SilenceWait = silenceWait ?? (productionGraces ? HangProbe.PingTimeout : TimeSpan.FromMinutes(1)),
             LaunchesUnfocused = launchesUnfocused,
             // A test run records its folders in the harness's own list, leaving the user's list untouched.
             OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), Console.Error),
