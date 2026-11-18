@@ -72,3 +72,42 @@ def test_a_stamped_log_with_no_fail_line_says_so(tmp_path: Path) -> None:
 
 def test_a_missing_log_says_so(tmp_path: Path) -> None:
     assert _show(tmp_path, None) == [NO_FAIL]
+
+
+# Prints each Invoke-Gated command run.ps1 gives the name 'gdtest', as PowerShell parsed it: one line per call, its
+# words separated by a space.
+GATE_DRIVER = """param([string]$RunPs1)
+$ErrorActionPreference = 'Stop'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($RunPs1, [ref]$null, [ref]$null)
+$calls = $ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-Gated'
+}, $true)
+foreach ($call in $calls) {
+    $words = @($call.CommandElements | ForEach-Object { $_.Extent.Text })
+    $index = [array]::IndexOf($words, '-Name')
+    if ($index -ge 0 -and $index + 1 -lt $words.Count -and $words[$index + 1] -eq "'gdtest'") {
+        Write-Output ($words -join ' ')
+    }
+}
+"""
+
+
+def _gdtest_gate(tmp_path: Path) -> list[str]:
+    """Runs the AST reader and returns one line per gate call the gdtest verb makes, its words space-separated."""
+    driver = tmp_path / "gate-driver.ps1"
+    driver.write_text(GATE_DRIVER, encoding="utf-8", newline="\n")
+
+    command = ["pwsh", "-NoProfile", "-File", str(driver), "-RunPs1", str(RUN_PS1)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    return result.stdout.splitlines()
+
+
+def test_the_gdtest_gate_runs_without_markers(tmp_path: Path) -> None:
+    gates = _gdtest_gate(tmp_path)
+
+    assert len(gates) == 1, gates
+    assert "-NoMarkers" in gates[0].split(), gates[0]

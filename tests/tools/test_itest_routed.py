@@ -51,7 +51,8 @@ $itestNamespace = 'GodotMcp.IntegrationTests'
 # Runs Invoke-ItestRouted against a stub gate wrapper that logs, and exits with the function's status. -Filters and
 # -GroupNames are comma-separated, as the gate's words would carry them.
 ROUTED_DRIVER = (
-    """param([string]$RunPs1, [string]$Root, [string]$Stub, [string]$Tables, [string]$Filters = '', [string]$GroupNames = '', [string]$Since = '')
+    """param([string]$RunPs1, [string]$Root, [string]$Stub, [string]$Tables, [string]$Filters = '', [string]$GroupNames = '', [string]$Since = '',
+[string]$Method = '')
 $ErrorActionPreference = 'Stop'
 $Names = @(
     'Get-GateKillLine', 'Get-GateKill', 'Get-GateNoRunLine', 'Test-ItestFilterIsVisible',
@@ -73,14 +74,14 @@ $filterList = @()
 if ($Filters) { $filterList = @($Filters -split ',') }
 $groupList = @()
 if ($GroupNames) { $groupList = @($GroupNames -split ',') }
-exit (Invoke-ItestRouted -Filters $filterList -Since $Since -GroupNames $groupList)
+exit (Invoke-ItestRouted -Filters $filterList -Since $Since -GroupNames $groupList -Method $Method)
 """
 )
 
 # Runs Invoke-Itest, the -InGate form, with any build it would run turned into a failure, so that a run that is not
 # refused before its build fails the test.
 REFUSAL_DRIVER = (
-    """param([string]$RunPs1, [string]$Tables, [string]$Filters = '', [string]$GroupNames = '')
+    """param([string]$RunPs1, [string]$Tables, [string]$Filters = '', [string]$GroupNames = '', [string]$Since = '', [string]$Method = '')
 $ErrorActionPreference = 'Stop'
 $Names = @(
     'Get-ItestRefusal', 'Get-ItestGroupsRefusal', 'Get-ItestFilterSpanRefusal', 'Get-ItestFilterVisibleGroups',
@@ -99,7 +100,7 @@ $filterList = @()
 if ($Filters) { $filterList = @($Filters -split ',') }
 $groupList = @()
 if ($GroupNames) { $groupList = @($GroupNames -split ',') }
-exit (Invoke-Itest -Filters $filterList -Since '' -GroupNames $groupList)
+exit (Invoke-Itest -Filters $filterList -Since $Since -GroupNames $groupList -Method $Method)
 """
 )
 
@@ -133,6 +134,8 @@ STALLED = (
 )
 NO_VERDICT = "the gate's log has no passed verdict"
 VISIBLE_REFUSAL = "itest -InGate runs on a hidden desktop, where the capture group cannot run; run it as run.ps1 itest-capture."
+METHOD_NEEDS_FILTER = "itest -Method needs -Filter: the method is looked up in the classes -Filter names."
+METHOD_WITH_FILTER_ONLY = "itest takes -Method with -Filter only."
 
 HIDDEN_RUN = "pwsh -NoProfile -File run.ps1 itest -InGate -Groups lifecycle,recording"
 CAPTURE_RUN = "pwsh -NoProfile -File run.ps1 itest-capture"
@@ -187,6 +190,7 @@ def _run_routed(
     log_lines: list[str] | None = None,
     filters: str = "",
     group_names: str = "",
+    method: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Runs the routed itest against the stub gate; returns its result and every gate call's words, in order."""
     root = tmp_path / "repo"
@@ -197,16 +201,16 @@ def _run_routed(
     result = _run(
         ROUTED_DRIVER,
         tmp_path,
-        {"-Root": str(root), "-Stub": str(stub), "-Filters": filters, "-GroupNames": group_names},
+        {"-Root": str(root), "-Stub": str(stub), "-Filters": filters, "-GroupNames": group_names, "-Method": method},
     )
     seen = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result, seen
 
 
-def _run_refusal(tmp_path: Path, *, filters: str = "", group_names: str = "") -> subprocess.CompletedProcess[str]:
+def _run_refusal(tmp_path: Path, *, filters: str = "", group_names: str = "", since: str = "", method: str = "") -> subprocess.CompletedProcess[str]:
     """Runs the -InGate itest form, with a build it would run turned into a failure."""
     (tmp_path / "tables.ps1").write_text(TABLES, encoding="utf-8", newline="\n")
-    return _run(REFUSAL_DRIVER, tmp_path, {"-Filters": filters, "-GroupNames": group_names})
+    return _run(REFUSAL_DRIVER, tmp_path, {"-Filters": filters, "-GroupNames": group_names, "-Since": since, "-Method": method})
 
 
 def test_a_busy_desktop_with_no_verdict_names_the_not_routed_line(tmp_path: Path) -> None:
@@ -301,6 +305,20 @@ def test_a_routed_itest_filter_of_a_hidden_class_runs_itest_in_gate(tmp_path: Pa
     assert calls == ["pwsh -NoProfile -File run.ps1 itest -InGate -Filter *LifecycleTests"]
 
 
+def test_a_routed_itest_method_of_a_hidden_class_runs_itest_in_gate_with_it(tmp_path: Path) -> None:
+    result, calls = _run_routed(tmp_path, filters="*LifecycleTests", method="AX")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["pwsh -NoProfile -File run.ps1 itest -InGate -Filter *LifecycleTests -Method AX"]
+
+
+def test_a_routed_itest_method_of_a_capture_class_runs_itest_capture_with_it(tmp_path: Path) -> None:
+    result, calls = _run_routed(tmp_path, filters="*RealtimeRecordingTests", method="AX")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [f"{CAPTURE_RUN} -Filter *RealtimeRecordingTests -Method AX"]
+
+
 def test_a_routed_itest_runs_the_capture_group_after_a_failed_first_gate(tmp_path: Path) -> None:
     result, calls = _run_routed(tmp_path, statuses=[1, 0])
 
@@ -320,6 +338,27 @@ def test_itest_in_gate_refuses_a_capture_class_filter(tmp_path: Path) -> None:
 
     assert result.returncode == 2, result.stdout + result.stderr
     assert VISIBLE_REFUSAL in result.stderr
+
+
+def test_itest_refuses_a_method_with_no_filter(tmp_path: Path) -> None:
+    result = _run_refusal(tmp_path, method="AX")
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert METHOD_NEEDS_FILTER in result.stderr
+
+
+def test_itest_refuses_a_method_with_groups(tmp_path: Path) -> None:
+    result = _run_refusal(tmp_path, group_names="lifecycle", method="AX")
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert METHOD_WITH_FILTER_ONLY in result.stderr
+
+
+def test_itest_refuses_a_method_with_since(tmp_path: Path) -> None:
+    result = _run_refusal(tmp_path, since="origin/main", method="AX")
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert METHOD_WITH_FILTER_ONLY in result.stderr
 
 
 def _desktop_pattern(command: str) -> re.Pattern[str]:

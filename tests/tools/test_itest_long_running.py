@@ -40,7 +40,7 @@ if ($null -eq $function) {
 }
 . ([scriptblock]::Create($function.Extent.Text))
 function Get-TestArgumentList {
-    param([string]$Project, [string[]]$Classes, [switch]$NoBuild)
+    param([string]$Project, [string[]]$Classes, [string]$Method = '', [switch]$NoBuild)
     return @('test', '--project', $Project)
 }
 $first = Get-ItestArgumentList -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Classes @() -Name 'test'
@@ -77,6 +77,21 @@ Set-Content -LiteralPath (Join-Path $folder 'x.diag') -Value "LONG_LINE"
 $process = Start-Process -FilePath ([Environment]::ProcessPath) -ArgumentList @('-NoProfile', '-Command', "exit $Status") `
     -PassThru -NoNewWindow
 Write-Output "exit=$(Complete-ItestGroup -Group 'nodes' -Lane 'untimed' -Process $process -Folder (Split-Path -Parent $folder))"
+"""
+
+# Loads Get-ItestFilterLogName alone, without running the script, and prints the name it gives the filter and method.
+LOG_NAME_DRIVER = """param([string]$RunPs1, [string]$Filter, [string]$Method)
+$ErrorActionPreference = 'Stop'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($RunPs1, [ref]$null, [ref]$null)
+$function = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ItestFilterLogName'
+}, $true)
+if ($null -eq $function) {
+    throw "run.ps1 has no function Get-ItestFilterLogName"
+}
+. ([scriptblock]::Create($function.Extent.Text))
+Write-Output (Get-ItestFilterLogName -Filter $Filter -Method $Method)
 """
 
 STAMP = "2026-11-10T13:31:00.1234567-08:00"
@@ -142,6 +157,28 @@ def test_the_name_folder_is_cleared_before_the_run(tmp_path: Path) -> None:
     assert printed["stale"] == "False", printed
 
 
+def _log_name(tmp_path: Path, filter_pattern: str, method: str) -> str:
+    driver = tmp_path / "driver.ps1"
+    driver.write_text(LOG_NAME_DRIVER, encoding="utf-8", newline="\n")
+    command = [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        str(driver),
+        "-RunPs1",
+        str(RUN_PS1),
+        "-Filter",
+        filter_pattern,
+        "-Method",
+        method,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    return result.stdout.strip()
+
+
 def _complete(tmp_path: Path, status: int) -> list[str]:
     driver = tmp_path / "driver.ps1"
     driver.write_text(COMPLETE_DRIVER.replace("LONG_LINE", SECOND), encoding="utf-8", newline="\n")
@@ -161,6 +198,11 @@ def _complete(tmp_path: Path, status: int) -> list[str]:
 
     assert result.returncode == 0, result.stderr
     return result.stdout.splitlines()
+
+
+def test_a_method_run_logs_apart_from_the_class_run(tmp_path: Path) -> None:
+    assert _log_name(tmp_path, "*X", "Y") == "itest-filter-X-Y"
+    assert _log_name(tmp_path, "*X", "") == "itest-filter-X"
 
 
 def test_a_killed_group_names_its_hung_test(tmp_path: Path) -> None:

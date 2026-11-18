@@ -381,6 +381,33 @@ func test_first_refused_call_since_needs_the_methods_whole_name() -> void:
 	)
 
 
+## A call_now the engine itself refuses answers that refusal's own text, which the logger reads from
+## the error the engine logged at call_now's callv: emit_signal takes a signal name, so a call with
+## none is refused (core/object/object.cpp L750-766, core/variant/variant.cpp L3534-3543 in 4.7.2).
+func test_call_now_answers_the_callv_refusal_string_when_the_engine_refuses_the_call() -> void:
+	var rig: Dictionary = _call_rig()
+	var logger: Logger = rig["bridge"]._logger
+	OS.add_logger(logger)
+	var answered: Variant = rig["bridge"]._inspect.call_now(
+		{"node": "CallTarget", "method": "emit_signal", "args": []}
+	)
+	OS.remove_logger(logger)
+	# The engine's push reaches the runner, which would fail the test on it; it is expected. Two
+	# reach it: _emit_signal's own argument check (core/object/object.cpp L1151-1156 in 4.7.2), then
+	# callv's refusal (L762-763).
+	var engine: PackedStringArray = Engine.get_main_loop().get("_recorder").take()
+	assert_true(answered is String, "the refusal is the answer: %s" % [answered])
+	assert_true(
+		String(answered).begins_with("Error calling method from 'callv'"),
+		"the engine's refusal: %s" % [answered]
+	)
+	assert_true(
+		String(answered).contains("::emit_signal': "), "naming the refused method: %s" % [answered]
+	)
+	assert_eq(engine.size(), 2, "the engine's errors: %s" % [engine])
+	_free_call_rig(rig)
+
+
 ## Logs an error with message at function in file to logger, as the engine would.
 static func _log_to(logger: Logger, function: String, file: String, message: String) -> void:
 	var none: Array[ScriptBacktrace] = []

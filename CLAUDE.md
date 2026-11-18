@@ -11,7 +11,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - `docs/TOOLS.md`: the agent-facing guide to every tool. `.claude/rules/tool-docs.md` names the docs a tool change updates.
 - `docs/ARCHITECTURE.md`: the components, a request's path, the session lifecycle, every tool's bridge command, the recipe for a new tool. Read it before exploring the code.
 - `docs/DEVELOPMENT.md`: toolchain, commands, gates, tests, releases, and the footguns: read them before touching process launching, a tool's signature, logging, or the bridge's input handling.
-- Everyday commands: `pwsh run.ps1 build|test|itest [-Filter "*Class"] [-Since origin/main]`.
+- Everyday commands: `pwsh run.ps1 build|test|itest [-Filter "*Class" [-Method <Name>]] [-Since origin/main]`.
 
 ## Non-negotiables
 

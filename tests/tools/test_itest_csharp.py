@@ -69,9 +69,13 @@ GROUP_CLASSES = " ".join(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the stand-in dotnet is a .cmd")
-@pytest.mark.parametrize("test_filter", ["*CSharpStateTests", ""], ids=["filtered", "group"])
+@pytest.mark.parametrize(
+    ("test_filter", "test_method"),
+    [("*CSharpStateTests", ""), ("", ""), ("*CSharpStateTests", "AMethod")],
+    ids=["filtered", "group", "method"],
+)
 def test_the_group_lays_out_the_helper_builds_the_tests_then_runs_them_without_a_build_and_exits_with_their_status(
-    tmp_path: Path, test_filter: str
+    tmp_path: Path, test_filter: str, test_method: str
 ) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -97,6 +101,8 @@ def test_the_group_lays_out_the_helper_builds_the_tests_then_runs_them_without_a
     command = ["pwsh", "-NoProfile", "-File", str(root / "run.ps1"), "itest-csharp"]
     if test_filter:
         command += ["-Filter", test_filter]
+    if test_method:
+        command += ["-Method", test_method]
     result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False, env=env)
 
     assert result.returncode == 5, result.stdout + result.stderr
@@ -105,7 +111,10 @@ def test_the_group_lays_out_the_helper_builds_the_tests_then_runs_them_without_a
     assert "GodotMcp.IntegrationTests.csproj -c Release -warnaserror" in lines[3], lines
     test_call = lines[-1]
     assert "-c Release --no-build" in test_call, test_call
-    assert re.search(rf"--filter-class {re.escape(test_filter or GROUP_CLASSES)} {DIAG_ARGS} {_diag_folder()}$", test_call), test_call
+    class_args = re.escape(test_filter or GROUP_CLASSES)
+    if test_method:
+        class_args += r" --filter-method \*\." + re.escape(test_method)
+    assert re.search(rf"--filter-class {class_args} {DIAG_ARGS} {_diag_folder()}$", test_call), test_call
     layout = root / "bin" / "dotnet"
     assert (layout / "godot_mcp_dotnet.gdextension").read_text(encoding="utf-8") == "gdextension"
     for staged, laid_out in STAGED_FILES.items():

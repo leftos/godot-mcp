@@ -154,7 +154,9 @@ watchdog.
            global class list holds every script's class_name, then runs godot --headless --path tests/bridge --script
            res://run_tests.gd. Each failure prints as "FAIL <file>::<test>: <message>", then
            "gdtest: <passed> passed, <failed> failed"; on a failure it then prints every FAIL line of the log after the
-           tail, under a "gdtest: FAIL lines from .tmp/gdtest.log:" header, or says the log has none; ceiling 60 s
+           tail, under a "gdtest: FAIL lines from .tmp/gdtest.log:" header, or says the log has none. The gate runs
+           with --no-markers: a test can make the engine log an error on purpose, which a failure marker would read as
+           the run's own, so run_tests.gd's exit status alone is the verdict; ceiling 60 s
   pytest   the Python tools' tests (tests/tools) under pytest in parallel (-n auto, pytest-xdist), which uv supplies
            together with gdtoolkit; ceiling 120 s
   drive    drives this tree's own server with the tool calls of -Calls <file.json>, a JSON array of
@@ -179,6 +181,15 @@ runs of different classes in one tree at once keep their logs apart and never wr
 no slug logs to .tmp/itest.log. A filter selecting a capture class runs as run.ps1 itest-capture -Filter <filter>
 instead, its own routed gate run logged to .tmp/itest-capture-gate.log.
 
+-Method narrows test, itest, itest-csharp or itest-capture to one test method of the classes -Filter names, e.g.
+-Method AStopSaysHowLongTheQuitTook: it adds --filter-method *.<name>, the runner matching the fully qualified name, so
+a bare name matches that method of any of the classes and a name holding a '*' is used as it is. test and itest need
+-Filter, the method being looked up in the classes it names, and are refused without it, status 2; itest-csharp and
+itest-capture take it without one, running the method across their group's classes. A method run's log is the run's
+own: .tmp/test.log for test, .tmp/itest-filter-<the filter and the method>.log for a filtered itest of a hidden
+group's class, and .tmp/itest-capture-gate.log for one of a capture class, which runs as itest-capture -Filter (as
+under -Filter above).
+
 -Groups narrows itest to the named groups, comma-separated, e.g. -Groups time,csharp: the form a routed itest -Since
 hands its inner run, since the builder cannot select groups from history it does not hold. A name the groups table does
 not hold is refused with status 2, "itest -Groups names no group <name>; the groups are <list>.", as is -Groups with
@@ -197,6 +208,9 @@ pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
 pwsh run.ps1 itest -Since origin/main
 
 .EXAMPLE
+pwsh run.ps1 test -Filter "*TempDirectoryTests" -Method DisposeRetriesAFileHeldBriefly
+
+.EXAMPLE
 pwsh run.ps1 drive -Calls .tmp/calls.json
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
@@ -211,6 +225,8 @@ param(
     [string]$Command = 'help',
 
     [string]$Filter = '',
+
+    [string]$Method = '',
 
     [string]$Since = '',
 
@@ -578,10 +594,16 @@ function Invoke-ItestGated {
 # The command a gate runs for the csharp group, or for a filtered itest of its classes: run.ps1 itest-csharp, which
 # publishes the C# helper and lays out bin/dotnet before its tests, all inside that one gate.
 function Get-ItestCsharpCommand {
-    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
+    )
     $arguments = @('-NoProfile', '-File', (Join-Path $root 'run.ps1'), 'itest-csharp')
     if ($Filter) {
         $arguments += @('-Filter', $Filter)
+    }
+    if ($Method) {
+        $arguments += @('-Method', $Method)
     }
     return @{ Program = 'pwsh'; Arguments = $arguments }
 }
@@ -671,19 +693,27 @@ function Show-GdtestFailures {
 
 # xUnit v3 under Microsoft Testing Platform takes several classes after one --filter-class and runs a test in any of
 # them, as the native runner's repeated -class does ("Filters" footnote 1:
-# https://xunit.net/docs/getting-started/v3/microsoft-testing-platform).
+# https://xunit.net/docs/getting-started/v3/microsoft-testing-platform). A -Method name follows the classes as
+# --filter-method: the runner matches the fully qualified name, so the caller supplies the wildcard.
 function Get-TestArgumentList {
     param(
         [Parameter(Mandatory)] [string]$Project,
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Classes,
+        [AllowEmptyString()] [string]$Method = '',
         [switch]$NoBuild
     )
+    if ($Method -and $Classes.Count -eq 0) {
+        throw 'Get-TestArgumentList takes -Method only with the classes it looks the method up in.'
+    }
     $arguments = @('test', '--project', (Join-Path $root $Project), '-c', $configuration)
     if ($NoBuild) {
         $arguments += '--no-build'
     }
     if ($Classes.Count -gt 0) {
         $arguments += @('--', '--filter-class') + $Classes
+        if ($Method) {
+            $arguments += @('--filter-method', $Method)
+        }
     }
     return $arguments
 }
@@ -702,13 +732,14 @@ function Get-ItestArgumentList {
     param(
         [Parameter(Mandatory)] [string]$Project,
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Classes,
-        [Parameter(Mandatory)] [string]$Name
+        [Parameter(Mandatory)] [string]$Name,
+        [AllowEmptyString()] [string]$Method = ''
     )
     $folder = Join-Path $logDir "$Name.diag"
     if (Test-Path -LiteralPath $folder) {
         Remove-Item -LiteralPath $folder -Recurse -Force
     }
-    $arguments = Get-TestArgumentList -Project $Project -Classes $Classes -NoBuild
+    $arguments = Get-TestArgumentList -Project $Project -Classes $Classes -Method $Method -NoBuild
     if ($Classes.Count -eq 0) {
         $arguments += '--'
     }
@@ -987,11 +1018,14 @@ function Get-ItestFilterSpanRefusal {
     return ''
 }
 
-# The gate name, and so the .tmp/<name>.log, of a filtered itest: itest-filter-<slug>, never a group's name, the slug being the filter with every run
-# of characters outside [A-Za-z0-9] turned into one '-' and trimmed of '-' at both ends; plain itest when nothing is left.
+# The gate name, and so the .tmp/<name>.log, of a filtered itest: itest-filter-<slug>, never a group's name, the slug being the filter and
+# -Method with every run of characters outside [A-Za-z0-9] turned into one '-' and trimmed of '-' at both ends; plain itest when nothing is left.
 function Get-ItestFilterLogName {
-    param([Parameter(Mandatory)] [string]$Filter)
-    $slug = ($Filter -replace '[^A-Za-z0-9]+', '-').Trim('-')
+    param(
+        [Parameter(Mandatory)] [string]$Filter,
+        [AllowEmptyString()] [string]$Method = ''
+    )
+    $slug = ("$Filter $Method" -replace '[^A-Za-z0-9]+', '-').Trim('-')
     if (-not $slug) {
         return 'itest'
     }
@@ -1066,7 +1100,7 @@ function Invoke-ItestGroupProcess {
         [Parameter(Mandatory)] [string]$Lane
     )
     if ($Group -eq 'csharp') {
-        $command = Get-ItestCsharpCommand -Filter ''
+        $command = Get-ItestCsharpCommand -Filter '' -Method ''
         $ceiling = $itestCsharpCeiling
         $folder = Join-Path $logDir "itest-$Group.diag"
         if (Test-Path -LiteralPath $folder) {
@@ -1343,26 +1377,29 @@ function Get-ItestRunGroup {
 # One integration test class or more, by -Filter: the project built, then one gate, which runs itest-csharp (the C#
 # helper published inside it) when a filter selects a csharp class.
 function Invoke-ItestFiltered {
-    param([Parameter(Mandatory)] [string[]]$Filters)
+    param(
+        [Parameter(Mandatory)] [string[]]$Filters,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
+    )
     $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
     if ($build -ne 0) {
         return $build
     }
-    $name = Get-ItestFilterLogName -Filter $Filters[0]
+    $name = Get-ItestFilterLogName -Filter $Filters[0] -Method $Method
     $slot = Get-ItestFilterSlot -Filters $Filters
     if (Test-ItestFilterNeedsDotnet -Filters $Filters) {
         $folder = Join-Path $logDir 'itest-csharp.diag'
         if (Test-Path -LiteralPath $folder) {
             Remove-Item -LiteralPath $folder -Recurse -Force
         }
-        $command = Get-ItestCsharpCommand -Filter $Filters[0]
+        $command = Get-ItestCsharpCommand -Filter $Filters[0] -Method $Method
         $status = Invoke-Gated -Name $name -TimeoutSeconds $itestCsharpCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
         if ($status -eq 124) {
             Show-ItestLongRunning -Folder $folder -Label 'itest itest-csharp'
         }
         return $status
     }
-    $run = Get-ItestArgumentList -Project $itestProject -Classes $Filters -Name $name
+    $run = Get-ItestArgumentList -Project $itestProject -Classes $Filters -Name $name -Method $Method
     $status = Invoke-ItestGated -Name $name -Arguments $run.Arguments -Slot $slot
     if ($status -eq 124) {
         Show-ItestLongRunning -Folder $run.Folder -Label "itest $name"
@@ -1387,7 +1424,10 @@ function Invoke-ItestCsharpBuild {
 # else the group's. A gate routed to another machine runs this whole command there, where the build before it may not
 # have run. Returns the first non-zero status, else 0.
 function Invoke-ItestCsharp {
-    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
+    )
     $status = Invoke-DotnetPublishInProcess
     if ($status -ne 0) {
         return $status
@@ -1405,7 +1445,7 @@ function Invoke-ItestCsharp {
     if ($classes.Count -eq 0) {
         $classes = @($itestGroups['csharp'] | ForEach-Object { "$itestNamespace.$_" })
     }
-    $run = Get-ItestArgumentList -Project $itestProject -Classes $classes -Name 'itest-csharp'
+    $run = Get-ItestArgumentList -Project $itestProject -Classes $classes -Name 'itest-csharp' -Method $Method
     $command = Get-ItestCommand -Arguments $run.Arguments
     & $command.Program @($command.Arguments) | Out-Host
     return $LASTEXITCODE
@@ -1416,7 +1456,10 @@ function Invoke-ItestCsharp {
 # then dotnet test --no-build of -Filter's class, else the group's, on a visible desktop. Its own routed run sends it to
 # the builder, where nothing was built before it. Returns the first non-zero status, else 0.
 function Invoke-ItestCapture {
-    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
+    )
     Clear-CaptureOutput
     $status = Invoke-DotnetInProcess -Caller 'itest-capture' -Name 'capture' -Step 'publish of capture' -Arguments (Get-CapturePublishArgumentList)
     if ($status -ne 0) {
@@ -1435,7 +1478,7 @@ function Invoke-ItestCapture {
     if ($classes.Count -eq 0) {
         $classes = @($itestVisibleGroups | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
     }
-    $run = Get-ItestArgumentList -Project $itestProject -Classes $classes -Name 'itest-capture'
+    $run = Get-ItestArgumentList -Project $itestProject -Classes $classes -Name 'itest-capture' -Method $Method
     $command = Get-ItestCommand -Arguments $run.Arguments -Visible
     & $command.Program @($command.Arguments) | Out-Host
     return $LASTEXITCODE
@@ -1462,16 +1505,24 @@ function Get-ItestGroupsRefusal {
 }
 
 # Why an itest's arguments are refused, needing no build: -Filter with -Since, -Groups with either or naming no group,
-# or a -Filter spanning the visible-desktop group and a hidden-desktop one. Empty when they are not.
+# -Method with -Since or -Groups or with no -Filter, or a -Filter spanning the visible-desktop group and a hidden-desktop
+# one. Empty when they are not.
 function Get-ItestRefusal {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
         [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
-        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
     )
     $groupsRefusal = Get-ItestGroupsRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames
     if ($groupsRefusal) {
         return $groupsRefusal
+    }
+    if ($Method -and ($Since -or $GroupNames.Count -gt 0)) {
+        return 'itest takes -Method with -Filter only.'
+    }
+    if ($Method -and $Filters.Count -eq 0) {
+        return 'itest -Method needs -Filter: the method is looked up in the classes -Filter names.'
     }
     if ($Filters.Count -gt 0 -and $Since) {
         return 'itest takes -Filter or -Since, not both: -Filter runs the classes it names, -Since the groups a diff touches.'
@@ -1514,14 +1565,21 @@ function Invoke-ItestRoutedGate {
 # The one gate a filtered routed itest runs: run.ps1 itest-capture -Filter when the filter names a class of a
 # visible-desktop group, whose windows exist only on a visible desktop, else run.ps1 itest -InGate -Filter.
 function Invoke-ItestRoutedFilter {
-    param([Parameter(Mandatory)] [string[]]$Filters)
+    param(
+        [Parameter(Mandatory)] [string[]]$Filters,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
+    )
+    $methodArgs = @()
+    if ($Method) {
+        $methodArgs = @('-Method', $Method)
+    }
     if (Test-ItestFilterIsVisible -Filters $Filters) {
         $captureLog = Join-Path $logDir 'itest-capture-gate.log'
-        $inner = @('pwsh', '-NoProfile', '-File', 'run.ps1', 'itest-capture', '-Filter', $Filters[0])
+        $inner = @('pwsh', '-NoProfile', '-File', 'run.ps1', 'itest-capture', '-Filter', $Filters[0]) + $methodArgs
         return Invoke-ItestRoutedGate -Inner $inner -Log $captureLog -Ceiling $itestCaptureCeiling -Label 'itest-capture'
     }
     $gateLog = Join-Path $logDir 'itest-gate.log'
-    $inner = @('pwsh', '-NoProfile', '-File', 'run.ps1', 'itest', '-InGate', '-Filter', $Filters[0])
+    $inner = @('pwsh', '-NoProfile', '-File', 'run.ps1', 'itest', '-InGate', '-Filter', $Filters[0]) + $methodArgs
     return Invoke-ItestRoutedGate -Inner $inner -Log $gateLog -Ceiling $itestRoutedCeiling -Label 'itest'
 }
 
@@ -1589,15 +1647,16 @@ function Invoke-ItestRouted {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
         [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
-        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
     )
-    $refusal = Get-ItestRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames
+    $refusal = Get-ItestRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames -Method $Method
     if ($refusal) {
         [Console]::Error.WriteLine($refusal)
         return 2
     }
     if ($Filters.Count -gt 0) {
-        return Invoke-ItestRoutedFilter -Filters $Filters
+        return Invoke-ItestRoutedFilter -Filters $Filters -Method $Method
     }
     return Invoke-ItestRoutedGroups -Since $Since -GroupNames $GroupNames
 }
@@ -1616,10 +1675,11 @@ function Invoke-Itest {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
         [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
-        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Method
     )
     $visibleRefusal = 'itest -InGate runs on a hidden desktop, where the capture group cannot run; run it as run.ps1 itest-capture.'
-    $refusal = Get-ItestRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames
+    $refusal = Get-ItestRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames -Method $Method
     if ($refusal) {
         [Console]::Error.WriteLine($refusal)
         return 2
@@ -1629,7 +1689,7 @@ function Invoke-Itest {
             [Console]::Error.WriteLine($visibleRefusal)
             return 2
         }
-        return Invoke-ItestFiltered -Filters $Filters
+        return Invoke-ItestFiltered -Filters $Filters -Method $Method
     }
     $run = Get-ItestRunGroup -Since $Since -GroupNames $GroupNames
     if ($run.Status -ne 0) {
@@ -1915,6 +1975,12 @@ function Invoke-Drive {
 [string[]]$filterClasses = @($Filter | Where-Object { $_ })
 [string[]]$groupNames = @($Groups -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
+# A -Method name with no wildcard matches that method of any class: the runner matches the fully qualified name, so the
+# wildcard is supplied here, and a name that has one is used as it is.
+if ($Method -and -not $Method.Contains('*')) {
+    $Method = "*.$Method"
+}
+
 # A relative -Calls path names a file from where the caller stands, so it is read before the location moves.
 if (-not [string]::IsNullOrWhiteSpace($Calls)) {
     $Calls = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Calls)
@@ -1929,11 +1995,15 @@ try {
             exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-c', $configuration, '-warnaserror') -Slot heavy)
         }
         'test' {
+            if ($Method -and $filterClasses.Count -eq 0) {
+                [Console]::Error.WriteLine('test -Method needs -Filter: the method is looked up in the classes -Filter names.')
+                exit 2
+            }
             $build = Invoke-TestBuild -Name 'test-build' -Project $unitTestProject
             if ($build -ne 0) {
                 exit $build
             }
-            $run = Get-ItestArgumentList -Project $unitTestProject -Classes $filterClasses -Name 'test'
+            $run = Get-ItestArgumentList -Project $unitTestProject -Classes $filterClasses -Name 'test' -Method $Method
             # The whole unit suite runs its classes in parallel across the machine; a filtered run is a class or two.
             $slot = if ($filterClasses.Count -gt 0) { 'light' } else { 'heavy' }
             # A hang guard a passing run never reaches: the whole suite took 125-130 s on the build box, so 600 s leaves
@@ -1950,18 +2020,18 @@ try {
         }
         'itest' {
             if ($InGate) {
-                exit (Invoke-Itest -Filters $filterClasses -Since $Since -GroupNames $groupNames)
+                exit (Invoke-Itest -Filters $filterClasses -Since $Since -GroupNames $groupNames -Method $Method)
             }
-            exit (Invoke-ItestRouted -Filters $filterClasses -Since $Since -GroupNames $groupNames)
+            exit (Invoke-ItestRouted -Filters $filterClasses -Since $Since -GroupNames $groupNames -Method $Method)
         }
         'itest-groups' {
             exit (Invoke-ItestGroupSelection -Since $Since).Status
         }
         'itest-csharp' {
-            exit (Invoke-ItestCsharp -Filter $Filter)
+            exit (Invoke-ItestCsharp -Filter $Filter -Method $Method)
         }
         'itest-capture' {
-            exit (Invoke-ItestCapture -Filter $Filter)
+            exit (Invoke-ItestCapture -Filter $Filter -Method $Method)
         }
         'format' {
             $arguments = @('format', 'style', $solution, '--severity', 'info')
@@ -1992,7 +2062,10 @@ try {
                 exit $import
             }
             $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
-            $status = Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments -Slot light
+            # A test can make the engine log an error on purpose ("ERROR: Error calling method from 'callv'"), which the
+            # gate's failure markers would read as the run's own failure; run_tests.gd quits 1 when any test failed, so
+            # its exit status alone is the verdict.
+            $status = Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments -Slot light -NoMarkers
             if ($status -ne 0) {
                 Show-GdtestFailures -Log (Join-Path $logDir 'gdtest.log')
             }
