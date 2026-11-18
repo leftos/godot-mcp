@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -49,6 +50,10 @@ internal sealed partial class RuntimeTools
     private const int MaxScrollNotches = 100;
     private const double MaxScrollFactor = 10;
     private static readonly TimeSpan InputTimeout = TimeSpan.FromSeconds(10);
+
+    // The extra time a hover gets when it sends the C# state helper, whose first load in a session can pass 10 s on a
+    // busy machine.
+    private static readonly TimeSpan HelperLoadAllowance = TimeSpan.FromSeconds(30);
 
     // A generous allowance per character or event on top of InputTimeout: each takes a frame or two.
     private static readonly TimeSpan PerStepAllowance = TimeSpan.FromMilliseconds(100);
@@ -283,9 +288,19 @@ internal sealed partial class RuntimeTools
         }
 
         // The game-tooltip read takes each mcp_tooltip node's state as a state read does, a C# node's through the helper.
-        AddStateHelper(parameters, csharp.PrepareForState(Find(session).ProjectDir));
-        return SendInputAsync(session, "hover", parameters, TimeSpan.FromMilliseconds(timeoutMs ?? MaxHoverTimeoutMs), cancellationToken);
+        StateHelper helper = csharp.PrepareForState(Find(session).ProjectDir);
+        AddStateHelper(parameters, helper);
+        return SendInputAsync(session, "hover", parameters, recording => HoverAllowance(timeoutMs, helper, recording), cancellationToken);
     }
+
+    /// <summary>
+    /// The hover's whole reply timeout: <see cref="InputAllowance"/> of the asked-for timeout, or <see cref="MaxHoverTimeoutMs"/>,
+    /// plus <see cref="HelperLoadAllowance"/> when the hover sends the C# state helper. The helper's allowance is wall time, added
+    /// after the recording rule.
+    /// </summary>
+    internal static TimeSpan HoverAllowance(int? timeoutMs, StateHelper helper, bool recording) =>
+        InputAllowance(TimeSpan.FromMilliseconds(timeoutMs ?? MaxHoverTimeoutMs), recording)
+        + (helper.Extension is not null ? HelperLoadAllowance : TimeSpan.Zero);
 
     /// <exception cref="McpException">timeoutMs is outside 0 to <see cref="MaxHoverTimeoutMs"/>.</exception>
     internal static int? CheckHoverTimeout(int? timeoutMs) =>
@@ -471,11 +486,23 @@ internal sealed partial class RuntimeTools
     /// it played to the bridge's <c>{pointer, heldButtonMask}</c> (the call still succeeds), its fired list shaped by
     /// <see cref="FiredSignals.Shape"/>.
     /// </summary>
-    private async Task<string> SendInputAsync(
+    private Task<string> SendInputAsync(
         string? session,
         string tool,
         JsonObject parameters,
         TimeSpan allowance,
+        CancellationToken cancellationToken
+    ) => SendInputAsync(session, tool, parameters, recording => InputAllowance(allowance, recording), cancellationToken);
+
+    /// <summary>
+    /// Plays one input call as the overload taking an allowance does, the call's whole timeout from
+    /// <paramref name="timeout"/>, given whether the session records.
+    /// </summary>
+    private async Task<string> SendInputAsync(
+        string? session,
+        string tool,
+        JsonObject parameters,
+        Func<bool, TimeSpan> timeout,
         CancellationToken cancellationToken
     )
     {
@@ -483,7 +510,7 @@ internal sealed partial class RuntimeTools
         await target.InputGate.WaitAsync(cancellationToken);
         try
         {
-            BridgeCall call = new(tool, "input", parameters, InputAllowance(allowance, target.ActiveRecording is not null));
+            BridgeCall call = new(tool, "input", parameters, timeout(target.ActiveRecording is not null));
             BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
             JsonObject played = result.Reply as JsonObject ?? [];
             return ErrorReport.AddTo(FiredSignals.Shape(played), result.Errors).ToJsonString();

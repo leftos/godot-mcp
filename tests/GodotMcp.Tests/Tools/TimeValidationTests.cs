@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
@@ -241,6 +242,16 @@ public sealed class TimeValidationTests : IDisposable
     {
         Assert.Equal(TimeSpan.FromSeconds(13), RuntimeTools.InputAllowance(TimeSpan.FromMilliseconds(500), recording: true));
         Assert.Equal(TimeSpan.FromMilliseconds(10_500), RuntimeTools.InputAllowance(TimeSpan.FromMilliseconds(500), recording: false));
+    }
+
+    [Fact]
+    public void AHoverThatSendsTheCSharpHelperGetsTheHelperLoadAllowance()
+    {
+        Assert.Equal(TimeSpan.FromMilliseconds(10_500), RuntimeTools.HoverAllowance(500, StateHelper.None, recording: false));
+        Assert.Equal(TimeSpan.FromMilliseconds(40_500), RuntimeTools.HoverAllowance(500, new StateHelper("x", null), recording: false));
+        Assert.Equal(TimeSpan.FromSeconds(50), RuntimeTools.HoverAllowance(null, new StateHelper("x", null), recording: false));
+        Assert.Equal(TimeSpan.FromSeconds(20), RuntimeTools.HoverAllowance(null, new StateHelper(null, "why"), recording: false));
+        Assert.Equal(TimeSpan.FromSeconds(43), RuntimeTools.HoverAllowance(500, new StateHelper("x", null), recording: true));
     }
 
     [Theory]

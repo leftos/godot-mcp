@@ -1000,6 +1000,31 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverSurvivesAGameTooltipNodeThatTriesToFreeItselfInItsStateRead()
+    {
+        await AddGameTooltipAsync("""{"text": "Gone"}""");
+        await RunAsync(
+            $"var node: Node = scene_tree.root.get_node(\"{GameTooltipPath}\")\n\t"
+                + "node.set(\"free_on_read\", 1)\n\tnode.set(\"free_path\", \"/root/GameTooltip\")\n\treturn true"
+        );
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        // The state read runs through Object.call, which locks the node: the free is refused and the read warns.
+        Assert.Equal(
+            $"{GameTooltipPath} is in the mcp_tooltip group but its tooltip cannot be read: _mcp_state raised: "
+                + "Object is locked and can't be freed.",
+            hovered["warning"]?.GetValue<string>()
+        );
+        Assert.True(
+            (await RunAsync($"return is_instance_valid(scene_tree.root.get_node_or_null(\"{GameTooltipPath}\"))")).GetValue<bool>(),
+            hovered.ToJsonString()
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task HoverWarnsAGameTooltipNodeWithNoStateMethod()
     {
         await RunAsync(
@@ -1020,8 +1045,13 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     [Fact(Timeout = TestTimeoutMs)]
     public async Task HoverReportsTheFirstGameTooltipInTreeOrder()
     {
-        await AddGameTooltipAsync("""{"text": "First"}""", name: "GameTooltip");
         await AddGameTooltipAsync("""{"text": "Second"}""", name: "SecondTooltip");
+        await AddGameTooltipAsync("""{"text": "First"}""", name: "GameTooltip");
+        await RunAsync(
+            "var root: Node = scene_tree.root\n\t"
+                + "var second: Node = root.get_node(\"SecondTooltip\")\n\t"
+                + "root.move_child(root.get_node(\"GameTooltip\"), second.get_index())\n\treturn true"
+        );
 
         JsonNode hovered = JsonNode.Parse(
             await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
@@ -1034,8 +1064,13 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     [Fact(Timeout = TestTimeoutMs)]
     public async Task HoverNamesTheFirstPendingGameTooltip()
     {
-        await AddGameTooltipAsync("""{"pending": true}""", name: "GameTooltip");
         await AddGameTooltipAsync("""{"pending": true}""", name: "SecondTooltip");
+        await AddGameTooltipAsync("""{"pending": true}""", name: "GameTooltip");
+        await RunAsync(
+            "var root: Node = scene_tree.root\n\t"
+                + "var second: Node = root.get_node(\"SecondTooltip\")\n\t"
+                + "root.move_child(root.get_node(\"GameTooltip\"), second.get_index())\n\treturn true"
+        );
 
         JsonNode hovered = JsonNode.Parse(
             await _tools.HoverAsync(

@@ -237,12 +237,15 @@ func _skipped(node: Variant) -> bool:
 
 
 ## One mcp_tooltip node read through the state reader at its default depth: {tooltip} with owner,
-## {warning}, {pending: path} or {} for none. The tooltip's keys come out {text, x?, y?, width?,
-## height?, owner, state}.
+## {warning}, {pending: path}, or {} for none or a node freed during its own read. The tooltip's
+## keys come out {text, x?, y?, width?, height?, owner, state}.
 func _read_game_tooltip(node: Node, helper: Dictionary) -> Dictionary:
 	var entry: Dictionary = gestures.bridge._state.read_one(
 		node, State.DEFAULT_MAX_DEPTH, helper["extension"], helper["csharpError"]
 	)
+	# A node freed inside its own read is skipped, as one already freed at the check's start.
+	if not is_instance_valid(node):
+		return {}
 	var path: String = str(entry["path"])
 	if entry.has("error"):
 		var reason: String = _unreadable_reason(str(entry["error"]))

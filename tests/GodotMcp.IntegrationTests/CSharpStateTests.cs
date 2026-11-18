@@ -269,7 +269,7 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
     public async Task HoverReadsACSharpGameTooltip()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        // Loads the helper before the hover, whose allowance does not cover a first load on a busy machine.
+        // Loads the helper before the hover, so this test pins the hover's reading rather than the helper's first load.
         await AddStatesAsync(cancellation);
         const string GameTooltip = "/root/GameTooltip";
         await RunBodyAsync(

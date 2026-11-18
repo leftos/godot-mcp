@@ -1,6 +1,8 @@
 extends "res://gd_test.gd"
-## The tooltip reader's game-tooltip classifier (bridge/godot_mcp_hover.gd classify_game_tooltip):
-## what an mcp_tooltip node's state value says, and the tooltip it builds, with no tree.
+## The tooltip reader's game-tooltip side (bridge/godot_mcp_hover.gd classify_game_tooltip and
+## _read_game_tooltip): what an mcp_tooltip node's state value says, the tooltip it builds, and
+## one node's read, with no tree.
+# gdlint: disable=private-method-call
 
 var _hover_script: GDScript = load_bridge_script("godot_mcp_hover.gd")
 
@@ -76,3 +78,37 @@ func test_a_rect_with_a_string_number_is_left_out() -> void:
 		{"kind": "showing", "tooltip": {"text": "a", "state": state}},
 		"x a String"
 	)
+
+
+## A tooltip node freed inside its own read is skipped, with no owner to describe.
+func test_a_tooltip_node_freed_inside_its_state_read_is_skipped() -> void:
+	var bridge: Node = load_bridge_script("godot_mcp_bridge.gd").new()
+	var gestures: Node = load_bridge_script("godot_mcp_input.gd").new()
+	var hover: Node = _hover_script.new()
+	gestures.bridge = bridge
+	hover.gestures = gestures
+	var state: Node = FreeingState.new()
+	bridge._state = state
+	var node: Node = Node.new()
+	assert_eq(
+		hover._read_game_tooltip(node, {"extension": null, "csharpError": null}),
+		{},
+		"a node freed in its own read is skipped"
+	)
+	assert_true(not is_instance_valid(node), "the read freed the node")
+	hover.free()
+	gestures.free()
+	bridge.free()
+	state.free()
+
+
+## A stand-in state reader that frees the node it is asked to read, then answers a showing
+## tooltip.
+class FreeingState:
+	extends Node
+
+	func read_one(
+		node: Node, _max_depth: int, _extension: Variant, _csharp_error: Variant
+	) -> Dictionary:
+		node.free()
+		return {"path": "/root/T", "class": "Node", "state": {"text": "x"}}

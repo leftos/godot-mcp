@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A `hover` over a C# game's own tooltip no longer times out while the game first loads the C# state helper.
+
+### For agents
+
+- `hover`: on a C# session the server waits 30 s more for the reply, as wall time even while recording; a C# tooltip node that frees itself in its state read is skipped.
+
 ## 0.45.0 - 2026-11-18
 
 ### Added
