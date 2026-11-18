@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- A `prepare: never` launch of `run_project`, `run_editor` or `restart_project` notes a missing Debug C# assembly, or one older than its sources.
+
 ### Fixed
 
 - A scratch step whose game clock ran only part of its pace or until guard now says how much ran, instead of calling the clock stood still.

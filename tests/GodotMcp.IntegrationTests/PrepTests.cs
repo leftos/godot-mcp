@@ -128,6 +128,11 @@ public sealed partial class PrepTests : IAsyncDisposable
 
         Assert.Equal("skipped", launched.Prep.Build);
         Assert.Equal("skipped", launched.Prep.Import);
+        Assert.Equal(
+            "The C# build was skipped (prepare: never), and there is no assembly at .godot/mono/temp/bin/Debug/CsProbe.dll, "
+                + "so the project's C# scripts will not load.",
+            launched.Prep.Note
+        );
         Assert.False(File.Exists(PrepScan.AssemblyPath(csProbe.Directory, "CsProbe")));
         await Assert.ThrowsAsync<McpException>(() => CallAsync("CsProbe", "PlayStep", "4"));
     }

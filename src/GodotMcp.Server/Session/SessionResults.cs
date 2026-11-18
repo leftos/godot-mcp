@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using GodotMcp.Server.Tools;
+using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
@@ -86,6 +87,12 @@ internal sealed record PrepResult
 {
     /// <summary>What a launch with prepare "never" reports.</summary>
     public static PrepResult Skipped { get; } = new() { Build = "skipped", Import = "skipped" };
+
+    /// <summary>
+    /// What a launch with prepare "never" reports, with a note on the C# assembly it will load when that is missing or older
+    /// than the project's build inputs.
+    /// </summary>
+    public static PrepResult SkippedFor(string projectDir, ILogger logger) => Skipped with { Note = PrepScan.StaleAssemblyNote(projectDir, logger) };
 
     public required string Build { get; init; }
 

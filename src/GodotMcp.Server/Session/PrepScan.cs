@@ -109,6 +109,10 @@ internal static partial class PrepScan
 
     private static readonly HashSet<string> InputNames = new(["global.json", "nuget.config", "packages.lock.json"], StringComparer.OrdinalIgnoreCase);
 
+    // How much newer than the assembly a build input must be before the note calls the assembly stale: file systems record
+    // write times at a coarser granularity than a source edit.
+    private static readonly TimeSpan StaleAssemblySlack = TimeSpan.FromSeconds(2);
+
     // The folders a walk outside git skips: VCS data, Godot's cache and build outputs.
     private static readonly HashSet<string> SkippedFolders = new(
         [".git", ".godot", "bin", "obj", ".vs", "node_modules"],
@@ -154,6 +158,74 @@ internal static partial class PrepScan
     /// </summary>
     public static string AssemblyPath(string projectDir, string assemblyName) =>
         Path.Combine(projectDir, ".godot", "mono", "temp", "bin", ProjectPrep.Configuration, assemblyName + ".dll");
+
+    /// <summary>
+    /// The note a launch with prepare "never" carries about the C# assembly it will load: null when the project has no single
+    /// C# project, the assembly is not older than the newest build input, or the check itself failed; the missing-assembly or
+    /// stale-assembly text otherwise.
+    /// </summary>
+    internal static string? StaleAssemblyNote(string projectDir, ILogger logger)
+    {
+        try
+        {
+            CsprojLookup lookup = FindCsproj(projectDir);
+            if (lookup.Kind != CsprojKind.Found || lookup.AssemblyName is not { } assemblyName)
+            {
+                return null;
+            }
+
+            string assembly = AssemblyPath(projectDir, assemblyName);
+            DateTime? assemblyTime = File.Exists(assembly) ? File.GetLastWriteTimeUtc(assembly) : null;
+            List<(string Path, DateTime Written)> inputs =
+            [
+                .. Scan(projectDir, logger).BuildInputs.Select(path => (path, File.GetLastWriteTimeUtc(path))),
+            ];
+            return StaleAssemblyNote(projectDir, assembly, assemblyTime, inputs);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            StaleAssemblyCheckFailed(logger, e, projectDir);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The note from the times on disk: the missing-assembly text when there is none, the stale text when the newest input is
+    /// more than <see cref="StaleAssemblySlack"/> newer than the assembly, and null otherwise.
+    /// </summary>
+    internal static string? StaleAssemblyNote(
+        string projectDir,
+        string assembly,
+        DateTime? assemblyTime,
+        IReadOnlyList<(string Path, DateTime Written)> inputs
+    )
+    {
+        string shown = ProjectRelative(projectDir, assembly);
+        if (assemblyTime is not { } built)
+        {
+            return $"The C# build was skipped (prepare: never), and there is no assembly at {shown}, so the project's C# scripts will not load.";
+        }
+
+        if (inputs.Count == 0)
+        {
+            return null;
+        }
+
+        (string Path, DateTime Written) newest = inputs.MaxBy(input => input.Written);
+        if (newest.Written - built <= StaleAssemblySlack)
+        {
+            return null;
+        }
+
+        return $"The C# build was skipped (prepare: never), and the assembly this run loads, {shown} ({Utc(built)}), is older than "
+            + $"{ProjectRelative(projectDir, newest.Path)} ({Utc(newest.Written)}); a game run loads only this Debug build, never a Release one.";
+    }
+
+    /// <summary>A path as the note shows it: relative to the project folder, with forward slashes.</summary>
+    private static string ProjectRelative(string projectDir, string path) => Path.GetRelativePath(projectDir, path).Replace('\\', '/');
+
+    /// <summary>A time as the note shows it: UTC to the second.</summary>
+    private static string Utc(DateTime time) => time.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
 
     /// <summary>The file the prep records each green build in (<see cref="WriteStamp"/>).</summary>
     public static string StampPath(string projectDir) => Path.Combine(ProjectPrep.LogFolder(projectDir), "build.stamp");
@@ -1097,6 +1169,12 @@ internal static partial class PrepScan
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "{Cache} does not parse as a uid cache, so the prep imports to rewrite it.")]
     private static partial void UidCacheUnreadable(ILogger logger, Exception exception, string cache);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The check for a C# assembly older than {ProjectDir}'s sources failed, so the launch carries no note."
+    )]
+    private static partial void StaleAssemblyCheckFailed(ILogger logger, Exception exception, string projectDir);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "The prep builds the C# assembly another builder left: {Reason}.")]
     private static partial void NotCorroborated(ILogger logger, string reason);

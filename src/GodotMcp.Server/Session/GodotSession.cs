@@ -887,7 +887,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             {
                 RetryBootCrashOnce = registry.RetryBootCrashOnce,
             };
-            PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
+            PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.SkippedFor(ProjectDir, _logger);
             string bridgeScript = Installation.FindBridgeScript();
             // A shutdown that began during the prep refuses the start before a restart's old game is stopped.
             registry.RefuseStartAtShutdown();
