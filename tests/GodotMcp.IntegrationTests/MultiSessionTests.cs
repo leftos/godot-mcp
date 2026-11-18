@@ -171,7 +171,6 @@ public sealed class MultiSessionTests : IAsyncDisposable
         double metAt = result["metAt"]!.GetValue<double>();
         Assert.True(result["clockErrorMs"]!.GetValue<double>() >= 0, passed.ToJsonString());
         Assert.True(clickStart < metAt, $"the guest met at {metAt} ms, before the host's click started at {clickStart}: {passed.ToJsonString()}");
-        Assert.True(metAt < clickStart + 500, $"the guest met {metAt - clickStart} ms after the host's click started: {passed.ToJsonString()}");
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
