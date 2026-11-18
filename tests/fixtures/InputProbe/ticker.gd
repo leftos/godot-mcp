@@ -101,8 +101,22 @@ func stop_drawing_after(ms: int) -> void:
 	RenderingServer.render_loop_enabled = false
 
 
-## After ms milliseconds, even while the tree is paused, pauses the tree, as a game's own
-## pause menu would.
-func pause_after(ms: int) -> void:
-	await get_tree().create_timer(ms / 1000.0).timeout
+## After the given number of frames the tree runs unpaused (a step's own frames), pauses the tree,
+## as a game's own pause menu would.
+func pause_after_frames(frames: int) -> void:
+	await _unpaused_frames(frames)
 	get_tree().paused = true
+
+
+## After the given number of frames the tree runs unpaused (a step's own frames), stops drawing.
+func stop_drawing_after_frames(frames: int) -> void:
+	await _unpaused_frames(frames)
+	RenderingServer.render_loop_enabled = false
+
+
+func _unpaused_frames(frames: int) -> void:
+	var counted := 0
+	while counted < frames:
+		await get_tree().process_frame
+		if not get_tree().paused:
+			counted += 1

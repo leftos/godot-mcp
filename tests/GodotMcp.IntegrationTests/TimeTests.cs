@@ -1340,20 +1340,20 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Equal(before + 300, await ReadIntAsync("process_frames"));
     }
 
-    // A 120-frame step's deadline is 10 s + 120 x 100 ms = 22 s, and the server waits 5 s longer for its answer.
+    // A 10-frame step's deadline is 10 s + 10 x 100 ms = 11 s, and the server waits 5 s longer for its answer.
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepWhoseFramesStopDrawingEndsAtItsDeadlineAndFreesTheNextStep()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
-        await RunAsync($"{Probe}.stop_drawing_after(100)\n\treturn true");
+        await RunAsync($"{Probe}.stop_drawing_after_frames(3)\n\treturn true");
 
-        McpException stopped = await Assert.ThrowsAsync<McpException>(() => FrameAsync("step", count: 120));
+        McpException stopped = await Assert.ThrowsAsync<McpException>(() => FrameAsync("step", count: 10));
         bool paused = (await RunAsync("return scene_tree.paused")).GetValue<bool>();
         JsonObject resumed = await FrameAsync("resume");
 
         Assert.Matches(
-            @"The step stopped after \d+ of 120 frames: no frame was drawn for too long \(is the window minimized\?\); the game is left paused\.",
+            @"The step stopped after \d+ of 10 frames: no frame was drawn for too long \(is the window minimized\?\); the game is left paused\.",
             stopped.Message
         );
         Assert.True(paused);
@@ -1365,7 +1365,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
-        await RunAsync($"{Probe}.pause_after(300)\n\treturn true");
+        await RunAsync($"{Probe}.pause_after_frames(3)\n\treturn true");
 
         McpException failed = await Assert.ThrowsAsync<McpException>(() => FrameAsync("step", count: 1000));
 
