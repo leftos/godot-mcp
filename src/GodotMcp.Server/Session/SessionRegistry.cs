@@ -21,10 +21,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     public static readonly TimeSpan PreviewLimit = TimeSpan.FromSeconds(60);
 
     /// <summary>
-    /// How long, in wall time, the server's exit waits for its games to quit before killing the rest; it cuts a recording
-    /// run's 30 s grace short.
+    /// How long the server's exit waits for its games to quit before killing the rest, in load-adjusted time; it cuts a
+    /// recording run's 30 s grace short.
     /// </summary>
     internal static readonly TimeSpan ShutdownCap = TimeSpan.FromSeconds(10);
+
+    /// <summary>The wall time <see cref="ShutdownCap"/> may stretch to on a loaded machine.</summary>
+    internal static readonly TimeSpan ShutdownWallCap = TimeSpan.FromSeconds(20);
 
     /// <summary>How often the server's exit looks again whether the launches and restarts in flight have settled.</summary>
     private static readonly TimeSpan StartSettlePoll = TimeSpan.FromMilliseconds(50);
@@ -1103,13 +1106,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>
     /// The cleanup for the server's own exit: every launch and restart in flight waited for, then every session's own shutdown
     /// at once (<see cref="GodotSession.ShutdownAsync"/>: the games it launched asked to quit, sharing one grace), every game
-    /// still running at <see cref="ShutdownCap"/> (which the wait for the starts shares) killed, then every warm headless host
-    /// stopped and waited for, every armed folder disarmed, then this server's release of the override file of every folder a
-    /// session used, was armed or is owed an earlier failed release, since none of them outlives the server. It runs from the
-    /// host's stop, the process's exit and <see cref="Dispose"/>: the first call stops the games, and a later one waits for
-    /// that and stops only the sessions no earlier pass has covered. Once it has begun, no run starts
-    /// (<see cref="RefuseStartAtShutdown"/>). Every background scratch run is interrupted first, waited for only until
-    /// <see cref="ShutdownCap"/> from the pass's start, and finished as interrupted if it has not ended by then.
+    /// still running at <see cref="ShutdownCap"/> of load-adjusted time, bounded by <see cref="ShutdownWallCap"/> of wall time
+    /// (both shared with the wait for the starts), killed, then every warm headless host stopped and waited for, every armed
+    /// folder disarmed, then this server's release of the override file of every folder a session used, was armed or is owed an
+    /// earlier failed release, since none of them outlives the server. It runs from the host's stop, the process's exit and
+    /// <see cref="Dispose"/>: the first call stops the games, and a later one waits for that and stops only the sessions no
+    /// earlier pass has covered. Once it has begun, no run starts (<see cref="RefuseStartAtShutdown"/>). Every background
+    /// scratch run is interrupted first, waited for only until <see cref="ShutdownCap"/> of wall time from the pass's start, and
+    /// finished as interrupted if it has not ended by then.
     /// </summary>
     public void Shutdown()
     {
@@ -1193,32 +1197,81 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>
     /// Ends every session's real-time recording at once, each already marked for the exit by <see cref="Shutdown"/>, then waits
     /// for every launch or restart in flight to settle, then stops every session's game at once and waits for them and for
-    /// the recordings' clips, all sharing <see cref="ShutdownCap"/> of wall time; then kills every game still running of the
-    /// sessions it took. A session still starting at the cap is handed back to a later pass and its game, once it has one,
-    /// killed.
+    /// the recordings' clips, all sharing <see cref="ShutdownCap"/> of load-adjusted time, bounded by
+    /// <see cref="ShutdownWallCap"/> of wall time; then kills every game still running of the sessions it took. A session still
+    /// starting at the cap is handed back to a later pass and its game, once it has one, killed.
     /// </summary>
     private async Task StopGamesAtShutdownAsync(GodotSession[] sessions)
     {
-        var cap = Task.Delay(ShutdownCap);
+        using ShutdownLimit cap = new(Clock);
         var recordings = Task.WhenAll(sessions.Select(session => Task.Run(() => FinishRecordingAtShutdownAsync(session))));
-        await WaitForStartsAsync(sessions, cap);
+        await WaitForStartsAsync(sessions, cap.Ended);
         Task<bool>[] stops = [.. sessions.Select(session => Task.Run(() => ShutdownSessionAsync(session)))];
         Task<bool[]> all = Task.WhenAll(stops);
         var settled = Task.WhenAll(all, recordings);
-        if (await Task.WhenAny(settled, cap) != settled)
+        if (await Task.WhenAny(settled, cap.Ended) != settled)
         {
             // Logging may already be torn down while the process exits, so this goes straight to stderr.
             await Console.Error.WriteLineAsync(
                 all.IsCompleted
-                    ? $"godot-mcp: the real-time recordings had not all finished {ShutdownCap.TotalSeconds:0} s into the shutdown; "
+                    ? $"godot-mcp: the real-time recordings had not all finished {cap.Spent} into the shutdown; "
                         + "an .mkv or a deadline file may be left in a project's .godot/godot-mcp/recordings. "
                         + "A clip not yet moved to its destination stays in .godot/godot-mcp/recordings/."
-                    : $"godot-mcp: the games had not all quit {ShutdownCap.TotalSeconds:0} s into the shutdown; killing the rest."
+                    : $"godot-mcp: the games had not all quit {cap.Spent} into the shutdown; killing the rest."
             );
         }
 
         // A session handed back that is no longer starting never launched, so it has no game to kill.
         await Task.WhenAll(sessions.Where((session, index) => !IsHandedBack(stops[index]) || session.IsStarting).Select(KillSessionAtShutdownAsync));
+    }
+
+    /// <summary>
+    /// The cap <see cref="StopGamesAtShutdownAsync"/> shares among its games and recordings: <see cref="ShutdownCap"/> of
+    /// load-adjusted time on the registry's clock, bounded by <see cref="ShutdownWallCap"/> of wall time; the plain
+    /// <see cref="ShutdownCap"/> of wall time when that clock is already disposed (a late pass after <see cref="Dispose"/>).
+    /// </summary>
+    private sealed class ShutdownLimit : IDisposable
+    {
+        private readonly LoadDeadline? _deadline;
+        private readonly CancellationTokenRegistration _registered;
+
+        public ShutdownLimit(LoadClock clock)
+        {
+            try
+            {
+                _deadline = clock.Start(ShutdownCap, ShutdownWallCap, CancellationToken.None);
+            }
+            catch (ObjectDisposedException)
+            {
+                _deadline = null;
+            }
+
+            if (_deadline is { } deadline)
+            {
+                var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _registered = deadline.Token.Register(static state => ((TaskCompletionSource)state!).TrySetResult(), ended);
+                Ended = ended.Task;
+            }
+            else
+            {
+                Ended = Task.Delay(ShutdownCap);
+            }
+        }
+
+        /// <summary>Completes when the cap has ended, never faults: a wait takes it as a signal alone.</summary>
+        public Task Ended { get; }
+
+        /// <summary>"10 s of load-adjusted time (wall 20 s)", or the one figure of the wall-time fallback, for the stderr lines.</summary>
+        public string Spent =>
+            _deadline is { } deadline
+                ? $"{LoadDeadline.Seconds(deadline.Adjusted)} s of load-adjusted time (wall {LoadDeadline.Seconds(deadline.Wall)} s)"
+                : $"{LoadDeadline.Seconds(ShutdownCap)} s";
+
+        public void Dispose()
+        {
+            _registered.Dispose();
+            _deadline?.Dispose();
+        }
     }
 
     /// <summary>Whether a session's stop at shutdown returned and handed the session back to a later pass.</summary>

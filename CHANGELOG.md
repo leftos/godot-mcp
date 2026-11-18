@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A scratch step whose game clock ran only part of its pace or until guard now says how much ran, instead of calling the clock stood still.
+- On a busy machine the server's exit gives its games 10 s of load-adjusted time to quit, up to 20 s of wall time, before killing them.
 
 ## 0.44.0 - 2026-11-17
 

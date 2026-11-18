@@ -2340,7 +2340,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   The server's log gets one Warning line (`RealtimeFinishFailed`) for the failed finish. A `stop` that cannot write the deadline file kills the helper and returns the clip with a `warning` that it ends there.
   Files are in `<project>/.godot/godot-mcp/recordings/`: `<UTC yyyyMMdd-HHmmss-fff>-<session>-realtime.mkv` while recording (playable if the server dies), remuxed to `.mp4` with faststart and the `.mkv` deleted, and, per recording, the logs `<same stamp>-<session>-realtime-capture.log` and `…-realtime-ffmpeg.log` (errors and the remux's output), plus `…-realtime-probe-<guid>.log` when a probe ran.
-  Ending the server ends every real-time recording and waits for its `.mp4` within the 10 s shutdown cap.
+  Ending the server ends every real-time recording and waits for its `.mp4` within the 10 s shutdown cap (load-adjusted time).
 
 ## Headless scene editing
 

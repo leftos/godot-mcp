@@ -39,7 +39,7 @@ public sealed class StopKilledGameTests : IAsyncDisposable
     private readonly FakeLoadSource _machine;
     private readonly LoadClock _clock;
     private readonly BridgeListener _listener;
-    private readonly SessionRegistry _sessions;
+    private SessionRegistry _sessions;
     private readonly ConcurrentQueue<FakeRunProcess> _launched = new();
     private readonly List<ExitHold> _holds = [];
     private readonly List<Process> _games = [];
@@ -52,17 +52,26 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         _machine = new FakeLoadSource(_time, processors: 4);
         _clock = new LoadClock(_time, _machine);
         _listener = new BridgeListener(NullLogger<BridgeListener>.Instance) { Clock = _clock };
-        _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
+        _sessions = NewSessions();
+        // The launch only has to find a file: the factory replaces the process it would start.
+        _configuredGodot = Environment.GetEnvironmentVariable(Installation.GodotPathVariable);
+        Environment.SetEnvironmentVariable(Installation.GodotPathVariable, typeof(StopKilledGameTests).Assembly.Location);
+    }
+
+    /// <summary>
+    /// The registry the tests drive, as the server builds it over this rig's fake clocks, with <paramref name="exitGrace"/> for
+    /// the load-adjusted time a stop gives a game to quit: the server's own 3 s unless a test needs the shutdown's cap to end a
+    /// wait first.
+    /// </summary>
+    private SessionRegistry NewSessions(TimeSpan? exitGrace = null) =>
+        new(_listener, NullLogger<GodotSession>.Instance)
         {
             LaunchClock = _clock,
             OverrideFolders = new OverrideFolders(_temp.Combine(OwnersList), TextWriter.Null) { Clock = _clock },
             Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
             RunProcessFactory = Launch,
+            ExitGrace = exitGrace ?? SessionRegistry.DefaultExitGrace,
         };
-        // The launch only has to find a file: the factory replaces the process it would start.
-        _configuredGodot = Environment.GetEnvironmentVariable(Installation.GodotPathVariable);
-        Environment.SetEnvironmentVariable(Installation.GodotPathVariable, typeof(StopKilledGameTests).Assembly.Location);
-    }
 
     public async ValueTask DisposeAsync()
     {
@@ -532,6 +541,37 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.True(run.Process.WaitForExit(0), "the stop returned before the killed wrapper was gone");
     }
 
+    // The server's exit waits for its games on the load clock: on a machine at a quarter speed the cap's 10 s are 40 s of wall
+    // time, so a game that acknowledged the quit and runs on is not killed at the 10 s wall mark; the cap's 20 s wall time ends the
+    // wait and kills it. A cap counted in wall time, or one left on the system clock, kills the game at 10 s of wall time.
+    [Fact]
+    public async Task AtShutdownTheCapCountsLoadAdjustedTimeNotWallTime()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in processes are cmd.exe.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        // The games' own grace must not be what ends this wait: a minute of load-adjusted time is 240 s of wall time here.
+        _sessions.Dispose();
+        _sessions = NewSessions(TimeSpan.FromMinutes(1));
+        Process game = StartGame();
+        using FakeBridge bridge = await LaunchAsync(project, game.Id);
+        await MakeMachineBusyAsync();
+
+        var shutdown = Task.Run(_sessions.Shutdown, cancellation);
+        // A game that acknowledges the quit and stays running: only the shutdown's cap can end the wait.
+        await AnswerAsync(bridge, "ping", new JsonObject { ["pong"] = true });
+        await AnswerAsync(bridge, "shutdown", []);
+
+        await AdvanceAsync(TimeSpan.FromSeconds(14), TimeSpan.FromMilliseconds(100));
+        Assert.False(game.HasExited, "the game was killed at 10 s of wall time, so the cap did not count load-adjusted time");
+
+        // The cap's own clock decides: its 20 s of wall time end it and the kill follows, while the games' grace has 220 s to go.
+        await AdvanceUntilWithinAsync(() => game.HasExited, TimeSpan.FromSeconds(40));
+        await RegistryHarness.AdvanceUntilDoneAsync(_time, shutdown, cancellation);
+
+        Assert.True(game.HasExited, "the game was not killed by the cap's wall time");
+    }
+
     // The game quits and leaves a child running, which nothing here ends (the fake wrapper has no job to close): the stop kills
     // the wrapper alone, waits the kill wait for the child, and names it in its warning, with the folder it still holds.
     [Fact]
@@ -733,6 +773,22 @@ public sealed class StopKilledGameTests : IAsyncDisposable
             }
 
             Assert.True(DateTime.UtcNow < guard, $"what the test waited for was not seen within its {RegistryHarness.HangGuard} hang guard");
+            _time.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Advances the fake clock 100 ms at a time, pausing 5 ms of real time after each, until <paramref name="seen"/> holds, and
+    /// fails as hung once <paramref name="within"/> of the clock's own time has passed: a wait on the load clock ends on that
+    /// clock, so the bound is the clock's time, never the machine's.
+    /// </summary>
+    private async Task AdvanceUntilWithinAsync(Func<bool> seen, TimeSpan within)
+    {
+        DateTimeOffset deadline = _time.GetUtcNow() + within;
+        while (!seen())
+        {
+            Assert.True(_time.GetUtcNow() < deadline, $"what the test waited for was not seen within {within.TotalSeconds:0} s of the clock's time");
             _time.Advance(TimeSpan.FromMilliseconds(100));
             await Task.Delay(5, TestContext.Current.CancellationToken);
         }
