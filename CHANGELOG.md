@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.44.0 - 2026-11-17
 
 ### Added
 
@@ -12,7 +12,6 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - A scratch step with an until also refuses `output` and `uiChanged` shot conditions.
 - `call_method` and `options.call` no longer fail when the called method's own `propagate_call` or C# `Callv` is refused for another method.
-
 - A headless node path missing a `%Name` names the unique name, and `get_scene_file_tree`'s missing `root` names the nearest node and its children.
 
 ### Fixed
@@ -21,6 +20,18 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A disarm or failed arm whose release of `override.cfg` or `armed.json` fails now leaves it owed, retried by `stop_project` and at the server's exit.
 - A native tooltip that hugs the window border over a still driven pointer stays shown instead of blinking every tooltip delay.
 - A scratch scene whose game quits with code 0 just as its exit hold's wait expires no longer fails as an unreadable hold.
+
+### For agents
+
+- `run_scratches`: `GetStepUntil` and `GetStepShotUntil` answers take `edge: true`, met only on a rise; a non-boolean `edge` is red (`GetStepUntil(<i>) returned edge "yes", not true or false`).
+- `run_scratches`: on a step with an until, an `output` or `uiChanged` shot condition is refused as the shot's failure, as `signal`, `gameMs` and `frames` are.
+- `run_scratches`: an until step whose game drew no frame warns `the screenshot at step <index> '<name>' failed: no frame was drawn while its until waited (is the window minimized, or the game in low-processor mode?)`.
+- `run_scratches`: a scene whose game quits as its exit hold ends reads as a clean close, no longer as an unreadable hold.
+- `call_method` and `options.call`: a refused `propagate_call` or C# `Callv` of another method inside the called one no longer fails the call; only a refusal of the called method does.
+- Scene tools: a missing `%Name` segment is refused as `<scene> has no node %Rows: the scene has no node with the unique name '%Rows'.`
+- `get_scene_file_tree`: a `root` the scene lacks names the nearest node and its children, then `; get_scene_file_tree without root lists its nodes.`
+- `disarm_project`: a failed removal of `armed.json` or `override.cfg` fails the call and leaves the folder owed; `stop_project {projectPath}` retries it (`armedRemoved: true`), as does the server's exit.
+- `hover`: a tooltip shown over the pointer against the window border stays shown; a Control appearing under it is hovered once the tooltip goes.
 
 ## 0.43.1 - 2026-11-16
 
