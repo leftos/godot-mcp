@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipes;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GodotMcp.IntegrationTests.Fixtures;
@@ -258,7 +259,8 @@ public sealed class CaptureHelperTests : IAsyncDisposable
     /// A reader that goes away ends the run: a frame written to a pipe nobody reads fails, and the helper stops with exit
     /// 8 and the line saying how many frames reached the reader. The helper sees the reader gone at its next frame's write,
     /// which a busy machine can delay by seconds, so the wait on its exit is a hang guard, and the deadline lies past it, so
-    /// only the reader's death can end a run that passes.
+    /// only the reader's death can end a run that passes. The first frame's read is raced against the same guard, since a
+    /// read already blocked on the pipe is not ended by a timer either.
     /// </summary>
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AReaderThatDiesEndsTheHelperWithExitEight()
@@ -267,14 +269,12 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         string hwnd = await LaunchVisibleAsync(cancellation);
         string deadline = _temp.Combine("deadline.txt");
         WriteDeadline(deadline, DateTime.UtcNow.AddMinutes(10));
-        using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        ceiling.CancelAfter(HelperCeiling);
         using Process helper = Start(HelperPath(), ["--hwnd", hwnd, "--fps", $"{Fps}", "--until-file", deadline], redirectInput: false);
         try
         {
             Task<string> errors = helper.StandardError.ReadToEndAsync(cancellation);
             byte[] frame = new byte[1 << 20];
-            int read = await ReadFirstFrameAsync(helper, frame, ceiling.Token, cancellation);
+            int read = await ReadFirstFrameAsync(helper, frame, cancellation);
             if (read == 0)
             {
                 // Its stderr ends with its exit, which a helper that closed its stdout is making.
@@ -295,39 +295,151 @@ public sealed class CaptureHelperTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A hang guard on one step of a helper run after its first frame (the game's end, the helper's notice of it, its exit),
+    /// which a passing run never reaches: each takes milliseconds idle, and the process teardown of a helper whose capture
+    /// started has been measured at up to 14 s on an idle machine.
+    /// </summary>
+    private static readonly TimeSpan StepHangGuard = TimeSpan.FromMinutes(2);
+
+    /// <summary>The helper's line when its window's closing ended the run.</summary>
+    private const string WindowClosedLine = "the window closed, so the capture ended; the frames written are kept.";
+
+    /// <summary>
     /// A window closed mid-capture is the run's stop signal: once the first frame has arrived, killing the game's process
-    /// ends the helper at once with status 0, saying the frames written are kept.
+    /// ends the helper with status 0, saying the frames written are kept.
     /// </summary>
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task AWindowClosedMidCaptureEndsTheHelperCleanly()
+    public Task AWindowClosedMidCaptureEndsTheHelperCleanly() => CloseTheWindowMidCaptureAsync(TimeSpan.Zero, TestContext.Current.CancellationToken);
+
+    /// <summary>
+    /// The window of <see cref="AWindowClosedMidCaptureEndsTheHelperCleanly"/> closed only after <see cref="HelperCeiling"/>
+    /// has passed since the helper's start, as a test host starved before its kill closes it: the helper's frames are read for
+    /// as long as it writes them, so it still sees its window close and ends cleanly.
+    /// </summary>
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public Task AWindowClosedPastTheHelperCeilingEndsTheHelperCleanly() =>
+        CloseTheWindowMidCaptureAsync(HelperCeiling + TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+    private async Task CloseTheWindowMidCaptureAsync(TimeSpan holdBeforeKill, CancellationToken cancellation)
     {
-        CancellationToken cancellation = TestContext.Current.CancellationToken;
         string hwnd = await LaunchVisibleAsync(cancellation);
+        nint window = nint.Parse(hwnd, CultureInfo.InvariantCulture);
         int game = _harness.Sessions.Resolve(null).GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid.");
         string deadline = _temp.Combine("deadline.txt");
-        WriteDeadline(deadline, DateTime.UtcNow.AddMinutes(10));
-        using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        ceiling.CancelAfter(HelperCeiling);
+        // Past the test's own timeout, so only the window's close can end the run.
+        WriteDeadline(deadline, DateTime.UtcNow.AddMinutes(30));
         using Process helper = Start(HelperPath(), ["--hwnd", hwnd, "--fps", $"{Fps}", "--until-file", deadline], redirectInput: false);
         try
         {
-            Task<string> errors = helper.StandardError.ReadToEndAsync(ceiling.Token);
+            // Both streams are read to their ends on the test's token alone: a reader stopped by a timer leaves the helper
+            // blocked writing a frame nobody reads, where it can never see its window close.
+            StringBuilder said = new();
+            TaskCompletionSource closedLine = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task errors = FollowErrorsAsync(helper.StandardError, said, closedLine, cancellation);
             TaskCompletionSource firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            Task drained = DrainFramesAsync(helper.StandardOutput.BaseStream, firstFrame, ceiling.Token);
-            Task signal = await Task.WhenAny(firstFrame.Task, drained);
-            Assert.True(signal == firstFrame.Task, "the helper's stdout ended before its first frame arrived");
+            Task drained = DrainFramesAsync(helper.StandardOutput.BaseStream, firstFrame, cancellation);
+            HelperOutput output = new(said, errors, drained);
+            await AwaitStepAsync(firstFrame.Task, drained, "the helper's first frame", output, cancellation);
+            // Its handle is open before the hold, so a game that ends during it cannot have its pid taken by another process.
             using var running = Process.GetProcessById(game);
+            _ = running.SafeHandle;
+            if (holdBeforeKill > TimeSpan.Zero)
+            {
+                await Task.Delay(holdBeforeKill, cancellation);
+            }
+
+            if (running.HasExited)
+            {
+                Assert.Fail($"the game (pid {game}) exited during the hold; the helper said: {Said(output.Said)}");
+            }
+
             running.Kill(entireProcessTree: true);
-            await WaitForExitAsync(helper, "its window closed", cancellation);
-            Assert.Equal(0, helper.ExitCode);
-            await drained;
-            string said = await errors;
-            Assert.Contains("the window closed, so the capture ended; the frames written are kept.", said, StringComparison.Ordinal);
-            Assert.Contains(" frames in ", said, StringComparison.Ordinal);
+            await AwaitStepAsync(running.WaitForExitAsync(cancellation), null, $"the game's (pid {game}) exit after its kill", output, cancellation);
+            Assert.False(CaptureWindows.Exists(window), $"the game (pid {game}) exited, but its window {window} still exists");
+            await AwaitStepAsync(closedLine.Task, errors, "the helper's window-closed line", output, cancellation);
+            await AwaitStepAsync(helper.WaitForExitAsync(cancellation), null, "the helper's exit after its window-closed line", output, cancellation);
+            await AwaitStepAsync(errors, null, "the helper's stderr end", output, cancellation);
+            Assert.True(helper.ExitCode == 0, $"the helper exited {helper.ExitCode}; the helper said: {Said(output.Said)}");
+            await AwaitStepAsync(drained, null, "the helper's stdout end", output, cancellation);
+            Assert.Contains(" frames in ", Said(output.Said), StringComparison.Ordinal);
         }
         finally
         {
             Stop(helper);
+        }
+    }
+
+    /// <summary>
+    /// The helper's output as the test follows it: what its stderr has said so far, the read to stderr's end, and the drain
+    /// of its frames.
+    /// </summary>
+    private sealed record HelperOutput(StringBuilder Said, Task Errors, Task Drained);
+
+    /// <summary>
+    /// Waits for <paramref name="step"/>, failing at once when <paramref name="ended"/>, the stream the step is read from,
+    /// completes first, and at <see cref="StepHangGuard"/>, which a passing run never reaches. Whether the step completed is
+    /// read from the step itself: a notice a starved host runs late is not a completion. A reader that threw surfaces its
+    /// exception instead, and every other failure names the step and quotes what the helper had said.
+    /// </summary>
+    private static async Task AwaitStepAsync(Task step, Task? ended, string what, HelperOutput output, CancellationToken cancellationToken)
+    {
+        var guard = Task.Delay(StepHangGuard, cancellationToken);
+        await Task.WhenAny(ended is null ? [step, guard] : [step, ended, guard]);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (step.IsCompleted)
+        {
+            await step;
+            return;
+        }
+
+        if (ended?.IsFaulted == true)
+        {
+            await ended;
+        }
+
+        if (output.Drained.IsFaulted)
+        {
+            await output.Drained;
+        }
+
+        string why =
+            ended?.IsCompleted == true
+                ? "its stream ended first"
+                : FormattableString.Invariant($"it had not come {StepHangGuard.TotalMinutes} min later");
+        Assert.Fail($"{what} never came: {why}; the helper said: {Said(output.Said)}");
+    }
+
+    /// <summary>
+    /// Reads the helper's stderr line by line into <paramref name="said"/>, setting <paramref name="closedLine"/> at its
+    /// window-closed line.
+    /// </summary>
+    private static async Task FollowErrorsAsync(
+        StreamReader errors,
+        StringBuilder said,
+        TaskCompletionSource closedLine,
+        CancellationToken cancellationToken
+    )
+    {
+        string? line;
+        while ((line = await errors.ReadLineAsync(cancellationToken)) is not null)
+        {
+            lock (said)
+            {
+                said.AppendLine(line);
+            }
+
+            if (line.Contains(WindowClosedLine, StringComparison.Ordinal))
+            {
+                closedLine.TrySetResult();
+            }
+        }
+    }
+
+    private static string Said(StringBuilder said)
+    {
+        lock (said)
+        {
+            return said.ToString();
         }
     }
 
@@ -347,8 +459,6 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         string deadline = _temp.Combine("deadline.txt");
         WriteDeadline(deadline, DateTime.UtcNow.AddMinutes(1));
         string pipe = "gmcp-test-" + Guid.NewGuid().ToString("N");
-        using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        ceiling.CancelAfter(HelperCeiling);
         string[] arguments =
         [
             "--hwnd",
@@ -365,19 +475,19 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         using Process helper = Start(HelperPath(), arguments, redirectInput: false);
         try
         {
-            Task<string> errors = helper.StandardError.ReadToEndAsync(ceiling.Token);
+            Task<string> errors = helper.StandardError.ReadToEndAsync(cancellation);
             byte[] frame = new byte[1 << 20];
-            Task<int> firstFrame = helper.StandardOutput.BaseStream.ReadAsync(frame, ceiling.Token).AsTask();
+            Task<int> firstFrame = helper.StandardOutput.BaseStream.ReadAsync(frame, cancellation).AsTask();
             using NamedPipeClientStream audio = new(".", pipe, PipeDirection.In, PipeOptions.Asynchronous);
-            Task connecting = audio.ConnectAsync(ceiling.Token);
-            Task exited = helper.WaitForExitAsync(ceiling.Token);
+            Task connecting = audio.ConnectAsync(cancellation);
+            Task exited = helper.WaitForExitAsync(cancellation);
             if (await Task.WhenAny(connecting, exited) != connecting)
             {
                 Assert.Fail($"the helper exited before its audio pipe opened: {await errors}");
             }
             await connecting;
             Assert.False(firstFrame.IsCompleted, "the first frame arrived before the audio pipe connected, so the audio before it went uncounted");
-            long audioBytes = await CountAudioBeforeAsync(audio, firstFrame, ceiling.Token);
+            long audioBytes = await CountAudioBeforeAsync(audio, firstFrame, cancellation);
             if (await firstFrame == 0)
             {
                 Assert.Fail($"the helper closed its stdout without writing a frame: {await errors}");
@@ -429,8 +539,6 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         string deadline = _temp.Combine("deadline.txt");
         WriteDeadline(deadline, DateTime.UtcNow.AddMinutes(1));
         string clip = _temp.Combine("clip.mkv");
-        using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        ceiling.CancelAfter(HelperCeiling);
         List<string> helperArguments = ["--hwnd", hwnd, "--fps", $"{Fps}", "--until-file", deadline];
         if (crop is not null)
         {
@@ -469,12 +577,12 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         );
         try
         {
-            Task<string> helperErrors = helper.StandardError.ReadToEndAsync(ceiling.Token);
-            Task<string> ffmpegErrors = ffmpeg.StandardError.ReadToEndAsync(ceiling.Token);
-            Task<string> ffmpegOutput = ffmpeg.StandardOutput.ReadToEndAsync(ceiling.Token);
-            await PipeAsync(helper.StandardOutput.BaseStream, ffmpeg.StandardInput.BaseStream, deadline, ceiling.Token);
-            await helper.WaitForExitAsync(ceiling.Token);
-            await ffmpeg.WaitForExitAsync(ceiling.Token);
+            Task<string> helperErrors = helper.StandardError.ReadToEndAsync(cancellationToken);
+            Task<string> ffmpegErrors = ffmpeg.StandardError.ReadToEndAsync(cancellationToken);
+            Task<string> ffmpegOutput = ffmpeg.StandardOutput.ReadToEndAsync(cancellationToken);
+            await PipeAsync(helper.StandardOutput.BaseStream, ffmpeg.StandardInput.BaseStream, deadline, cancellationToken);
+            await helper.WaitForExitAsync(cancellationToken);
+            await ffmpeg.WaitForExitAsync(cancellationToken);
             string said = await helperErrors;
             Assert.True(helper.ExitCode == 0, $"the helper exited {helper.ExitCode}: {said}");
             Assert.Contains(" frames in ", said, StringComparison.Ordinal);
@@ -527,20 +635,21 @@ public sealed class CaptureHelperTests : IAsyncDisposable
 
     /// <summary>
     /// Reads the helper's first frame into <paramref name="frame"/>: the bytes read, 0 when the helper closed its stdout first,
-    /// as it does when no frame came in its own wait. The read ends at <paramref name="ceiling"/>, a hang guard a helper that
-    /// sends frames never reaches, and the test fails then saying so.
+    /// as it does when no frame came in its own wait. The read runs on the test's own token, so no timer ends it part way, and
+    /// is raced against <see cref="StepHangGuard"/>: a read still blocked then fails as the hang guard a helper that sends
+    /// frames never reaches, since a read already blocked on the pipe is not ended by a timer.
     /// </summary>
-    private static async Task<int> ReadFirstFrameAsync(Process helper, byte[] frame, CancellationToken ceiling, CancellationToken cancellationToken)
+    private static async Task<int> ReadFirstFrameAsync(Process helper, byte[] frame, CancellationToken cancellationToken)
     {
-        try
+        Task<int> read = helper.StandardOutput.BaseStream.ReadAsync(frame, cancellationToken).AsTask();
+        var guard = Task.Delay(StepHangGuard, cancellationToken);
+        if (await Task.WhenAny(read, guard) != read)
         {
-            return await helper.StandardOutput.BaseStream.ReadAsync(frame, ceiling);
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Fail(FormattableString.Invariant($"the helper wrote no frame and kept running for {StepHangGuard.TotalMinutes} min"));
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            Assert.Fail(FormattableString.Invariant($"the helper wrote no frame and kept running for {HelperCeiling.TotalSeconds} s"));
-            throw;
-        }
+
+        return await read;
     }
 
     /// <summary>Writes the deadline beside the file and moves it over, so the helper never reads half a line.</summary>
@@ -553,14 +662,12 @@ public sealed class CaptureHelperTests : IAsyncDisposable
 
     private static async Task<HelperRun> RunHelperAsync(IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {
-        using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        ceiling.CancelAfter(HelperCeiling);
         using Process helper = Start(HelperPath(), arguments, redirectInput: false);
         try
         {
-            Task<string> errors = helper.StandardError.ReadToEndAsync(ceiling.Token);
-            string output = await helper.StandardOutput.ReadToEndAsync(ceiling.Token);
-            await helper.WaitForExitAsync(ceiling.Token);
+            Task<string> errors = helper.StandardError.ReadToEndAsync(cancellationToken);
+            string output = await helper.StandardOutput.ReadToEndAsync(cancellationToken);
+            await helper.WaitForExitAsync(cancellationToken);
             return new HelperRun(helper.ExitCode, output, await errors);
         }
         finally

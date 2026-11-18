@@ -583,6 +583,8 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   An offset crop with odd sides is padded to even and its middle frame, chosen by index, is not black, and a crop larger than the window exits 2 with its refusal on stderr and nothing on stdout.
 
+  No timer armed at the helper's start may bound a reader of its stdout or stderr: a pipe write blocks until the reader makes room, so a slow run whose reader stopped wedges the helper in a frame write, where it never sees its window close. Each wait after the kill is a hang guard that names its step (the game's exit, the helper's window-closed line, the helper's exit) and quotes the helper's stderr.
+
   `AVisibleLaunchEndsBehindTheWindowInFront` fails when the window that had the foreground closes after the launch. It skips when that window is topmost (an always-on-top overlay), or is the shell's desktop or taskbar (class `Progman`, `WorkerW` or `Shell_TrayWnd`, or a window of `explorer`), since the game's window cannot end behind either, and when the foreground changes during it, since a re-activation cannot be told from the push. It needs ffmpeg and ffprobe on `PATH`.
 - **Real-time recording** (`record_mark` on a session without `options.record`): unit `RealtimeRecordingTests` (`tests/GodotMcp.Tests/Session`, fake helper and ffmpeg processes on a fake `RealtimeEnvironment`) covers the start order (ffmpeg before the helper), the deadline file, the encoder choice and fallback, the end however it comes, the clip's numbers from bytes, the warnings, each failure keeping the `.mkv` and naming its log, and concurrent probes with their own logs.
   `RealtimeSessionEndTests` (same folder) covers the session's end: a stop ends the capture before the game is told to quit and returns the clip, a detach waits for the clip and reports it (or none), a game that quits keeps its clip for one stop, and a clip that could not be finished, or whose finish a fault cancelled, is an error that does not fail the call.
@@ -781,6 +783,8 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   A stop-time ping is reproduced by an aimed freeze: suspend the game from the last `scratch step {n} end` marker in 2 to 3 s freezes with 2 ms run slices. An even suspend-rig freeze lands the ping in the game's run window and does not reproduce it.
 
+  The test host is aimed the same way: freeze it when the helper's process appears, for longer than a start-armed timer, to see what a starved host does to the helper's readers.
+
   A server's own start is the same case: the rig catches a newly started `godot-mcp` only by chance, so hold it from birth instead, matched by its image path so other worktrees' servers are left alone (GMCP-547 reproduced the MCP client's 60 s initialization timeout that way).
 
   Under the rig, freeze `Godot` as well as `Godot_console`: `GODOT_PATH` names the console wrapper, and the game runs in its child `Godot.exe`. The rig takes `-StopAfterSeconds` up to 600. To see a scratch run's per-scene reasons under the rig, drive the server with `tools/drive.py`, giving the server path as an absolute path. To put a whole scratch run under the rig, wrap `godot-mcp.exe --run-scratches <project>` in it: the server and the games are its children.
@@ -826,6 +830,9 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
   A test of it calls `Shutdown` more than once on purpose (`SessionShutdownTests`, `SessionStopTests`), and `McpServerSmokeTests` kills a real server to see its game quit by itself.
 - **A headless game's teardown, from its bridge closing to its process exit, is spent before the exit code is set.** Measured over 194 runs on an idle machine in every scene: p50 about 100 ms, p99 under 1 s, max 2.9 s. A stop therefore gives a game that acknowledged the quit and closed its bridge a 7 s teardown grace past the 3 s exit grace (`SessionRegistry.TeardownGrace`) before killing it.
 - **A game being torn down cannot be examined.** `cdb` fails to attach with `0x80004002` and `MiniDumpWriteDump` with `0x80070005`, so a stack of a slow exit has to be taken early, while the game is still running its quit.
+- **The capture helper outlives one suspend-rig cycle only barely, and its exit is slow in the kernel.** The rig's default 2.5 s cycle freezes nothing of it, so freeze it with `-Freeze godot-mcp-capture -FreezeMs 250 -RunMs 10` or shorter.
+
+  A process inside `ExitProcess` can be neither suspended (`0xC000010A`, `STATUS_PROCESS_IS_TERMINATING`) nor attached to by a debugger (Win32 error 5). `Process.HasExited` turns true when the exit code is set, seconds before the handle signals for a helper whose capture started, and its stderr's end waits for the handle.
 - **A running server holds the files of its version folder, and install never writes there.** Every Claude session in a game repo runs the server from `%LOCALAPPDATA%\godot-mcp\versions\<name>\`, behind the launcher at `godot-mcp.exe`; `install` adds a new version folder and replaces the launcher by renaming the running one aside, and a folder a process runs from cannot be renamed, so an old version is removed only once nothing runs from it. `publish` alone never touches the installed copy.
 
   Install stops no server itself: a session behind the MCP front restarts onto the new version between requests once it has no live session, and a directly registered one keeps its version until the user runs `/mcp` there, which the install output says per session.
