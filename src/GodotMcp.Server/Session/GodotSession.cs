@@ -141,6 +141,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public DateTime? GameStartTime { get; private set; }
 
     /// <summary>
+    /// The game's image name (<see cref="Process.ProcessName"/>), read from the handle the server keeps on it from the hello;
+    /// null without a kept handle or when it could not be read. A later stop refused the open of the game's pid tells the game
+    /// apart from another program that took the pid by it.
+    /// </summary>
+    public string? GameImageName { get; private set; }
+
+    /// <summary>
     /// When the game's creation time is unknown, the span it must have started in: from the console wrapper's creation to the
     /// moment the game is taken in after the hello's handshake, in UTC; so a later stop can tell the game from a process that
     /// took its pid. Null otherwise, or when the wrapper's creation time could not be read.
@@ -1220,6 +1227,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     {
         GameProcessId = gameProcessId;
         GameStartTime = null;
+        GameImageName = null;
         GameStartWindow = null;
         LeftStillRunning = [];
         if (gameProcessId is not int pid)
@@ -1229,6 +1237,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         run.KeepGameHandle(pid, _logger);
         GameStartTime = StartTimeOf(run.Game);
+        GameImageName = ImageNameOf(run.Game);
         if (GameStartTime is null)
         {
             GameStartWindow = StartWindowOf(run, pid);
@@ -1250,6 +1259,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         catch (Exception e) when (e is InvalidOperationException or Win32Exception)
         {
             Log.GameStartWindowUnreadable(_logger, e, ProjectDir, pid);
+            return null;
+        }
+    }
+
+    /// <summary>The image name of a game the server holds a handle on; null without one, or when it cannot be read.</summary>
+    private static string? ImageNameOf(Process? game)
+    {
+        try
+        {
+            return game?.ProcessName;
+        }
+        catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException)
+        {
             return null;
         }
     }

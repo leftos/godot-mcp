@@ -202,6 +202,15 @@ internal static partial class Log
     )]
     public static partial void StoppedProcessUnreadable(ILogger logger, Exception exception, int pid);
 
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Opening the stopped game's process (pid {Pid}) was refused; it is reported as unopenable.")]
+    public static partial void StoppedGameOpenRefused(ILogger logger, Exception exception, int pid);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Opening the stopped game's process (pid {Pid}) was refused, and another program holds the pid; it counts as gone."
+    )]
+    public static partial void StoppedGamePidTaken(ILogger logger, Exception exception, int pid);
+
     [LoggerMessage(
         Level = LogLevel.Debug,
         Message = "Opening process {Pid}, which a stopped session's game left, to wait for it failed; it is reported still running."

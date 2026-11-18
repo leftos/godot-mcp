@@ -161,6 +161,46 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.False(bystander.WaitForExit(0), "the bystander that took the pid was killed");
     }
 
+    // The pid refuses the open, and the process holding it has another image name than the game had: the pid is not the game's.
+    [Fact]
+    public async Task AStoppedGamesPidRefusedByAProcessOfAnotherNameCountsAsGone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The exit is held through the Win32 debug API.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        _ = await StopWithTheGameHeldAsync(project);
+        _sessions.OpenStoppedGame = (_, _) => throw new UnauthorizedAccessException("refused");
+        _sessions.NameOfListedProcess = _ => "svchost";
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation)
+        );
+
+        Assert.Equal($"No Godot session or warm headless host runs in {project}.", refused.Message);
+    }
+
+    // The pid refuses the open, and the process holding it, read from the process list, has the game's image name: it may be the
+    // game, so it is named as one that could not be opened, never counted gone.
+    [Fact]
+    public async Task AStoppedGamesPidRefusedByAProcessOfTheGamesNameIsReportedUnopenable()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The exit is held through the Win32 debug API.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        (Process game, _) = await StopWithTheGameHeldAsync(project);
+        _sessions.OpenStoppedGame = (_, _) => throw new UnauthorizedAccessException("refused");
+
+        object stopped = await _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        HostStopResult result = Assert.IsType<HostStopResult>(stopped);
+        Assert.Equal([game.Id], result.GameStillRunning);
+        Assert.Equal(
+            $"The game's process (pid {game.Id}) could not be opened, so the stop could not wait for it; "
+                + "it may still be running and holding the project folder.",
+            result.Warning
+        );
+    }
+
     [Fact]
     public async Task ASecondStopWithNothingLeftRefusesAsBefore()
     {
@@ -191,7 +231,7 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         // wait for it sees it gone.
         _sessions.OpenStoppedLeftover = (pid, started) =>
         {
-            Process? leftover = RunKill.OpenIfStillRunning(pid, started);
+            Process? leftover = RunKill.OpenIfStillRunning(pid, started)?.ReleaseHandle();
             if (leftover is not null && Interlocked.Increment(ref opened) == 1)
             {
                 child.Kill();
@@ -243,7 +283,7 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         Assert.True(await ProcessExit.WaitUntilGoneAsync(child, RegistryHarness.HangGuard), "the leftover was not gone");
         Process bystander = StartGame();
         // The pid now names the bystander, a process with another creation time.
-        _sessions.OpenStoppedLeftover = (_, started) => RunKill.OpenIfStillRunning(bystander.Id, started);
+        _sessions.OpenStoppedLeftover = (_, started) => RunKill.OpenIfStillRunning(bystander.Id, started)?.ReleaseHandle();
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             _sessions.StopFolderAsync(project, null, cancellation).WaitAsync(RegistryHarness.HangGuard, cancellation)
@@ -897,9 +937,9 @@ public sealed class StopKilledGameTests : IAsyncDisposable
     }
 
     /// <summary>The product's own open of a stopped game, which lets the game's held exit go on once the game is opened.</summary>
-    private static Process? ReleasedOnceOpened(int pid, DateTime started, ExitHold hold)
+    private static HeldProcess? ReleasedOnceOpened(int pid, DateTime started, ExitHold hold)
     {
-        Process? opened = RunKill.OpenIfStillRunning(pid, started);
+        HeldProcess? opened = RunKill.OpenIfStillRunning(pid, started);
         hold.Release();
         return opened;
     }

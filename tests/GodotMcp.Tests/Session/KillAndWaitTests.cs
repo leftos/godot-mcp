@@ -268,6 +268,138 @@ public sealed class KillAndWaitTests
         Assert.Equal(UnprovenOpen.Gone, opened);
     }
 
+    [Fact]
+    public void OpenIfStillRunningReadsTheCreationTimeThroughTheHandleItHoldsWhileItKills()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in is cmd.exe running ping -n, Windows' syntax.");
+        Process standIn = RegistryHarness.StartStandInGame();
+        try
+        {
+            using HeldProcess? held = RunKill.OpenIfStillRunning(standIn.Id, standIn.StartTime);
+            // Read again through a process object of its own, apart from the argument the open compared.
+            using var byPid = Process.GetProcessById(standIn.Id);
+            DateTime readApart = byPid.StartTime;
+
+            Assert.NotNull(held);
+            Assert.Equal(standIn.Id, held.Id);
+            Assert.Equal(readApart, held.StartTime);
+            held.Process.Kill(entireProcessTree: true);
+            Assert.True(standIn.WaitForExit(RegistryHarness.HangGuard), "the kill through the held process did not end the stand-in");
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(standIn);
+        }
+    }
+
+    // The pid-reuse analogue: the process holding the pid was created at another time than the one recorded.
+    [Fact]
+    public void OpenIfStillRunningCountsAProcessWithAnotherCreationTimeAsGone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stand-in is cmd.exe running ping -n, Windows' syntax.");
+        Process standIn = RegistryHarness.StartStandInGame();
+        try
+        {
+            using HeldProcess? held = RunKill.OpenIfStillRunning(standIn.Id, standIn.StartTime.AddSeconds(1));
+
+            Assert.Null(held);
+            Assert.False(standIn.WaitForExit(0), "the process with another creation time was ended");
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(standIn);
+        }
+    }
+
+    [Theory]
+    [InlineData("Godot_v4.7.2-stable_win64", "svchost", true)]
+    [InlineData("Godot_v4.7.2-stable_win64", "godot_v4.7.2-stable_WIN64", false)]
+    [InlineData(null, "svchost", false)]
+    [InlineData("Godot_v4.7.2-stable_win64", null, false)]
+    [InlineData(null, null, false)]
+    public void APidIsHeldByAnotherImageOnlyWhenBothNamesAreKnownAndDiffer(string? recorded, string? holding, bool another) =>
+        Assert.Equal(another, RunKill.HeldByAnotherImage(recorded, holding));
+
+    // A killed leftover lingering with its exit code set is refused by .NET's own full-access open, so the fallback opens it,
+    // with the rights a wait needs and no right to end it.
+    [Fact]
+    public async Task OpenLeftoverIfStillRunningOpensALingeringLeftoverWithWaitRightsOnly()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The exit is held through the Win32 debug API.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Process lingering = RegistryHarness.StartStandInGame();
+        try
+        {
+            DateTime started = lingering.StartTime;
+            using ExitHold hold = await ExitHold.AttachAsync(lingering, RegistryHarness.HangGuard);
+            lingering.Kill();
+            await hold.Killed.WaitAsync(RegistryHarness.HangGuard, cancellation);
+            List<uint> asked = [];
+
+            using Process? leftover = RunKill.OpenLeftoverIfStillRunning(
+                lingering.Id,
+                started,
+                NullLogger.Instance,
+                (pid, start, rights) =>
+                {
+                    asked.Add(rights);
+                    return HeldProcess.Open(pid, start, rights);
+                }
+            );
+            hold.Release();
+
+            Assert.NotNull(leftover);
+            Assert.Equal([HeldProcess.WaitRights], asked);
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(lingering);
+        }
+    }
+
+    // Killed and waited for, it is gone, though the test's own handle keeps its pid; killed while the test's debugger holds its
+    // exit, it lingers with its exit code set, which .NET's own full-access open refuses (it checks the exit code first): the
+    // open with the games' rights still holds it, and a wait on the held handle reports it still running.
+    [Fact]
+    public async Task OpenIfStillRunningCountsAKilledProcessAsGone()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The exit is held through the Win32 debug API.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Process ended = RegistryHarness.StartStandInGame();
+        Process lingering = RegistryHarness.StartStandInGame();
+        try
+        {
+            DateTime endedStarted = ended.StartTime;
+            ended.Kill(entireProcessTree: true);
+            Assert.True(ended.WaitForExit(RegistryHarness.HangGuard), "the killed stand-in was not gone");
+            using (HeldProcess? gone = RunKill.OpenIfStillRunning(ended.Id, endedStarted))
+            {
+                Assert.Null(gone);
+            }
+
+            DateTime lingeringStarted = lingering.StartTime;
+            using ExitHold hold = await ExitHold.AttachAsync(lingering, RegistryHarness.HangGuard);
+            lingering.Kill();
+            await hold.Killed.WaitAsync(RegistryHarness.HangGuard, cancellation);
+            using HeldProcess? held = RunKill.OpenIfStillRunning(lingering.Id, lingeringStarted);
+            Assert.NotNull(held);
+            FakeTimeProvider time = new();
+            using LoadClock clock = new(time, new NoLoadSource());
+            using LoadDeadline deadline = clock.Start(RunKill.Budget, cancellation);
+            Task<IReadOnlyList<int>> wait = ProcessExit.WaitUntilGoneAsync([(held.Id, held.Handle)], deadline);
+            await RegistryHarness.AdvanceUntilDoneAsync(time, wait, cancellation);
+            IReadOnlyList<int> stillRunning = await wait;
+            hold.Release();
+
+            Assert.Equal([lingering.Id], stillRunning);
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(ended);
+            RegistryHarness.EndStandInGame(lingering);
+        }
+    }
+
     // An awaited process is only waited for: held past the wait's deadline on the fake clock, it is reported still running, the
     // warning left to the caller, and it is still running afterwards.
     [Fact]

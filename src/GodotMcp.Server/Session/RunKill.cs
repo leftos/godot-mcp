@@ -48,8 +48,9 @@ internal static class RunKill
     /// <summary>
     /// Kills each of <paramref name="games"/> that still runs, with its tree, then waits for all of them, and for each of
     /// <paramref name="awaited"/>, which are never killed, together on one deadline of <see cref="Budget"/> started on
-    /// <paramref name="clock"/> after the kills, as <see cref="KillAndWaitAsync"/> does. The awaited processes are waited for
-    /// through registered waits on their handles, which the caller keeps open through the wait.
+    /// <paramref name="clock"/> after the kills, as <see cref="KillAndWaitAsync"/> does. Each game is killed while its held
+    /// handle keeps its pid from being handed on, and waited for through a registered wait on that handle; the awaited processes
+    /// are waited for through registered waits on their own handles. The caller keeps every handle open through the wait.
     /// </summary>
     /// <returns>
     /// The pids of the games still running as the deadline ends, and the warning that names them; the pids of
@@ -57,23 +58,26 @@ internal static class RunKill
     /// the caller; and the time the wait took when anything still runs. Empty lists and no warning when all are gone.
     /// </returns>
     public static async Task<KilledGamesWait> KillAndWaitAllAsync(
-        IReadOnlyList<Process> games,
+        IReadOnlyList<HeldProcess> games,
         IReadOnlyList<Process> awaited,
         LoadClock clock,
         ILogger logger,
         string projectDir
     )
     {
-        foreach (Process game in games)
+        foreach (HeldProcess game in games)
         {
-            Kill(game, logger, projectDir);
+            Kill(game.Process, logger, projectDir);
         }
 
         using LoadDeadline deadline = clock.Start(Budget);
-        Task<bool[]> gamesGone = Task.WhenAll(games.Select(game => GoneAsync(game, deadline)));
-        IReadOnlyList<int> awaitedStillRunning = await AwaitAsync(awaited, deadline, logger);
-        bool[] gone = await gamesGone;
-        int[] stillRunning = [.. games.Where((_, index) => !gone[index]).Select(game => game.Id)];
+        // Through the held handles, never a wait by pid: the process waited for is the one whose creation time was checked.
+        Task<IReadOnlyList<int>> gamesWait = ProcessExit.WaitUntilGoneAsync([.. games.Select(game => (game.Id, game.Handle))], deadline);
+        Task<IReadOnlyList<int>> awaitedWait = AwaitAsync(awaited, deadline, logger);
+        // Both are awaited to their end, a fault of either included, so no registered wait outlives this method or its handles.
+        await Task.WhenAll(gamesWait, awaitedWait);
+        int[] stillRunning = [.. await gamesWait];
+        IReadOnlyList<int> awaitedStillRunning = await awaitedWait;
         if (stillRunning.Length == 0 && awaitedStillRunning.Count == 0)
         {
             return new KilledGamesWait([], Warning: null);
@@ -126,11 +130,18 @@ internal static class RunKill
     /// Opens a process a stopped session's quit game left when it still runs: the process with <paramref name="pid"/>, its handle
     /// opened and kept on it first, whose creation time read through that handle is <paramref name="started"/>, and that is not
     /// gone; so the wait is on the very process whose creation time was checked. One whose handle cannot be opened with full
-    /// access, such as one being torn down, is opened as <see cref="OpenIfStillRunning"/> opens it, without a held handle. The
-    /// caller disposes the process returned.
+    /// access, such as one being torn down, is checked as <see cref="OpenIfStillRunning"/> checks it, and returned without a
+    /// held handle. The caller disposes the process returned.
     /// </summary>
     /// <returns>The process; null when no process has the pid, its creation time differs or cannot be read, or it is gone.</returns>
-    public static Process? OpenLeftoverIfStillRunning(int pid, DateTime started, ILogger logger)
+    /// <param name="pid">The leftover's pid.</param>
+    /// <param name="started">The leftover's creation time, as recorded when the stop found it.</param>
+    /// <param name="logger">Where a failed open or read is logged, at Debug.</param>
+    /// <param name="open">
+    /// The open of a leftover whose full-access handle is refused: <see cref="HeldProcess.Open"/> unless given, as a unit test
+    /// gives one to see the rights asked for.
+    /// </param>
+    public static Process? OpenLeftoverIfStillRunning(int pid, DateTime started, ILogger logger, Func<int, DateTime, uint, HeldProcess?>? open = null)
     {
         Process? opened = Listed(pid, logger);
         try
@@ -142,7 +153,7 @@ internal static class RunKill
 
             if (!Hold(opened, logger))
             {
-                return OpenIfStillRunning(pid, started);
+                return OpenUnheld(pid, started, logger, open ?? HeldProcess.Open);
             }
 
             if (opened.StartTime == started && !opened.WaitForExit(0))
@@ -357,38 +368,46 @@ internal static class RunKill
     }
 
     /// <summary>
-    /// Opens the game, or a process its quit game left, that a stopped session recorded when it still runs: the process with
-    /// <paramref name="pid"/> whose creation time is <paramref name="started"/> and that is not gone. The caller disposes the
-    /// process returned.
+    /// Opens the game a stopped session recorded when it still runs, as <see cref="HeldProcess.Open"/> opens it with the rights a
+    /// stop needs to kill and wait for it (<see cref="HeldProcess.GameRights"/>): the process with <paramref name="pid"/>, its
+    /// handle held from before its creation time is read through it, whose creation time is <paramref name="started"/> and that
+    /// is not gone. The caller disposes the process returned, after the last kill and wait through it.
     /// </summary>
     /// <returns>
-    /// The process; null when no process has the pid, its creation time differs (another process took the pid) or cannot be read,
-    /// or it is gone.
+    /// The held process; null when no process has the pid, its creation time differs (another process took the pid) or cannot be
+    /// read, or it is gone.
     /// </returns>
-    public static Process? OpenIfStillRunning(int pid, DateTime started)
+    /// <exception cref="UnauthorizedAccessException">A process has the pid but refuses the open: it is not gone.</exception>
+    public static HeldProcess? OpenIfStillRunning(int pid, DateTime started)
     {
-        Process? opened = null;
         try
         {
-            opened = FromProcessList(pid);
-            if (opened is not null && opened.StartTime == started && !opened.WaitForExit(0))
-            {
-                Process game = opened;
-                opened = null;
-                return game;
-            }
+            return HeldProcess.Open(pid, started, HeldProcess.GameRights);
         }
-        // Each of these says the recorded game is not there to wait for: no process has the pid, or it cannot be read.
-        catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
+        // Each of these says the recorded game is not there to wait for: the process list or the process cannot be read.
+        catch (Exception e) when (e is InvalidOperationException or Win32Exception)
         {
             return null;
         }
-        finally
-        {
-            opened?.Dispose();
-        }
+    }
 
-        return null;
+    /// <summary>
+    /// A leftover whose handle cannot be opened with full access, checked through <paramref name="open"/> as
+    /// <see cref="OpenIfStillRunning"/> checks a game, but with the rights a wait needs alone (<see cref="HeldProcess.WaitRights"/>),
+    /// since a leftover is never killed; returned without the handle the check held. Null, logged at Debug when refused or
+    /// unreadable, as for one that is gone.
+    /// </summary>
+    private static Process? OpenUnheld(int pid, DateTime started, ILogger logger, Func<int, DateTime, uint, HeldProcess?> open)
+    {
+        try
+        {
+            return open(pid, started, HeldProcess.WaitRights)?.ReleaseHandle();
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or InvalidOperationException or Win32Exception)
+        {
+            Log.StoppedProcessUnreadable(logger, e, pid);
+            return null;
+        }
     }
 
     /// <summary>
@@ -396,7 +415,32 @@ internal static class RunKill
     /// <see cref="Process.GetProcessById(int)"/>, which turns down a killed process whose exit code is set while Windows has not
     /// yet let it go: the very game a stop's kill wait outlived.
     /// </summary>
-    private static Process? FromProcessList(int pid)
+    /// <summary>
+    /// The image name of the process with <paramref name="pid"/>, as the process list gives it, without opening the process; null
+    /// when none has the pid or the list cannot be read.
+    /// </summary>
+    internal static string? ListedName(int pid)
+    {
+        try
+        {
+            using Process? listed = FromProcessList(pid);
+            return listed?.ProcessName;
+        }
+        catch (Exception e) when (e is InvalidOperationException or Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether the process holding a stopped game's pid is shown to be another program: true only when both the game's recorded
+    /// image name and the holder's are known and differ (compared ignoring case, as Windows names images); false, so the holder
+    /// may be the game, when either is unknown or they match.
+    /// </summary>
+    internal static bool HeldByAnotherImage(string? recorded, string? holding) =>
+        recorded is not null && holding is not null && !string.Equals(recorded, holding, StringComparison.OrdinalIgnoreCase);
+
+    internal static Process? FromProcessList(int pid)
     {
         Process? found = null;
         foreach (Process process in Process.GetProcesses())

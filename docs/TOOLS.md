@@ -485,7 +485,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A game still running after that wait adds to `warning`: `The killed game (pid <pid>) was still running after <spent>; its project folder stays in use until it is gone.` With the game gone but the wrapper not, it adds `The killed console wrapper (pid <pid>) was still running after <spent>.` instead. `<spent>` is `5 s of load-adjusted time (wall 5.2 s, machine free 90% on average)`, or at the backstop `25 s of wall time, 5 x its 5 s kill wait (load-adjusted 3 s, machine free 10% on average)`.
 
-  Calling `stop_project` again on that folder (with `projectPath`, or naming the stopped session) waits once more for what the stop left running, all on one 5 s load-adjusted kill wait. Each killed game still running (its pid with the same start time, so a pid since reused by another process counts as gone) is killed again.
+  Calling `stop_project` again on that folder (with `projectPath`, or naming the stopped session) waits once more for what the stop left running, all on one 5 s load-adjusted kill wait. Each killed game still running (its pid with the same start time, so a pid since reused by another process counts as gone) is killed again, through the handle that read its start time. A pid the server is refused opening counts as gone when another program's image holds it; otherwise it is named in the could-not-be-opened warning.
 
   Each process the quit game left that was still running after the first wait (`leftRunning`, the "The game left ..." warning) is waited for, never killed: it is remembered by pid, start time and image name, and reopened only with the same start time.
 

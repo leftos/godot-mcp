@@ -156,7 +156,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Opens the game a stopped session recorded, from its pid and creation time, when it still runs: <see cref="RunKill.OpenIfStillRunning"/>
     /// unless set, as a unit test sets it to stand in for the process boundary.
     /// </summary>
-    internal Func<int, DateTime, Process?> OpenStoppedGame { get; set; } = RunKill.OpenIfStillRunning;
+    /// <remarks>It throws <see cref="UnauthorizedAccessException"/> when a process has the pid but refuses the open.</remarks>
+    internal Func<int, DateTime, HeldProcess?> OpenStoppedGame { get; set; } = RunKill.OpenIfStillRunning;
+
+    /// <summary>
+    /// The image name of the process holding a pid, read from the process list without opening it: <see cref="RunKill.ListedName"/>
+    /// unless set, as a unit test sets it to stand in for another process holding the pid.
+    /// </summary>
+    internal Func<int, string?> NameOfListedProcess { get; set; } = RunKill.ListedName;
 
     /// <summary>
     /// Opens a process a stopped session's quit game left running, from its pid and creation time, when it still runs:
@@ -623,12 +630,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             if (session.GameStartTime is DateTime started)
             {
-                found.AddKilled(OpenStoppedGame(pid, started));
+                AddStoppedGame(session, pid, started, found);
             }
             else
             {
                 UnprovenOpen game = OpenUnprovenGame(pid, session.GameStartWindow);
-                found.AddKilled(game.Game);
+                found.AddKilled(game.Game is { } opened ? HeldProcess.Holding(opened) : null);
                 if (game.Unopenable)
                 {
                     found.Unopenable.Add(pid);
@@ -642,6 +649,32 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             {
                 found.Awaited.Add((process, leftover.Id, $"{leftover.Name} (pid {leftover.Id})"));
             }
+        }
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="found"/> the killed game with <paramref name="pid"/> and creation time <paramref name="started"/>
+    /// when it still runs (<see cref="OpenStoppedGame"/>). When a process holds the pid and refuses the open, the image name the
+    /// process list gives it (<see cref="NameOfListedProcess"/>) decides: another than <paramref name="session"/> recorded for
+    /// its game shows the pid is not the game's, which is left out as gone; the same, or either unknown, adds the pid as a game
+    /// that could not be opened, so one that may be the game is named, never counted gone.
+    /// </summary>
+    private void AddStoppedGame(GodotSession session, int pid, DateTime started, StoppedProcesses found)
+    {
+        try
+        {
+            found.AddKilled(OpenStoppedGame(pid, started));
+        }
+        catch (UnauthorizedAccessException e)
+        {
+            if (RunKill.HeldByAnotherImage(session.GameImageName, NameOfListedProcess(pid)))
+            {
+                Log.StoppedGamePidTaken(logger, e, pid);
+                return;
+            }
+
+            Log.StoppedGameOpenRefused(logger, e, pid);
+            found.Unopenable.Add(pid);
         }
     }
 
@@ -682,13 +715,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal sealed class StoppedProcesses : IDisposable
     {
-        public List<Process> Killed { get; } = [];
+        /// <summary>The killed games, each with the handle that proved it held until it is disposed here, after the wait.</summary>
+        public List<HeldProcess> Killed { get; } = [];
 
         public List<(Process Process, int Id, string Described)> Awaited { get; } = [];
 
         public List<int> Unopenable { get; } = [];
 
-        public void AddKilled(Process? game)
+        public void AddKilled(HeldProcess? game)
         {
             if (game is not null)
             {
@@ -698,7 +732,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
         public void Dispose()
         {
-            foreach (Process process in Killed.Concat(Awaited.Select(leftover => leftover.Process)))
+            foreach (HeldProcess game in Killed)
+            {
+                game.Dispose();
+            }
+
+            foreach ((Process process, _, _) in Awaited)
             {
                 process.Dispose();
             }
