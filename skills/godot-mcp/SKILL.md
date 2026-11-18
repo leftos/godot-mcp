@@ -314,7 +314,7 @@ Keep the window unminimized, since a minimized window holds its last frame (the 
 
 The scene tools take a `.xscn` (godot-xaml's format) wherever they take a `.tscn`, through the project's addon. To write or hand-edit `.xscn` and `.xres` text, or read a `GX`, `GXC`, `GXP` or `GXT` code, load the `godot-xaml` skill: it owns the format.
 
-`validate` loads scripts, scenes and resources and reports errors, C# build included (a `.cs` target gets its own errors and warnings and the scenes that attach it).
+`validate` loads scripts, scenes and resources and compiles shaders, and reports errors, C# build included (a `.cs` target gets its own errors and warnings and the scenes that attach it; a `.gdshaderinc` is checked through the `.gdshader` files that include it, and a shader's warnings and missing global uniforms are not reported).
 
 `get_scene_file_tree` lists a scene file's nodes (paths from its root: `.`, `Boss/Sprite`), or an imported `.glb`, `.gltf`, `.fbx`, `.blend` or `.dae` model's, importing it first when needed (the other scene tools refuse such models).
 

@@ -9,6 +9,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A `prepare: never` launch of `run_project`, `run_editor` or `restart_project` notes a missing Debug C# assembly, or one older than its sources.
 - `crop_screenshot` takes `options.path` to write the crop to a `.png` in the checkout's `.tmp`, instead of beside the source.
 - A `batch_drive` reply past 20000 characters comes back as a per-step summary, with the whole result in a file `full` names; `options.result` picks `full` or `summary`.
+- `validate` checks `.gdshader` and `.gdshaderinc` targets headless and reports each shader compile error with its file and line.
 
 ### Fixed
 

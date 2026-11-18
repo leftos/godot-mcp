@@ -13,17 +13,20 @@ extends SceneTree
 ## validate loads each target with the cache ignored, never instantiating a scene or resource, and
 ## checks each C# script the target's whole dependency closure reaches (however deep, each script
 ## once a run) with can_instantiate; an error is grouped under the res:// file it names, else under
-## the file being checked. get_scene_file_tree reads a scene's SceneState, expanding instanced
-## scenes and an inherited scene's base in place, without instantiating anything; an imported
-## model's scene (a .glb, .gltf, .fbx, .blend or .dae file's, loaded through its .import) is read
-## the same way. describe_class reads a class through the bridge's class reader, as a running
-## game's bridge does. Every other op is a scene edit, run by scene_ops.gd.
+## the file being checked. A .gdshader target is compiled too, and a .gdshaderinc target is checked
+## by compiling the shaders that include it (shader_check.gd). get_scene_file_tree reads a scene's
+## SceneState, expanding instanced scenes and an inherited scene's base in place, without
+## instantiating anything; an imported model's scene (a .glb, .gltf, .fbx, .blend or .dae file's,
+## loaded through its .import) is read the same way. describe_class reads a class through the
+## bridge's class reader, as a running game's bridge does. Every other op is a scene edit, run by
+## scene_ops.gd.
 
 const ClassInfo := preload("../bridge/godot_mcp_class_info.gd")
 const SceneOps := preload("scene_ops.gd")
 const SceneEdit := preload("scene_edit.gd")
 const SceneFiles := preload("scene_files.gd")
 const ScenePaths := preload("scene_paths.gd")
+const ShaderCheck := preload("shader_check.gd")
 const RES_PREFIX := "res://"
 ## How deep instanced scenes are expanded; Godot refuses a scene that instances itself.
 const MAX_INSTANCE_DEPTH := 64
@@ -51,6 +54,8 @@ class ErrorLog:
 			"message": rationale if not rationale.is_empty() else code,
 			"file": file,
 			"line": line,
+			# The logger's own type, which the shader check reads; no reply carries it (see public).
+			"errorType": error_type,
 		}
 		_mutex.lock()
 		_entries.append(entry)
@@ -177,8 +182,18 @@ static func results_of(groups: Dictionary) -> Array:
 static func run_request(op: String, params: Dictionary, log: ErrorLog, start: int) -> Dictionary:
 	log.reset_to(start)
 	var reply: Dictionary = _dispatch(op, params, log)
-	reply["engineErrors"] = log.since(0)
+	reply["engineErrors"] = log.since(0).map(public)
 	return reply
+
+
+## entry, an ErrorLog entry, as a reply gives it: {type, message, file, line}.
+static func public(entry: Dictionary) -> Dictionary:
+	return {
+		"type": entry["type"],
+		"message": entry["message"],
+		"file": entry["file"],
+		"line": entry["line"]
+	}
 
 
 static func _dispatch(op: String, params: Dictionary, log: ErrorLog) -> Dictionary:
@@ -213,7 +228,9 @@ func _write_reply(path: String, reply: Dictionary) -> void:
 
 
 ## Errors logged before the first target (an autoload's _init, the project's settings) are listed
-## under the res:// file they name, else in the result's engineErrors.
+## under the res:// file they name, else in the result's engineErrors. A .gdshaderinc target that
+## no shader includes, or more than ShaderCheck.MAX_INCLUDERS do, gets a {path, note} in notes,
+## which the result holds only when there is one.
 static func _validate(targets: Array, log: ErrorLog) -> Dictionary:
 	var groups: Dictionary = {}
 	group_errors(log.since(0), "", groups)
@@ -221,18 +238,58 @@ static func _validate(targets: Array, log: ErrorLog) -> Dictionary:
 	groups.erase("")
 	var visited: Dictionary = {}
 	var checked: Dictionary = {}
+	var notes: Array = []
 	for target: String in targets:
-		_check_file(target, groups, checked, visited, log)
-	return {"checked": targets.size(), "results": results_of(groups), "engineErrors": unattributed}
+		if ShaderCheck.is_kind(target, ShaderCheck.INCLUDE):
+			_check_include(target, groups, notes, log)
+		else:
+			_check_file(target, groups, checked, visited, log)
+	var result: Dictionary = {
+		"checked": targets.size(), "results": results_of(groups), "engineErrors": unattributed
+	}
+	if not notes.is_empty():
+		result["notes"] = notes
+	return result
+
+
+## Checks the .gdshaderinc at path by compiling the first ShaderCheck.MAX_INCLUDERS shaders that
+## include it, directly or through other includes, by path: an error in the include is grouped
+## under it, one in a shader's own text under that shader. Adds the include's note to notes when
+## it has one.
+static func _check_include(path: String, groups: Dictionary, notes: Array, log: ErrorLog) -> void:
+	_check_includers(path, ShaderCheck.includers(path), groups, notes, log)
+
+
+## Compiles the first ShaderCheck.MAX_INCLUDERS of found, the shaders that include the
+## .gdshaderinc at path, and adds its note to notes when it has one.
+static func _check_includers(
+	path: String, found: PackedStringArray, groups: Dictionary, notes: Array, log: ErrorLog
+) -> void:
+	var note: String = ShaderCheck.include_note(path, found.size())
+	if not note.is_empty():
+		notes.append({"path": path, "note": note})
+	for shader: String in found.slice(0, ShaderCheck.MAX_INCLUDERS):
+		_check_file(shader, groups, {}, {}, log)
 
 
 ## Checks the file at path and every C# script its dependency closure reaches here. checked holds
 ## the scripts loaded so far this run, so a script many targets reach is loaded and checked once.
-## A file that did not load gets an entry of its own when the load logged no error, or when
-## load_failure has a hint to give.
 static func _check_file(
 	path: String, groups: Dictionary, checked: Dictionary, visited: Dictionary, log: ErrorLog
 ) -> void:
+	group_errors(_load_errors(path, log), path, groups)
+	if path.ends_with(".gd") or ShaderCheck.is_kind(path, ShaderCheck.SHADER):
+		return
+	for reached: String in SceneFiles.dependency_closure(path, visited):
+		if reached.ends_with(".cs") and not checked.has(reached):
+			checked[reached] = true
+			_check_script(reached, groups, log)
+
+
+## What loading the file at path logs, compiling it too when it is a .gdshader (ShaderCheck). A
+## file that did not load gets an entry of its own when the load logged no error, or when
+## load_failure has a hint to give.
+static func _load_errors(path: String, log: ErrorLog) -> Array:
 	var start: int = log.count()
 	var resource: Resource = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 	var entries: Array = log.since(start)
@@ -241,13 +298,8 @@ static func _check_file(
 		var message: String = SceneFiles.load_failure(path, plain)
 		if message != plain or not _has_error(entries):
 			entries.append({"type": "error", "message": message, "file": path, "line": 0})
-	group_errors(entries, path, groups)
-	if path.ends_with(".gd"):
-		return
-	for reached: String in SceneFiles.dependency_closure(path, visited):
-		if reached.ends_with(".cs") and not checked.has(reached):
-			checked[reached] = true
-			_check_script(reached, groups, log)
+	entries.append_array(ShaderCheck.compiled(resource, path, log))
+	return entries
 
 
 ## Whether entries hold an error, not only warnings.

@@ -43,7 +43,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 **Edit the project without running it**
 
-- Check that scripts and scenes load, including a C# file through the real build, with compiler errors quoted.
+- Check that scripts and scenes load and shaders compile, including a C# file through the real build, with compiler errors quoted.
 - Create and save scenes; add, delete, duplicate, reorder and reparent nodes, touching only the lines an edit changes; attach scripts; load sprites; set properties; connect and disconnect signals; many edits in one batch.
 - In a project with the godot-xaml addon, every scene tool takes its `.xscn` scenes (and `validate` its `.xres` resources) wherever it takes a `.tscn`, saving them through the addon so their comments and keys stay.
 - Give hand-written `.tscn` and `.tres` files the uid the editor would, changing only their header line.

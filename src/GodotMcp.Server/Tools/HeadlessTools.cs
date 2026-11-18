@@ -31,8 +31,20 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     private const string ProjectPathDescription = "The folder that holds the project's project.godot.";
 
-    private static readonly string[] ValidateExtensions = [".gd", ".cs", ".tscn", ".scn", ".xscn", ".tres", ".res", ".xres"];
-    private static readonly string[] SweepExtensions = [".gd", ".tscn", ".xscn", ".tres", ".xres"];
+    private static readonly string[] ValidateExtensions =
+    [
+        ".gd",
+        ".cs",
+        ".tscn",
+        ".scn",
+        ".xscn",
+        ".tres",
+        ".res",
+        ".xres",
+        ".gdshader",
+        ".gdshaderinc",
+    ];
+    private static readonly string[] SweepExtensions = [".gd", ".tscn", ".xscn", ".tres", ".xres", ".gdshader"];
     internal static readonly string[] SceneExtensions = [".tscn", ".scn", ".xscn"];
     internal static readonly string[] ImportedSceneExtensions = [".glb", ".gltf", ".fbx", ".blend", ".dae"];
     private static readonly string[] BuildStatesChecked = ["built", "up-to-date", "failed"];
@@ -40,11 +52,15 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     [McpServerTool(Name = "validate", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
-        "Checks a project's GDScript, scenes and resources without running the game, in a headless Godot: each file is loaded "
-            + "(scripts compiled; scenes and resources loaded, never instantiated), and every C# script a scene or resource uses "
-            + "is checked for its class. The project's autoloads are freed before they enter the tree (their _init still runs). "
-            + "Returns {valid, checked, results: [{path, errors: [{message, file, line}]}], csharp?, prep}: results lists only the "
-            + "files with errors, each error under the file it names. prep.filesWritten and prep.filesRemoved list the .uid and "
+        "Checks a project's GDScript, scenes, resources and shaders without running the game, in a headless Godot: each file is "
+            + "loaded (scripts compiled; scenes and resources loaded, never instantiated), and every C# script a scene or resource "
+            + "uses is checked for its class. A .gdshader is compiled as the Dummy renderer compiles it (errors only, with the "
+            + "include's file and line for an error inside an #include); a .gdshaderinc is checked by compiling the shaders that "
+            + "include it (at most 20, by path). The project's autoloads are freed before they enter the tree (their _init still runs). "
+            + "Returns {valid, checked, results: [{path, errors: [{message, file, line}]}], notes?, csharp?, prep}: results lists only "
+            + "the files with errors, each error under the file it names. notes [{path, note}] says of a .gdshaderinc target that "
+            + "no shader includes it, or how many of its includers past 20 were left out; a note never makes valid false. "
+            + "prep.filesWritten and prep.filesRemoved list the .uid and "
             + ".import files the prep's import created, changed or deleted in the project, as res:// paths, so a caller that must "
             + "not change the tree knows it did. Godot's GDScript parser reports only the first parse error "
             + "in a file, so fix it and validate again to see the next. A C# build that fails does not stop the check: it comes "
@@ -62,9 +78,10 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         [Description(ProjectPathDescription)] string projectPath,
         [Description(
             "1 to 50 files to check: res:// paths or paths relative to the project folder, each a .gd, .cs, .tscn, .scn, .xscn, "
-                + ".tres, .res or .xres inside it. A .cs is checked through the C# build and the scenes that attach it, and must be one "
-                + "of the Compile items of the project's .csproj. Left out: every git-versioned .gd, .tscn, .xscn, .tres and .xres of "
-                + "the project folder, at most 500."
+                + ".tres, .res, .xres, .gdshader or .gdshaderinc inside it. A .cs is checked through the C# build and the scenes that "
+                + "attach it, and must be one of the Compile items of the project's .csproj; a .gdshaderinc through the .gdshader files "
+                + "that include it, directly or through other .gdshaderinc files. Left out: every git-versioned .gd, .tscn, .xscn, "
+                + ".tres, .xres and .gdshader of the project folder, at most 500."
         )]
             string[]? targets = null,
         [Description("{prepare}: " + PrepareDescription)] HeadlessOptions? options = null,
@@ -150,11 +167,13 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         {
             throw new McpException(
                 $"targets takes 1 to {MaxTargets} paths; got {targets.Count}. Split the check over several calls, or leave targets out "
-                    + "to check every versioned script, scene and resource."
+                    + "to check every versioned script, scene, resource and shader."
             );
         }
 
-        const string refusal = "is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .xscn, .tres, .res and .xres files.";
+        const string refusal =
+            "is not a script, scene, resource or shader: validate checks .gd, .cs, .tscn, .scn, .xscn, .tres, .res, .xres, .gdshader "
+            + "and .gdshaderinc files.";
         return [.. targets.Select(target => ToResPath(projectDir, target, new PathRule("targets", ValidateExtensions, refusal)))];
     }
 
@@ -200,7 +219,10 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             );
     }
 
-    /// <summary>The project folder's git-versioned scripts, scenes and resources that exist, as res:// paths in ordinal order.</summary>
+    /// <summary>
+    /// The project folder's git-versioned scripts, scenes, resources and shaders that exist, as res:// paths in ordinal order;
+    /// <see cref="MaxSweep"/> caps them all together.
+    /// </summary>
     /// <exception cref="McpException">The folder is not in a git repository, or it has more than <see cref="MaxSweep"/>.</exception>
     internal static IReadOnlyList<string> VersionedTargets(string projectDir, ILogger logger)
     {
@@ -219,12 +241,14 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         return found.Length <= MaxSweep
             ? found
             : throw new McpException(
-                $"the project has {found.Length} versioned scripts, scenes and resources; validate takes at most {MaxSweep} at once: pass targets."
+                $"the project has {found.Length} versioned scripts, scenes, resources and shaders; validate takes at most {MaxSweep} "
+                    + "at once: pass targets."
             );
     }
 
     /// <summary>
-    /// validate's result: <c>{valid, checked, results, engineErrors?, csharp?, prep}</c>; <c>checked</c> counts the files Godot
+    /// validate's result: <c>{valid, checked, results, notes?, engineErrors?, csharp?, prep}</c>; <c>notes</c>, the notes on
+    /// .gdshaderinc targets, passes through when there are any and never makes <c>valid</c> false; <c>checked</c> counts the files Godot
     /// checked and the .cs targets. While the prep's C# build failed, the errors a missing project assembly causes
     /// (<see cref="MissingAssembly.IsSymptom"/>) are left out of <c>results</c> and <c>engineErrors</c> and counted under
     /// <c>csharp</c>: the build's failure still makes <c>valid</c> false.
@@ -245,6 +269,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             ["checked"] = CountOf(reply["checked"]) + csTargets.Count,
             ["results"] = results,
         };
+        AddNotes(reply, shaped);
         if (unattributed.Count > 0)
         {
             shaped["engineErrors"] = unattributed;
@@ -257,6 +282,15 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
         shaped["prep"] = JsonSerializer.SerializeToNode(run.Prep, Json);
         return shaped;
+    }
+
+    /// <summary>Copies the reply's notes on .gdshaderinc targets into the shaped result, when there are any.</summary>
+    private static void AddNotes(JsonObject reply, JsonObject shaped)
+    {
+        if (reply["notes"] is JsonArray { Count: > 0 } notes)
+        {
+            shaped["notes"] = notes.DeepClone();
+        }
     }
 
     /// <summary>Whether this call's build failed, or the build the .cs targets are reported from had an error.</summary>

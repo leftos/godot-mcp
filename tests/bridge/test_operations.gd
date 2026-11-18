@@ -1,8 +1,10 @@
+# gdlint: disable=max-public-methods
 extends "res://gd_test.gd"
 ## The headless operations' pure helpers (headless/operations.gd and the scene modules beside it):
 ## the request file's parsing, the grouping of logged errors by the file they name, the C# scripts
 ## among a scene's dependencies, node paths, the node tree get_scene_file_tree builds from scene
-## states, the error log's cut-back, and the uids a save reads and writes back.
+## states, the error log's cut-back, the uids a save reads and writes back, and validate's shader
+## checks on the shaders under shader_fixtures/.
 # gdlint: disable=private-method-call
 
 const HEADLESS_SCRIPT := "../../headless/operations.gd"
@@ -10,7 +12,10 @@ const SCENE_EDIT_SCRIPT := "../../headless/scene_edit.gd"
 const SCENE_NODES_SCRIPT := "../../headless/scene_nodes.gd"
 const SCENE_PATHS_SCRIPT := "../../headless/scene_paths.gd"
 const SCENE_FILES_SCRIPT := "../../headless/scene_files.gd"
+const SHADER_CHECK_SCRIPT := "../../headless/shader_check.gd"
 const RunDir := preload("res://run_dir.gd")
+## The shaders validate's shader tests check, as the probe on Godot 4.7.2 measured them.
+const SHADERS := "res://shader_fixtures/"
 
 var _ops: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(HEADLESS_SCRIPT).simplify_path()
@@ -26,6 +31,9 @@ var _paths: GDScript = load(
 )
 var _files: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_FILES_SCRIPT).simplify_path()
+)
+var _shader: GDScript = load(
+	ProjectSettings.globalize_path("res://").path_join(SHADER_CHECK_SCRIPT).simplify_path()
 )
 ## The error log operations.gd keeps its entries in, and a request answers from.
 var _error_log: GDScript = _ops.get_script_constant_map()["ErrorLog"]
@@ -365,6 +373,226 @@ func test_a_message_with_no_leading_path_keeps_the_logged_file() -> void:
 	var error: Dictionary = _entry("error", "Parse Error: x", "res://a.gd", 2)
 	_ops.group_errors([error], "res://checked.tscn", groups)
 	assert_eq(groups.keys(), ["res://a.gd"], "the file it was logged from")
+
+
+func test_a_shader_s_compile_error_is_reported_with_its_line() -> void:
+	var path: String = SHADERS + "bad.gdshader"
+	var message := 'Invalid arguments for the built-in function: "vec3(float,float)".'
+	var result: Dictionary = _validated([path])
+	assert_eq(result["checked"], 1, "one target")
+	assert_eq(
+		result["results"],
+		[{"path": path, "errors": [{"message": message, "file": path, "line": 4}]}],
+		"the error alone, the driver's follow-up left out"
+	)
+
+
+func test_an_error_in_an_include_is_reported_under_the_include() -> void:
+	var include: String = SHADERS + "inc.gdshaderinc"
+	var message := "Unknown identifier in expression: 'undefined_thing'."
+	var result: Dictionary = _validated([SHADERS + "uses_inc.gdshader"])
+	assert_eq(
+		result["results"],
+		[{"path": include, "errors": [{"message": message, "file": include, "line": 2}]}],
+		"the include's file and line"
+	)
+
+
+func test_a_valid_shader_with_a_global_uniform_has_no_error() -> void:
+	var result: Dictionary = _validated([SHADERS + "good.gdshader"])
+	assert_eq(result["results"], [], "no error")
+	assert_true(not result.has("notes"), "and no note")
+
+
+func test_a_missing_include_is_reported_on_the_include_s_line() -> void:
+	var path: String = SHADERS + "missing_inc.gdshader"
+	var message := "Shader include file does not exist: res://shader_fixtures/nope.gdshaderinc"
+	assert_eq(
+		_validated([path])["results"],
+		[{"path": path, "errors": [{"message": message, "file": path, "line": 2}]}],
+		"the #include's line"
+	)
+
+
+func test_a_missing_include_after_a_define_keeps_its_own_line() -> void:
+	var path: String = SHADERS + "multi_dir.gdshader"
+	var message := "Shader include file does not exist: res://fx/missing.gdshaderinc"
+	assert_eq(
+		_validated([path])["results"],
+		[{"path": path, "errors": [{"message": message, "file": path, "line": 3}]}],
+		"line 3, and no tokenizer error"
+	)
+
+
+func test_a_compiler_check_of_a_valid_shader_is_no_error() -> void:
+	assert_eq(_validated([SHADERS + "sampler_helper.gdshader"])["results"], [], "no error")
+
+
+func test_an_upper_case_extension_is_compiled() -> void:
+	var path: String = SHADERS + "upper_case.GDSHADER"
+	var message := 'Invalid arguments for the built-in function: "vec3(float,float)".'
+	assert_eq(
+		_validated([path])["results"],
+		[{"path": path, "errors": [{"message": message, "file": path, "line": 4}]}],
+		"compiled as a .gdshader"
+	)
+
+
+func test_an_include_reached_through_another_include_is_compiled() -> void:
+	var include: String = SHADERS + "nest_c.gdshaderinc"
+	var message := "Unknown identifier in expression: 'nowhere'."
+	var result: Dictionary = _validated([include])
+	assert_eq(
+		result["results"],
+		[{"path": include, "errors": [{"message": message, "file": include, "line": 2}]}],
+		"through nest_b.gdshaderinc to nest_a.gdshader"
+	)
+	assert_true(not result.has("notes"), "and no note")
+
+
+func test_an_includer_s_own_error_lands_under_the_includer() -> void:
+	var shader: String = SHADERS + "own_error.gdshader"
+	var message := 'Invalid arguments for the built-in function: "vec3(float,float)".'
+	assert_eq(
+		_validated([SHADERS + "ok.gdshaderinc"])["results"],
+		[{"path": shader, "errors": [{"message": message, "file": shader, "line": 4}]}],
+		"under the includer"
+	)
+
+
+func test_an_include_in_a_block_comment_does_not_count() -> void:
+	var include: String = SHADERS + "hidden.gdshaderinc"
+	var note: String = "no .gdshader includes %s, so it was not compiled" % include
+	assert_eq(_validated([include]).get("notes"), [{"path": include, "note": note}], "the note")
+
+
+func test_an_include_with_too_many_includers_notes_how_many_were_left_out() -> void:
+	var target := "res://i.gdshaderinc"
+	assert_eq(
+		_shader.include_note(target, 25),
+		"25 .gdshader files include res://i.gdshaderinc; the first 20 by path were compiled, 5 left out",
+		"past 20"
+	)
+	assert_eq(_shader.include_note(target, 20), "", "20 is no note")
+
+
+func test_an_include_no_shader_includes_is_valid_with_a_note() -> void:
+	var include: String = SHADERS + "lonely.gdshaderinc"
+	var note: String = "no .gdshader includes %s, so it was not compiled" % include
+	var result: Dictionary = _validated([include])
+	assert_eq(result["results"], [], "no error")
+	assert_eq(result.get("notes"), [{"path": include, "note": note}], "the note")
+
+
+func test_include_lines_resolve_res_and_relative_paths() -> void:
+	var shader := "res://x.gdshader"
+	var inc: Array = [{"line": 1, "path": "res://inc.gdshaderinc"}]
+	assert_eq(_shader.include_lines('#include "res://inc.gdshaderinc"', shader), inc, "res://")
+	assert_eq(_shader.include_lines('  #include "inc.gdshaderinc"', shader), inc, "relative")
+	assert_eq(
+		_shader.include_lines('#include "../inc.gdshaderinc"', "res://fx/x.gdshader"),
+		inc,
+		"from a sibling folder"
+	)
+	assert_eq(
+		_shader.include_lines('#include "res://other/inc.gdshaderinc"', shader),
+		[{"line": 1, "path": "res://other/inc.gdshaderinc"}],
+		"another folder's"
+	)
+
+
+func test_include_lines_leave_out_comments_and_keep_line_numbers() -> void:
+	var shader := "res://x.gdshader"
+	var line := '#include "res://inc.gdshaderinc"'
+	assert_eq(_shader.include_lines("// " + line, shader), [], "a comment")
+	assert_eq(_shader.include_lines("vec3 a; // " + line, shader), [], "after a // on the line")
+	assert_eq(
+		_shader.include_lines("/*\n%s\n*/\n%s" % [line, line], shader),
+		[{"line": 4, "path": "res://inc.gdshaderinc"}],
+		"inside a block comment, and the line after it keeps its number"
+	)
+
+
+func test_an_error_in_a_user_include_is_reported() -> void:
+	var include: String = RunDir.path("user_inc.gdshaderinc")
+	var shader: String = RunDir.path("user_main.gdshader")
+	_write(include, "float user_value() {\n\treturn user_thing;\n}\n")
+	var code := 'shader_type spatial;\n#include "%s"\nvoid fragment() {}\n' % include
+	_write(shader, code)
+	var message := "Unknown identifier in expression: 'user_thing'."
+	assert_eq(
+		_validated([shader])["results"],
+		[{"path": shader, "errors": [{"message": message, "file": include, "line": 2}]}],
+		"the include's own path and line, under the shader"
+	)
+
+
+func test_an_include_in_an_inactive_branch_is_not_missing() -> void:
+	assert_eq(_validated([SHADERS + "ifdef.gdshader"])["results"], [], "no error")
+
+
+func test_an_unknown_shader_type_names_the_shader_type_line() -> void:
+	var path: String = SHADERS + "spatail.gdshader"
+	var message := "Shader type spatail not supported in Dummy renderer."
+	assert_eq(
+		_validated([path])["results"],
+		[{"path": path, "errors": [{"message": message, "file": path, "line": 2}]}],
+		"the shader_type line"
+	)
+
+
+func test_a_missing_include_inside_an_include_is_reported_against_the_include() -> void:
+	var include: String = SHADERS + "miss_a.gdshaderinc"
+	var message := "Shader include file does not exist: res://shader_fixtures/gone.gdshaderinc"
+	assert_eq(
+		_validated([SHADERS + "miss_s.gdshader"])["results"],
+		[{"path": include, "errors": [{"message": message, "file": include, "line": 4}]}],
+		"the include's #include line"
+	)
+
+
+func test_a_cycle_of_includes_ends() -> void:
+	var include: String = SHADERS + "cyc_a.gdshaderinc"
+	var note: String = "no .gdshader includes %s, so it was not compiled" % include
+	assert_eq(_validated([include]).get("notes"), [{"path": include, "note": note}], "the note")
+
+
+func test_an_include_with_21_includers_compiles_the_first_20() -> void:
+	var found: PackedStringArray = []
+	for index: int in 21:
+		var shader: String = RunDir.path("cut_%02d.gdshader" % index)
+		_write(shader, "shader_type spatial;\nvoid fragment() {\n\tALBEDO = vec3(1.0, 0.0);\n}\n")
+		found.append(shader)
+	var groups: Dictionary = {}
+	var notes: Array = []
+	var log: Object = _error_log.new()
+	OS.add_logger(log)
+	_ops._check_includers("res://cut.gdshaderinc", found, groups, notes, log)
+	OS.remove_logger(log)
+	Engine.get_main_loop().get("_recorder").take()
+	var keys: Array = groups.keys()
+	keys.sort()
+	assert_eq(keys, Array(found.slice(0, 20)), "the first 20 compiled")
+	assert_eq(notes.size(), 1, "and the note says one was left out: %s" % [notes])
+
+
+func test_the_raw_error_type_stays_out_of_the_reply() -> void:
+	var log: Object = _error_log.new()
+	_logged(log, "boot")
+	var reply: Dictionary = _ops.run_request("validate", {"targets": []}, log, 1)
+	assert_eq(reply["engineErrors"][0].keys(), ["type", "message", "file", "line"], "four keys")
+
+
+## validate's result for targets, through the request entry, with a log the engine writes to. The
+## runner fails a test on any engine error, so the ones the checks make it log are taken from its
+## recorder; the result holds each of them.
+func _validated(targets: Array) -> Dictionary:
+	var log: Object = _error_log.new()
+	OS.add_logger(log)
+	var reply: Dictionary = _ops.run_request("validate", {"targets": targets}, log, 0)
+	OS.remove_logger(log)
+	Engine.get_main_loop().get("_recorder").take()
+	return reply["result"]
 
 
 func _entry(type: String, message: String, file: String, line: int) -> Dictionary:

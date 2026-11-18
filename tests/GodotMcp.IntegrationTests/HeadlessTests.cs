@@ -15,6 +15,13 @@ public sealed class HeadlessTests : IAsyncDisposable
 {
     private const string BrokenScript = "extends Node\n\n\nfunc _ready() -> void:\n\tif true\n\t\tpass\n";
 
+    // Shaders the tests write into the probe copy: one with a compile error on line 4, an include with an error on its
+    // line 2, and a shader that includes it by a relative path.
+    private const string BrokenShader = "shader_type spatial;\n\nvoid fragment() {\n\tALBEDO = vec3(1.0, 0.0);\n}\n";
+    private const string BrokenShaderInclude = "float helper() {\n\treturn undefined_thing;\n}\n";
+    private const string IncludingShader =
+        "shader_type canvas_item;\n#include \"inc.gdshaderinc\"\n\nvoid fragment() {\n\tCOLOR = vec4(helper());\n}\n";
+
     private const string EnemyScene =
         "[gd_scene format=3]\n\n[node name=\"Enemy\" type=\"CharacterBody2D\"]\n\n[node name=\"Sprite\" type=\"Sprite2D\" parent=\".\"]\n";
 
@@ -87,6 +94,44 @@ public sealed class HeadlessTests : IAsyncDisposable
         JsonNode grouped = Assert.Single(result["results"]!.AsArray(), group => group!["path"]!.GetValue<string>() == "res://b.gd")!;
         Assert.StartsWith("Parse Error:", grouped["errors"]![0]!["message"]!.GetValue<string>(), StringComparison.Ordinal);
         Assert.Equal(5, grouped["errors"]![0]!["line"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ValidateFindsAShaderCompileErrorWithItsLine()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteFile(probe.Directory, "bad.gdshader", BrokenShader);
+
+        JsonNode result = await ValidateAsync(probe.Directory, ["bad.gdshader"], cancellation);
+
+        Assert.False(result["valid"]!.GetValue<bool>());
+        JsonNode bad = Assert.Single(result["results"]!.AsArray())!;
+        Assert.Equal("res://bad.gdshader", bad["path"]!.GetValue<string>());
+        JsonNode error = Assert.Single(bad["errors"]!.AsArray())!;
+        Assert.StartsWith("Invalid arguments for the built-in function", error["message"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal("res://bad.gdshader", error["file"]!.GetValue<string>());
+        Assert.Equal(4, error["line"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ValidateChecksAShaderIncludeThroughTheShaderThatIncludesIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteFile(probe.Directory, "inc.gdshaderinc", BrokenShaderInclude);
+        WriteFile(probe.Directory, "uses_inc.gdshader", IncludingShader);
+
+        JsonNode result = await ValidateAsync(probe.Directory, ["inc.gdshaderinc"], cancellation);
+
+        Assert.False(result["valid"]!.GetValue<bool>());
+        Assert.Null(result["notes"]);
+        JsonNode include = Assert.Single(result["results"]!.AsArray())!;
+        Assert.Equal("res://inc.gdshaderinc", include["path"]!.GetValue<string>());
+        JsonNode error = Assert.Single(include["errors"]!.AsArray())!;
+        Assert.StartsWith("Unknown identifier in expression", error["message"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal("res://inc.gdshaderinc", error["file"]!.GetValue<string>());
+        Assert.Equal(2, error["line"]!.GetValue<int>());
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

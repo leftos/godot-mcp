@@ -1,0 +1,3 @@
+float nested() {
+	return nowhere;
+}

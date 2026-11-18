@@ -72,10 +72,59 @@ public sealed class HeadlessValidationTests : IDisposable
             McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTargets(_project, [target]));
 
             Assert.Equal(
-                $"targets '{target}' is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .xscn, .tres, .res and .xres files.",
+                $"targets '{target}' is not a script, scene, resource or shader: validate checks .gd, .cs, .tscn, .scn, .xscn, .tres, "
+                    + ".res, .xres, .gdshader and .gdshaderinc files.",
                 refused.Message
             );
         }
+    }
+
+    [Theory]
+    [InlineData("glow.gdshader")]
+    [InlineData("common.gdshaderinc")]
+    public void AShaderTargetIsAccepted(string target)
+    {
+        File.WriteAllText(Path.Combine(_project, target), string.Empty);
+
+        Assert.Equal([$"res://{target}"], HeadlessTools.CheckTargets(_project, [target]));
+    }
+
+    [Fact]
+    public void ASweepTakesShadersButNotTheirIncludes()
+    {
+        string sweep = _temp.Combine("sweep-shaders");
+        Directory.CreateDirectory(sweep);
+        File.WriteAllText(Path.Combine(sweep, "project.godot"), "config_version=5\n");
+        foreach (string file in new[] { "a.gdshader", "b.gdshaderinc" })
+        {
+            File.WriteAllText(Path.Combine(sweep, file), string.Empty);
+        }
+
+        Git.InitAndCommitAll(sweep);
+
+        Assert.Equal(["res://a.gdshader"], HeadlessTools.VersionedTargets(sweep, NullLogger.Instance));
+    }
+
+    [Fact]
+    public void AnIncludesNotesPassThroughAndLeaveTheProjectValid()
+    {
+        JsonNode reply = JsonNode.Parse(
+            """{"checked": 1, "results": [], "notes": [{"path": "res://a.gdshaderinc", "note": "no .gdshader includes it"}]}"""
+        )!;
+
+        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], PrepResult.Skipped, null), []);
+
+        Assert.True(shaped["valid"]!.GetValue<bool>());
+        Assert.Equal("res://a.gdshaderinc", shaped["notes"]![0]!["path"]!.GetValue<string>());
+        Assert.Equal("no .gdshader includes it", shaped["notes"]![0]!["note"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void NoNotesLeavesTheFieldOut()
+    {
+        JsonNode reply = JsonNode.Parse("""{"checked": 1, "results": []}""")!;
+
+        Assert.Null(HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], PrepResult.Skipped, null), [])["notes"]);
     }
 
     [Theory]
@@ -247,7 +296,7 @@ public sealed class HeadlessValidationTests : IDisposable
         IReadOnlyList<string> swept = HeadlessTools.VersionedTargets(sweep, NullLogger.Instance);
 
         Assert.Equal(
-            "the project has 501 versioned scripts, scenes and resources; validate takes at most 500 at once: pass targets.",
+            "the project has 501 versioned scripts, scenes, resources and shaders; validate takes at most 500 at once: pass targets.",
             refused.Message
         );
         Assert.Equal(500, swept.Count);
