@@ -224,6 +224,31 @@ public sealed class ScratchViewTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_logFolder, $"scratch-{RunId}.json")));
     }
 
+    [Fact]
+    public void ABatchResultSpillNeitherPrunesNorCountsScratchResultFiles()
+    {
+        Directory.CreateDirectory(_logFolder);
+        string[] scratch = [.. Enumerable.Range(0, 25).Select(second => $"scratch-result-20260101-0000{second:00}-abcd.json")];
+        string[] batch = [.. Enumerable.Range(0, 20).Select(second => $"batch-result-20260101-0000{second:00}-abcd.json")];
+        foreach (string name in scratch.Concat(batch))
+        {
+            File.WriteAllText(Path.Combine(_logFolder, name), "{}");
+        }
+
+        JsonObject whole = Result(Scene("A", "green", 3));
+
+        ScratchView.SpillOutcome spill = ScratchView.Spill(whole, _place, "batch-result-");
+
+        Assert.Null(spill.Error);
+        Assert.Matches(@"batch-result-20261027-120000-[0-9a-f]{4}\.json$", spill.Path);
+        Assert.True(JsonNode.DeepEquals(whole, JsonNode.Parse(File.ReadAllText(spill.Path))), "the spill file holds the whole result");
+        Assert.Equal(scratch, Names("scratch-result-*.json"));
+        Assert.Equal([.. batch[1..], Path.GetFileName(spill.Path)], Names("batch-result-*.json"));
+    }
+
+    private List<string> Names(string pattern) =>
+        [.. Directory.GetFiles(_logFolder, pattern).Select(file => Path.GetFileName(file)).Order(StringComparer.Ordinal)];
+
     private static string Cut(int length, int shrunk, string path) =>
         $"the result ran to {length} characters, past 20000; {shrunk} scenes' steps are left out here; the whole result is in {path}";
 

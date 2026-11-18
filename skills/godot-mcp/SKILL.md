@@ -274,6 +274,8 @@ In scope are `Node`, `Get`/`Set`/`Call` (private members), `await` (`await ToSig
 
 **Regression checks.** `batch_drive` replays up to 100 tool steps and assertions (`property`, `expression`, `wait`, `no_errors`, `screenshot`, `fired`) in one call and stops at the first failure.
 
+A long batch's reply is summarised past 20000 characters (`options: {result: "summary"}` forces it, `"full"` returns every step whole): passed results over 1000 characters become `resultOmitted: <length>`, a failed entry stays whole, and `full` names the file with the whole result, with `cut` saying what was left out; read that file for a passed step's detail, and use `capture_frames`' `folder` and `files` for its frames.
+
 A step `{parallel: [steps]}` runs 2 to 8 tool or assertion steps at once, each on its own `session`, started in listed order and ended together: put a `wait` before the click that should satisfy it so the wait is armed first, and a failed member cancels the rest (an input already sent plays to its end). Every entry reports `startMs` and `endMs`, and a met bridge wait's result its `metAt` with the `clockErrorMs` of its conversion.
 
 In a batch over several sessions, a top-level entry's `errorsElsewhere` lists the errors the other sessions raised since the entry before, so a fault on the guest shows on the host step that caused it, and `no_errors {sessions: "all"}` (or a list of names) fails on any of them; `"all"` covers only the sessions another step of the batch addresses, never a process session, and a pass lists the names it checked.

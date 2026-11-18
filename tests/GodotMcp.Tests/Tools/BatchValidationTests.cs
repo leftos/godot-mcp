@@ -192,7 +192,7 @@ public sealed class BatchValidationTests : IDisposable
                     [Click("game"), new BatchStep(Parallel: [Click("game"), Click("server")])],
                     null!,
                     null,
-                    TestContext.Current.CancellationToken
+                    cancellationToken: TestContext.Current.CancellationToken
                 )
             )!
             .AsObject();
@@ -213,7 +213,14 @@ public sealed class BatchValidationTests : IDisposable
         BatchStep named = unnamed with { Session = "server" };
 
         JsonObject refused = JsonNode
-            .Parse(await _tools.BatchDriveAsync([new BatchStep(Parallel: [unnamed, named])], null!, null, TestContext.Current.CancellationToken))!
+            .Parse(
+                await _tools.BatchDriveAsync(
+                    [new BatchStep(Parallel: [unnamed, named])],
+                    null!,
+                    null,
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+            )!
             .AsObject();
 
         Assert.False(refused["passed"]!.GetValue<bool>());
@@ -840,9 +847,26 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Equal("step 0: parallel step 1: a tool step does not take sessions; only no_errors does.", refused.Message);
     }
 
+    [Fact]
+    public async Task AnOptionsResultOtherThanFullOrSummaryIsRefusedBeforeAnyStepRuns()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.BatchDriveAsync(
+                [Click("game")],
+                null!,
+                options: new BatchOptions("short"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("options.result must be \"full\" or \"summary\", not \"short\".", refused.Message);
+    }
+
     private static BatchStep NoErrors(string sessionsJson) =>
         new(Assert: "no_errors", Sessions: JsonSerializer.Deserialize<JsonElement>(sessionsJson));
 
     private Task<McpException> RefusedAsync(BatchStep[] steps, string? session = null) =>
-        Assert.ThrowsAsync<McpException>(() => _tools.BatchDriveAsync(steps, null!, session, TestContext.Current.CancellationToken));
+        Assert.ThrowsAsync<McpException>(() =>
+            _tools.BatchDriveAsync(steps, null!, session, cancellationToken: TestContext.Current.CancellationToken)
+        );
 }

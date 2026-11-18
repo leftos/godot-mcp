@@ -396,7 +396,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         await _process.RunProcessAsync(_probe.Directory, "ticker", options: new ProcessRunOptions("server"), cancellationToken: cancellation);
 
         JsonObject refused = JsonNode
-            .Parse(await _runtime.BatchDriveAsync([ClickOn(null), ClickOn("server")], _server, "game", cancellation))!
+            .Parse(await _runtime.BatchDriveAsync([ClickOn(null), ClickOn("server")], _server, "game", cancellationToken: cancellation))!
             .AsObject();
 
         Assert.False(refused["passed"]!.GetValue<bool>());
@@ -405,7 +405,9 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         Assert.Empty(refused["steps"]!.AsArray());
         Assert.Equal("""{"value":0}""", await PressCountAsync(cancellation));
 
-        JsonObject ran = JsonNode.Parse(await _runtime.BatchDriveAsync([ClickOn("game")], _server, "server", cancellation))!.AsObject();
+        JsonObject ran = JsonNode
+            .Parse(await _runtime.BatchDriveAsync([ClickOn("game")], _server, "server", cancellationToken: cancellation))!
+            .AsObject();
         Assert.True(ran["passed"]!.GetValue<bool>(), ran.ToJsonString());
         Assert.Equal("""{"value":1}""", await PressCountAsync(cancellation));
 
@@ -688,7 +690,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
 
     private async Task<JsonObject> BatchAsync(BatchStep step, string session, CancellationToken cancellation)
     {
-        string result = await _runtime.BatchDriveAsync([step], _server, session, cancellation);
+        string result = await _runtime.BatchDriveAsync([step], _server, session, cancellationToken: cancellation);
         return JsonNode.Parse(result)!.AsObject();
     }
 

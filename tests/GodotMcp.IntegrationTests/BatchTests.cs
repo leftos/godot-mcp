@@ -21,6 +21,9 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
     private const int TestTimeoutMs = TestTimeouts.OwnLaunchMs;
     private const string SmallButton = "Main/SmallButton";
 
+    // capture_frames every 0.01 for 5: the points 0, 0.01, ... 5, enough to take the batch's result past 20000 characters.
+    private const int CapturedPoints = 501;
+
     // A Button named Ready at (400, 250) under the root, drawn before a click picks it.
     private const string ReadyButtonScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
@@ -179,7 +182,7 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         BatchStep never = new(Assert: "wait", Expression: "false", TimeoutMs: 5000);
 
         JsonObject batch = JsonNode
-            .Parse(await hurried.BatchDriveAsync([never, new BatchStep(Assert: "no_errors")], _server, null, cancellation))!
+            .Parse(await hurried.BatchDriveAsync([never, new BatchStep(Assert: "no_errors")], _server, null, cancellationToken: cancellation))!
             .AsObject();
         JsonObject after = JsonNode.Parse(await _tools.WaitForAsync(new WaitCondition(Expression: "true"), 1000, null, cancellation))!.AsObject();
 
@@ -324,6 +327,64 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
             StringComparison.Ordinal
         );
     }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACaptureFramesBatchPastTheCapReturnsASummaryNamingTheFileWithEveryPoint()
+    {
+        JsonObject batch = await BatchAsync(TestContext.Current.CancellationToken, CaptureManyFrames());
+
+        Assert.True(batch.ContainsKey("full"), batch["cut"]?.ToJsonString() ?? batch.ToJsonString());
+        string path = batch["full"]!.GetValue<string>();
+        try
+        {
+            Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+            Assert.Matches(@"[\\/]\.godot[\\/]godot-mcp[\\/]batch-result-\d{8}-\d{6}-[0-9a-f]{4}\.json$", path);
+            string cut = batch["cut"]!.GetValue<string>();
+            Assert.StartsWith("the result ran to ", cut, StringComparison.Ordinal);
+            Assert.EndsWith($", past 20000; 1 steps' results are left out here; the whole result is in {path}", cut, StringComparison.Ordinal);
+            JsonObject entry = batch["steps"]![0]!.AsObject();
+            Assert.Equal(CapturedPoints, entry["result"]!["pointsOmitted"]!.GetValue<int>());
+            Assert.False(entry["result"]!.AsObject().ContainsKey("points"), entry.ToJsonString());
+            Assert.True(entry["resultOmitted"]!.GetValue<int>() > 1000, entry.ToJsonString());
+            JsonNode whole = JsonNode.Parse(File.ReadAllText(path))!;
+            Assert.Equal(CapturedPoints, whole["steps"]![0]!["result"]!["points"]!.AsArray().Count);
+            Assert.True(whole["passed"]!.GetValue<bool>());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACaptureFramesBatchWithResultFullReturnsTheWholeResult()
+    {
+        JsonObject batch = JsonNode
+            .Parse(
+                await _tools.BatchDriveAsync(
+                    [CaptureManyFrames()],
+                    _server,
+                    options: new BatchOptions("full"),
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+            )!
+            .AsObject();
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch["failedAt"]?.ToJsonString());
+        Assert.False(batch.ContainsKey("full"), batch["full"]?.ToJsonString());
+        Assert.False(batch.ContainsKey("cut"), batch["cut"]?.ToJsonString());
+        Assert.True(batch.ToJsonString().Length > 20000, $"{batch.ToJsonString().Length} characters");
+        Assert.Equal(CapturedPoints, batch["steps"]![0]!["result"]!["points"]!.AsArray().Count);
+    }
+
+    private static BatchStep CaptureManyFrames() =>
+        new(
+            Tool: "capture_frames",
+            Args: new JsonObject
+            {
+                ["options"] = new JsonObject { ["every"] = 0.01, ["for"] = 5 },
+            }
+        );
 
     private static BatchStep ClickReady() => new(Tool: "click", Args: new JsonObject { ["target"] = new JsonObject { ["element"] = "Ready" } });
 

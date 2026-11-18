@@ -94,7 +94,7 @@ public sealed class BatchDispatchTests : IAsyncDisposable
         await cancelled.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            _tools.BatchDriveAsync([new BatchStep(Tool: "click")], null!, null, cancelled.Token)
+            _tools.BatchDriveAsync([new BatchStep(Tool: "click")], null!, null, cancellationToken: cancelled.Token)
         );
     }
 
@@ -105,9 +105,11 @@ public sealed class BatchDispatchTests : IAsyncDisposable
         BatchStep own = new(Assert: "property", Node: "TimeProbe", Property: "state", EqualsValue: idle, Session: "inner");
         BatchStep inherited = own with { Session = null };
 
-        JsonObject first = JsonNode.Parse(await _tools.BatchDriveAsync([own], null!, "outer", TestContext.Current.CancellationToken))!.AsObject();
+        JsonObject first = JsonNode
+            .Parse(await _tools.BatchDriveAsync([own], null!, "outer", cancellationToken: TestContext.Current.CancellationToken))!
+            .AsObject();
         JsonObject second = JsonNode
-            .Parse(await _tools.BatchDriveAsync([inherited], null!, "outer", TestContext.Current.CancellationToken))!
+            .Parse(await _tools.BatchDriveAsync([inherited], null!, "outer", cancellationToken: TestContext.Current.CancellationToken))!
             .AsObject();
 
         Assert.StartsWith("No session named 'inner'.", first["failedAt"]!["reason"]!.GetValue<string>(), StringComparison.Ordinal);
@@ -120,7 +122,7 @@ public sealed class BatchDispatchTests : IAsyncDisposable
         BatchStep[] steps = [new BatchStep(Tool: "click"), new BatchStep(Assert: "no_errors", Session: "absent")];
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.BatchDriveAsync(steps, null!, null, TestContext.Current.CancellationToken)
+            _tools.BatchDriveAsync(steps, null!, null, cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.StartsWith("step 1: No session named 'absent'.", refused.Message, StringComparison.Ordinal);
@@ -252,7 +254,9 @@ public sealed class BatchDispatchTests : IAsyncDisposable
         );
         BatchStep group = new(Parallel: [Step("click", "a"), Step("hover", "b")]);
 
-        JsonObject batch = JsonNode.Parse(await hurried.BatchDriveAsync([group], server, null, TestContext.Current.CancellationToken))!.AsObject();
+        JsonObject batch = JsonNode
+            .Parse(await hurried.BatchDriveAsync([group], server, null, cancellationToken: TestContext.Current.CancellationToken))!
+            .AsObject();
 
         JsonArray members = batch["steps"]![0]!["members"]!.AsArray();
         string reason = batch["failedAt"]!["reason"]!.GetValue<string>();
@@ -718,5 +722,5 @@ public sealed class BatchDispatchTests : IAsyncDisposable
         McpServer.Create(new StreamServerTransport(Stream.Null, Stream.Null), options, null, _services);
 
     private async Task<JsonObject> BatchAsync(McpServer server, CancellationToken cancellation, params BatchStep[] steps) =>
-        JsonNode.Parse(await _tools.BatchDriveAsync(steps, server, null, cancellation))!.AsObject();
+        JsonNode.Parse(await _tools.BatchDriveAsync(steps, server, null, cancellationToken: cancellation))!.AsObject();
 }

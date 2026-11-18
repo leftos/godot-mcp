@@ -133,18 +133,22 @@ internal sealed partial class RuntimeTools
             + "top-level entry also carries errorsElsewhere: {session: [errors]}, the errors the batch's other sessions raised "
             + "since the entry before it ended (for a group, every session's but those raised during the call of the member that "
             + "addresses it, a cancelled member's session counting as not addressed; members carry none), at most 20 "
-            + "a session, then errorsElsewhereOmitted: {session: n}; both are left out when there are none."
+            + "a session, then errorsElsewhereOmitted: {session: n}; both are left out when there are none. A result past 20000 "
+            + "characters comes back as a per-step summary, with the whole result written to .godot/godot-mcp/batch-result-*.json, "
+            + "named by full; options.result \"full\" never cuts it, \"summary\" always does."
     )]
     public async Task<string> BatchDriveAsync(
         [Description("The steps, in order: {tool, args, session?} or {assert, …, session?} or {parallel: [steps]}; 1 to 100 of them.")]
             IReadOnlyList<BatchStep> steps,
         McpServer server,
         [Description(ProjectTools.SessionDescription + " Every step addresses it unless the step names its own.")] string? session = null,
+        [Description("{result}: how much of each step's result the reply carries.")] BatchOptions? options = null,
         CancellationToken cancellationToken = default
     )
     {
         CheckBatch(steps);
         CheckGroupSessions(steps, session);
+        BatchSummary.Check(options);
         double startedAt = DriveClock.NowMs;
         if ((FindProcessToolStep(steps, session) ?? FindSharedSession(steps, session)) is { } refused)
         {
@@ -160,6 +164,7 @@ internal sealed partial class RuntimeTools
 
         using LoadDeadline deadline = sessions.Clock.Start(BatchDeadline, cancellationToken);
         Dictionary<GodotSession, long> marks = MarkErrorFeeds(steps, session);
+        string? spillProject = SpillProject(steps, session);
         ErrorCursors elsewhere = new([.. marks.Select(mark => (mark.Key.Name, Feed: mark.Key.Errors, Mark: mark.Value))]);
         BatchRun run = new(server, session, marks, elsewhere, deadline);
         JsonArray entries = [];
@@ -183,8 +188,21 @@ internal sealed partial class RuntimeTools
             result["failedAt"] = failedAt;
         }
 
-        return result.ToJsonString();
+        return BatchSummary.Reply(result, options, spillProject, sessions.Logger);
     }
+
+    /// <summary>
+    /// The project a summarised batch's spill file goes in, resolved as the batch starts, before a session can exit or another
+    /// start: the batch's default session's, else the first step's, or group member's, whose session resolves; null when none does.
+    /// </summary>
+    private string? SpillProject(IReadOnlyList<BatchStep> steps, string? session) =>
+        (
+            ResolvedSession(session)
+            ?? steps
+                .SelectMany(step => step.Parallel ?? [step])
+                .Select(step => ResolvedSession(MemberSession(step, session)))
+                .FirstOrDefault(resolved => resolved is not null)
+        )?.ProjectDir;
 
     /// <summary>Runs one step that is not a group, and gives its entry, stamped on the drive clock, and its failedAt when it failed.</summary>
     private async Task<(JsonObject Entry, JsonObject? FailedAt)> RunTimedStepAsync(

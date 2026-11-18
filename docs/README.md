@@ -39,7 +39,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Change point | A sample a watch keeps because it differs from the last one kept (numbers by more than 1e-6, or by the track's `minDelta`), stamped `[frame, gameMs, value, at]` (`at` is its drive-clock time); the first sample always is one |
 | Check-once wait | `wait_for` with `timeoutMs: 0`: the condition is checked once, now, even while the game is paused |
 | Clock offset | A session's offset from the drive clock, from its hello's and each pong's `ticksUsec` against the server's send and receipt times: the midpoint of the tightest bounds, whose half-width is a converted stamp's `clockErrorMs` (`SessionClock`) |
-| Compact output | A result held to a size budget: a screenshot as a path or a 480 px preview, a long list or log paged with a total, long lines and values cut with their length |
+| Compact output | A result held to a size budget: a screenshot as a path or a 480 px preview, a long list or log paged with a total, long lines and values cut with their length, a long `run_scratches` or `batch_drive` result summarised with the whole in a spill file |
 | Compile items | The full paths of a csproj's `Compile` items, listed by `dotnet msbuild` (through the `prepWrapper` when the project has one) into a result file MSBuild writes itself (`ProjectPrep.CompileItemsAsync`), which `validate` uses to find the C# scripts a target reaches |
 | Completion line | The last line of a background scratch run's log, `godot-mcp scratch run <runId> finished: done, passed …` (or `stopped`, `interrupted`, `failed: <error>`); a harness waits on `^godot-mcp scratch run \S+ finished:` |
 | Complexity baseline | `tools/gdcomplexity-baseline.txt`: the GDScript functions still allowed over the complexity or length limit, a list that can only shrink |
@@ -166,6 +166,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Snippet | The C# statements `run_csharp` compiles in the server and runs inside the game through the helper's `run` op; it can `Log(value)` lines that come back with the result or the failure. |
 | Source path | A node's path in the scene file as it was when the edit began; the splice's rename map takes a source path to the node's current path |
 | Spike | A throwaway build that proves or disproves the unverified steps of a design before any tool is built on it |
+| Spill file | The file `run_scratches` or `batch_drive` writes its whole result to when the reply is cut (`.godot/godot-mcp/scratch-result-*.json`, `batch-result-*.json`), named by the reply's `full` |
 | Stall | A gate run whose log has not grown and whose processes (with any MSBuild or compiler server started during the run) have used no CPU for `--stall` seconds, 120 by default; the gate kills it as hung (`gate: STALLED`) |
 | Stall guard (exit hold) | The server's wait for a scratch scene's exit hold: a load-adjusted window per probe of the bridge's `hold` command, restarted while the hold's game clock advanced and failing when it stood still a whole window, in place of a fixed bound a slowed game must beat |
 | Stall kill (tool processes) | The server's kill of a build, import, headless run or ffmpeg cut that has written no output and used no CPU in its process tree for 120 s, ahead of its ceiling |

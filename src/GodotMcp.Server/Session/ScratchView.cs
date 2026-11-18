@@ -23,7 +23,7 @@ internal static class ScratchView
     /// <summary>The most characters a returned result or status takes, serialised; past it, scenes' steps are left out.</summary>
     internal const int MaxResultChars = 20000;
 
-    /// <summary>How many spill files of foreground results a project's log folder keeps, the newest by name.</summary>
+    /// <summary>How many spill files of one prefix a project's log folder keeps, the newest by name.</summary>
     internal const int SpillFilesKept = 20;
 
     /// <summary>How many more names a spill file tries when the one it drew is taken.</summary>
@@ -131,7 +131,7 @@ internal static class ScratchView
             return shown;
         }
 
-        SpillOutcome spill = Spill(whole, place);
+        SpillOutcome spill = Spill(whole, place, SpillPrefix);
         JsonObject capped = shown.DeepClone().AsObject();
         Shrink(capped, capped, length, spill);
         return capped;
@@ -153,7 +153,7 @@ internal static class ScratchView
         string statusFile = ScratchBackgroundRun.StatusPath(place.ProjectDir, runId);
         SpillOutcome spill = HoldsResult(statusFile)
             ? new SpillOutcome(statusFile, Error: null)
-            : Spill((whole["result"] ?? shown["result"])!.AsObject(), place);
+            : Spill((whole["result"] ?? shown["result"])!.AsObject(), place, SpillPrefix);
         JsonObject capped = shown.DeepClone().AsObject();
         Shrink(capped, capped["result"]!.AsObject(), length, spill);
         return capped;
@@ -238,16 +238,16 @@ internal static class ScratchView
         scene["verdict"] is JsonValue verdict && verdict.TryGetValue(out string? shown) && shown == ScratchVerdict.Green;
 
     /// <summary>
-    /// Writes the whole result to a new scratch-result-&lt;UTC yyyyMMdd-HHmmss&gt;-&lt;4 hex&gt;.json in the log folder, another
-    /// suffix tried up to <see cref="SpillNameRetries"/> times when the name is taken, then prunes the older ones; a write that
-    /// fails is logged and its error returned, never thrown.
+    /// Writes the whole result to a new &lt;prefix&gt;&lt;UTC yyyyMMdd-HHmmss&gt;-&lt;4 hex&gt;.json in the log folder (run_scratches'
+    /// prefix is scratch-result-), another suffix tried up to <see cref="SpillNameRetries"/> times when the name is taken, then
+    /// prunes the older ones of that prefix; a write that fails is logged and its error returned, never thrown.
     /// </summary>
-    private static SpillOutcome Spill(JsonObject whole, ScratchSpillPlace place)
+    internal static SpillOutcome Spill(JsonObject whole, ScratchSpillPlace place, string prefix)
     {
         string folder = ProjectPrep.LogFolder(place.ProjectDir);
         string stamp = place.Now.UtcDateTime.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         string text = whole.ToJsonString(ToolJson.Options);
-        string path = SpillPath(folder, stamp);
+        string path = SpillPath(folder, prefix, stamp);
         try
         {
             Directory.CreateDirectory(folder);
@@ -258,21 +258,24 @@ internal static class ScratchView
                     throw new IOException($"the file already exists, as did the {SpillNameRetries} names tried before it");
                 }
 
-                path = SpillPath(folder, stamp);
+                path = SpillPath(folder, prefix, stamp);
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Log.ScratchSpillFailed(place.Logger, e, path);
+            Log.ScratchSpillFailed(place.Logger, e, SpillKind(prefix), path);
             return new SpillOutcome(path, e.Message);
         }
 
-        Prune(folder, path, place.Logger);
+        Prune(folder, path, prefix, place.Logger);
         return new SpillOutcome(path, Error: null);
     }
 
-    private static string SpillPath(string folder, string stamp) =>
-        Path.Combine(folder, $"{SpillPrefix}{stamp}-{RandomNumberGenerator.GetHexString(4, lowercase: true)}.json");
+    /// <summary>The kind of result a spill prefix holds, as its log lines name it: scratch for scratch-result-, batch for batch-result-.</summary>
+    private static string SpillKind(string prefix) => prefix[..prefix.IndexOf('-', StringComparison.Ordinal)];
+
+    private static string SpillPath(string folder, string prefix, string stamp) =>
+        Path.Combine(folder, $"{prefix}{stamp}-{RandomNumberGenerator.GetHexString(4, lowercase: true)}.json");
 
     /// <summary>Writes a new file at the path; false, writing nothing, when a file of that name already exists.</summary>
     /// <exception cref="IOException">The file could not be created or written for another reason.</exception>
@@ -294,9 +297,10 @@ internal static class ScratchView
     }
 
     /// <summary>
-    /// Deletes all but the newest <see cref="SpillFilesKept"/> spill files, by name; one that cannot be deleted is logged and left.
+    /// Deletes all but the newest <see cref="SpillFilesKept"/> spill files of the prefix, by name; one that cannot be deleted is
+    /// logged and left.
     /// </summary>
-    private static void Prune(string folder, string written, ILogger logger)
+    private static void Prune(string folder, string written, string prefix, ILogger logger)
     {
         List<string> older;
         try
@@ -304,7 +308,7 @@ internal static class ScratchView
             older =
             [
                 .. Directory
-                    .GetFiles(folder, SpillPrefix + "*.json")
+                    .GetFiles(folder, prefix + "*.json")
                     .Where(file => file != written)
                     .OrderDescending(StringComparer.Ordinal)
                     .Skip(SpillFilesKept - 1),
@@ -312,7 +316,7 @@ internal static class ScratchView
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Log.ScratchSpillPruneFailed(logger, e, folder);
+            Log.ScratchSpillPruneFailed(logger, e, SpillKind(prefix), folder);
             return;
         }
 
@@ -324,7 +328,7 @@ internal static class ScratchView
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                Log.ScratchSpillPruneFailed(logger, e, file);
+                Log.ScratchSpillPruneFailed(logger, e, SpillKind(prefix), file);
             }
         }
     }
@@ -332,7 +336,7 @@ internal static class ScratchView
     private static int Length(JsonObject shown) => shown.ToJsonString(ToolJson.Options).Length;
 
     /// <summary>The file that holds the whole result, or the one that could not be written and why.</summary>
-    private sealed record SpillOutcome(string Path, string? Error);
+    internal sealed record SpillOutcome(string Path, string? Error);
 }
 
 /// <summary>Where and when a capped scratch result's spill file is written, and the logger its failures go to.</summary>
