@@ -549,22 +549,32 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
         );
         await RunAsync(RichLabel("Log", 20, 0, 600, 600, rows) + "label.autowrap_mode = TextServer.AUTOWRAP_OFF\n\t" + Drawn, cancellation);
 
-        int shown = await ReadIntAsync(
-            "var label: RichTextLabel = scene_tree.root.get_node(\"Log\")\n\t"
-                + "var bottom: float = scene_tree.root.get_visible_rect().end.y\n\tvar shown := 0\n\t"
-                + "for line in label.get_line_count():\n\t\t"
-                + "if label.get_line_offset(line) + label.get_line_height(line) / 2.0 < bottom:\n\t\t\tshown += 1\n\t"
-                + "return shown",
-            cancellation
-        );
+        try
+        {
+            // Only the sample budget may stop this probe: a starved game thread must not change the answer.
+            await SetProbeTimeBudgetAsync(60_000, cancellation);
 
-        var clock = Stopwatch.StartNew();
-        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Index: 20)), cancellation);
-        clock.Stop();
+            int shown = await ReadIntAsync(
+                "var label: RichTextLabel = scene_tree.root.get_node(\"Log\")\n\t"
+                    + "var bottom: float = scene_tree.root.get_visible_rect().end.y\n\tvar shown := 0\n\t"
+                    + "for line in label.get_line_count():\n\t\t"
+                    + "if label.get_line_offset(line) + label.get_line_height(line) / 2.0 < bottom:\n\t\t\tshown += 1\n\t"
+                    + "return shown",
+                cancellation
+            );
 
-        TestContext.Current.TestOutputHelper?.WriteLine($"a refused span click on 20 lines x 600 px took {clock.ElapsedMilliseconds} ms");
-        Assert.True(shown is > 10 and < 20, $"the viewport shows {shown} of the 20 lines");
-        Assert.Contains($"/root/Log has no tooltip span 20; it has {shown}: index 0 'r0' at ", refused.Message, StringComparison.Ordinal);
+            var clock = Stopwatch.StartNew();
+            McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Index: 20)), cancellation);
+            clock.Stop();
+
+            TestContext.Current.TestOutputHelper?.WriteLine($"a refused span click on 20 lines x 600 px took {clock.ElapsedMilliseconds} ms");
+            Assert.True(shown is > 10 and < 20, $"the viewport shows {shown} of the 20 lines");
+            Assert.Contains($"/root/Log has no tooltip span 20; it has {shown}: index 0 'r0' at ", refused.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await SetProbeTimeBudgetAsync(250, cancellation);
+        }
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -583,14 +593,24 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
         double x = rect["x"]!.GetValue<double>() - 3;
         double y = rect["y"]!.GetValue<double>() + rect["height"]!.GetValue<double>() / 2;
 
-        var clock = Stopwatch.StartNew();
-        JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, x, y), cancellationToken: cancellation))!;
-        clock.Stop();
+        try
+        {
+            // Only the sample budget may stop this probe: a starved game thread must not change the answer.
+            await SetProbeTimeBudgetAsync(60_000, cancellation);
 
-        TestContext.Current.TestOutputHelper?.WriteLine($"a hover off a span of 120 fit_content lines took {clock.ElapsedMilliseconds} ms");
-        string warning = hovered["warning"]!.GetValue<string>();
-        Assert.Contains("on /root/Box/Log; its nearest tooltip span is index 0 'near' at ", warning, StringComparison.Ordinal);
-        Assert.EndsWith(", 3 px away; aim at it with item {index: 0}", warning, StringComparison.Ordinal);
+            var clock = Stopwatch.StartNew();
+            JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, x, y), cancellationToken: cancellation))!;
+            clock.Stop();
+
+            TestContext.Current.TestOutputHelper?.WriteLine($"a hover off a span of 120 fit_content lines took {clock.ElapsedMilliseconds} ms");
+            string warning = hovered["warning"]!.GetValue<string>();
+            Assert.Contains("on /root/Box/Log; its nearest tooltip span is index 0 'near' at ", warning, StringComparison.Ordinal);
+            Assert.EndsWith(", 3 px away; aim at it with item {index: 0}", warning, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await SetProbeTimeBudgetAsync(250, cancellation);
+        }
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -695,7 +715,7 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task AHoverOffASpanDeepInA3000LineLogNamesTheSpanOrWhereTheProbeStopped()
+    public async Task AHoverOffASpanDeepInA3000LineLogSaysWhereTheProbeRanOutOfTime()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         // Box scrolled to its bottom: every sample walks the label's paragraphs from line 0, so the time budget stops the probe.
@@ -717,21 +737,30 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
             cancellation
         );
 
-        var clock = Stopwatch.StartNew();
-        JsonNode hovered = JsonNode.Parse(
-            await _tools.HoverAsync(
-                new InputTarget(null, point[0]!.GetValue<double>(), point[1]!.GetValue<double>()),
-                cancellationToken: cancellation
-            )
-        )!;
-        clock.Stop();
+        try
+        {
+            // A 1 ms budget stops the probe before it can walk 3000 lines: it pins the time budget the tests above raise.
+            await SetProbeTimeBudgetAsync(1, cancellation);
 
-        TestContext.Current.TestOutputHelper?.WriteLine($"a hover off a span on line 2995 of 3000 took {clock.ElapsedMilliseconds} ms");
-        Assert.Equal("/root/Box/Log", hovered["hoveredOn"]!["path"]!.GetValue<string>());
-        string warning = hovered["warning"]!.GetValue<string>();
-        bool named = warning.Contains("its nearest tooltip span is index 0 'deep' at ", StringComparison.Ordinal);
-        bool stopped = ProbeStopped().IsMatch(warning) && warning.Contains("probe of /root/Box/Log ", StringComparison.Ordinal);
-        Assert.True(named || stopped, warning);
+            var clock = Stopwatch.StartNew();
+            JsonNode hovered = JsonNode.Parse(
+                await _tools.HoverAsync(
+                    new InputTarget(null, point[0]!.GetValue<double>(), point[1]!.GetValue<double>()),
+                    cancellationToken: cancellation
+                )
+            )!;
+            clock.Stop();
+
+            TestContext.Current.TestOutputHelper?.WriteLine($"a hover off a span on line 2995 of 3000 took {clock.ElapsedMilliseconds} ms");
+            Assert.Equal("/root/Box/Log", hovered["hoveredOn"]!["path"]!.GetValue<string>());
+            string warning = hovered["warning"]!.GetValue<string>();
+            Assert.Matches(ProbeStopped(), warning);
+            Assert.Contains("probe of /root/Box/Log ", warning, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await SetProbeTimeBudgetAsync(250, cancellation);
+        }
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1307,6 +1336,14 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
         Assert.ThrowsAsync<McpException>(() => _tools.ClickAsync(target, "left", false, cancellationToken: cancellation));
 
     private async Task<int> ReadIntAsync(string body, CancellationToken cancellation) => (await RunAsync(body, cancellation)).GetValue<int>();
+
+    // The span probe's time budget, from the script the bridge's Gestures node loads, as the bridge's scripts do (input.gd's _create_targets).
+    private async Task SetProbeTimeBudgetAsync(int ms, CancellationToken cancellation) =>
+        await RunAsync(
+            "var dir: String = scene_tree.root.get_node(\"GodotMcpBridge/Gestures\").get_script().resource_path.get_base_dir()\n\t"
+                + $"var spans: GDScript = load(dir.path_join(\"godot_mcp_tooltip_spans.gd\"))\n\tspans.time_budget_ms = {ms}\n\treturn true",
+            cancellation
+        );
 
     private async Task<JsonNode> RunAsync(string body, CancellationToken cancellation)
     {

@@ -44,6 +44,9 @@ const PROBE_STOPPED := (
 const PLAIN_HEIGHTS: Array[float] = [0.5]
 const TALL_HEIGHTS: Array[float] = [0.5, 0.75, 0.25]
 
+## The probe's time budget in ms; tests set it, a probe never changes it.
+static var time_budget_ms: int = TIME_BUDGET_MS
+
 
 ## One probe's get_tooltip calls over a label: the samples it may take and has taken, when it
 ## started and must end (Time.get_ticks_usec), and, once either budget ran out (null before),
@@ -97,7 +100,7 @@ static func probe_near(label: RichTextLabel, point: Vector2) -> Dictionary:
 static func _scan(label: RichTextLabel, point: Variant) -> Dictionary:
 	var area: Rect2 = text_area(label)
 	var region: Rect2 = _region(label, area)
-	var sampler := Sampler.new(label, SAMPLE_BUDGET, TIME_BUDGET_MS)
+	var sampler := Sampler.new(label, SAMPLE_BUDGET, time_budget_ms)
 	var plain: float = _plain_height(label)
 	var runs: Array = []
 	var best: float = INF

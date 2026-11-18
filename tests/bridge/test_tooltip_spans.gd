@@ -180,6 +180,20 @@ func test_stopped_warning_says_where_the_probe_ran_out_of_samples() -> void:
 	assert_eq(_spans.stopped_warning("/root/Log", null, xform, _targets_script), "", "not stopped")
 
 
+func test_a_zero_time_budget_stops_the_probe_before_any_sample() -> void:
+	var label := RichTextLabel.new()
+	var sampler: Variant = _spans.Sampler.new(label, 20000, 0)
+	var tip: Variant = sampler.tip(Vector2.ZERO)
+	var stopped: Dictionary = sampler.stopped
+	assert_eq(tip, null, "a 0 ms deadline stops before any sample")
+	assert_eq(stopped["samples"], 0, "the sampler took no sample")
+	label.free()
+
+
+func test_the_time_budget_is_the_constant_until_a_test_sets_it() -> void:
+	assert_eq(_spans.time_budget_ms, _spans.TIME_BUDGET_MS, "the default time budget")
+
+
 func test_and_then_joins_a_text_and_a_sentence() -> void:
 	assert_eq(_spans.and_then("refused", "stopped."), "refused; stopped.", "both")
 	assert_eq(_spans.and_then("refused", ""), "refused", "no sentence")
