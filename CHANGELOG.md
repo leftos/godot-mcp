@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `run_scratches`, `preview_scene` and the headless tools also note a missing or stale Debug C# assembly under `prepare: never`.
+
 ### Fixed
 
 - A `hover` over a C# game's own tooltip no longer times out while the game first loads the C# state helper.
@@ -15,6 +19,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `hover`: on a C# session the server waits 30 s more for the reply, as wall time even while recording; a C# tooltip node that frees itself in its state read is skipped.
 - `stop_project`, `restart_project` and an attached game's stop: a game is killed as silent only after 2 s of load-adjusted time without answering its ping.
 - `stop_project`: a leftover process Windows refused to open is named in `warning` as one the stop could not wait for.
+- `run_scratches`, `preview_scene`, `validate`, `get_scene_file_tree`, `get_node_properties`, `get_node_signals` with `prepare: "never"`: `prep.note` says when the Debug C# assembly is missing or stale.
 
 ## 0.45.0 - 2026-11-18
 

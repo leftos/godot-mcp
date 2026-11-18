@@ -145,7 +145,7 @@ public sealed class BootCrashRetryTests : IDisposable
             Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
             RetryBootCrashOnce = retry,
         };
-        HeadlessRequest request = new(game, "validate", new JsonObject { ["targets"] = new JsonArray() }, Prepare: false, TimeSpan.FromMinutes(1));
+        HeadlessRequest request = new(game, "validate", new JsonObject { ["targets"] = new JsonArray() }, HeadlessPrep.Off, TimeSpan.FromMinutes(1));
         return await HeadlessRunner.RunAsync(registry, request, TestContext.Current.CancellationToken);
     }
 

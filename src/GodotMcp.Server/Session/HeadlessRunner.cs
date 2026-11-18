@@ -8,11 +8,24 @@ using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
+/// <summary>How a headless request prepares the project folder before its operation.</summary>
+internal enum HeadlessPrep
+{
+    /// <summary>The prep runs: a stale C# build is built and missing or outdated imports are run.</summary>
+    Run,
+
+    /// <summary>The caller asked prepare "never"; the result notes a missing or stale Debug assembly.</summary>
+    Never,
+
+    /// <summary>The operation takes no prep, and its result says nothing about one.</summary>
+    Off,
+}
+
 /// <summary>
-/// One headless operation: the normalised project folder, the operation's name and parameters, whether to prepare first, and
-/// how long the Godot run may take before it is stopped.
+/// One headless operation: the normalised project folder, the operation's name and parameters, how it prepares the folder
+/// (<see cref="HeadlessPrep"/>), and how long the Godot run may take before it is stopped.
 /// </summary>
-internal sealed record HeadlessRequest(string ProjectDir, string Operation, JsonObject Parameters, bool Prepare, TimeSpan Ceiling)
+internal sealed record HeadlessRequest(string ProjectDir, string Operation, JsonObject Parameters, HeadlessPrep Prep, TimeSpan Ceiling)
 {
     /// <summary>
     /// The full paths of files the operation loads, which the prep imports first when they need it (<see cref="PrepContext.ImportAssets"/>).
@@ -87,9 +100,13 @@ internal static class HeadlessRunner
                 BuildWhenUnsaved = request.ReportsBuild,
                 RetryBootCrashOnce = registry.RetryBootCrashOnce,
             };
-            PrepOutcome prep = request.Prepare
-                ? await ProjectPrep.RunReportingBuildAsync(context, cancellationToken)
-                : new PrepOutcome(PrepResult.Skipped, null);
+            PrepOutcome prep = request.Prep switch
+            {
+                HeadlessPrep.Run => await ProjectPrep.RunReportingBuildAsync(context, cancellationToken),
+                HeadlessPrep.Never => new PrepOutcome(PrepResult.SkippedFor(projectDir, registry.Logger), null),
+                HeadlessPrep.Off => new PrepOutcome(PrepResult.Skipped, null),
+                _ => throw new ArgumentOutOfRangeException(nameof(request), request.Prep, "Unknown headless prep."),
+            };
             JsonObject reply = await RunGodotAsync(
                 new GodotCall(godot, script, request, registry, prep.Result.Build, prep.BuildErrors),
                 cancellationToken

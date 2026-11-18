@@ -651,7 +651,9 @@ internal sealed class ScratchRun
             CreateShotRoot(ProjectPrep.LogFolder(plan.ProjectDir), context.RunId, registry.Logger);
         }
 
-        PrepResult prep = plan.Prepare ? await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken) : PrepResult.Skipped;
+        PrepResult prep = plan.Prepare
+            ? await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken)
+            : await registry.SkippedPrepAsync(plan.ProjectDir, cancellationToken);
         ScratchSceneResult[] scenes = await PlayBesideAsync(context, cancellationToken);
         for (int index = 0; index < scenes.Length; index++)
         {

@@ -41,7 +41,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             JsonObject parameters = new() { ["scene"] = CheckScenePath(projectDir, scenePath), ["nodePath"] = node };
-            HeadlessRequest request = new(projectDir, "get_node_signals", parameters, prepare, RunCeiling);
+            HeadlessRequest request = new(projectDir, "get_node_signals", parameters, prepare ? HeadlessPrep.Run : HeadlessPrep.Never, RunCeiling);
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         return WithErrors(run);

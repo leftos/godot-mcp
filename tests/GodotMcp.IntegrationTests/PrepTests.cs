@@ -137,6 +137,24 @@ public sealed partial class PrepTests : IAsyncDisposable
         await Assert.ThrowsAsync<McpException>(() => CallAsync("CsProbe", "PlayStep", "4"));
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APreviewWithPrepareNeverNotesAMissingAssembly()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        LaunchRequest preview = new(csProbe.Directory, "res://main.tscn", [], [], Quiet: true, ShutOutRealGamepads: false, Prepare: false);
+
+        PrepResult prep = await _harness.Sessions.PreviewAsync(preview, (session, result, ct) => Task.FromResult(result), cancellation);
+
+        Assert.Equal("skipped", prep.Build);
+        Assert.Equal("skipped", prep.Import);
+        Assert.Equal(
+            "The C# build was skipped (prepare: never), and there is no assembly at .godot/mono/temp/bin/Debug/CsProbe.dll, "
+                + "so the project's C# scripts will not load.",
+            prep.Note
+        );
+    }
+
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task ABrokenSourceRefusesTheLaunchWithTheCompilerError()
     {

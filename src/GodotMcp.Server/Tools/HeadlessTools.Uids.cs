@@ -52,7 +52,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             JsonObject parameters = StampUidsParameters(projectDir, paths);
-            HeadlessRequest request = new(projectDir, "stamp_uids", parameters, Prepare: false, RunCeiling) { Writes = true };
+            HeadlessRequest request = new(projectDir, "stamp_uids", parameters, HeadlessPrep.Off, RunCeiling) { Writes = true };
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         return WithErrors(run);

@@ -55,7 +55,7 @@ internal sealed partial class HeadlessTools
                 return ErrorReport.AddTo(result.Reply?.DeepClone() as JsonObject ?? [], result.Errors).ToJsonString();
             }
 
-            HeadlessRequest request = new(projectDir, "describe_class", parameters, Prepare: true, RunCeiling);
+            HeadlessRequest request = new(projectDir, "describe_class", parameters, HeadlessPrep.Run, RunCeiling);
             return WithErrors(await HeadlessRunner.RunAsync(sessions, request, cancellationToken));
         });
     }

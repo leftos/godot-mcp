@@ -181,7 +181,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             JsonObject parameters = new() { ["scene"] = CheckScenePath(projectDir, scenePath), ["nodes"] = queries };
-            HeadlessRequest request = new(projectDir, "get_node_properties", parameters, prepare, RunCeiling);
+            HeadlessRequest request = new(projectDir, "get_node_properties", parameters, prepare ? HeadlessPrep.Run : HeadlessPrep.Never, RunCeiling);
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         return ShapeResults(run, entry => CutValues(entry["properties"] as JsonObject)).ToJsonString();

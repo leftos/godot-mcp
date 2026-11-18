@@ -356,6 +356,24 @@ public sealed class HeadlessValidationTests : IDisposable
     }
 
     [Fact]
+    public void ASkippedPrepThatCarriesANoteCountsAsAStep()
+    {
+        Assert.True(HeadlessTools.PrepRanAStep(PrepResult.Skipped with { Note = "n" }));
+        Assert.False(HeadlessTools.PrepRanAStep(PrepResult.Skipped));
+        Assert.True(HeadlessTools.PrepRanAStep(new PrepResult { Build = "built", Import = "not-needed" }));
+        Assert.False(
+            HeadlessTools.PrepRanAStep(
+                new PrepResult
+                {
+                    Build = "no-csproj",
+                    Import = "not-needed",
+                    Note = "n",
+                }
+            )
+        );
+    }
+
+    [Fact]
     public void ASymptomOfAFailedBuildIsLeftOutAndCounted()
     {
         JsonObject reply = new()

@@ -103,7 +103,7 @@ internal sealed partial class HeadlessTools
             string scene = CheckEditableScenePath(projectDir, scenePath);
             (JsonArray built, IReadOnlyList<string> imports) = BuildSceneSteps(new SceneTarget(projectDir, scene), steps);
             JsonObject parameters = new() { ["scene"] = scene, ["steps"] = built };
-            HeadlessRequest request = new(projectDir, "batch_scene_operations", parameters, Prepare: true, BatchCeiling)
+            HeadlessRequest request = new(projectDir, "batch_scene_operations", parameters, HeadlessPrep.Run, BatchCeiling)
             {
                 ImportAssets = imports,
                 Writes = true,

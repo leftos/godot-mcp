@@ -690,6 +690,23 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ASceneFileTreeWithPrepareNeverNotesAMissingAssembly()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+
+        JsonNode tree = JsonNode.Parse(
+            await _tools.GetSceneFileTreeAsync(csProbe.Directory, "main.tscn", null, new SceneFileTreeOptions(Prepare: "never"), cancellation)
+        )!;
+
+        Assert.Equal(
+            "The C# build was skipped (prepare: never), and there is no assembly at .godot/mono/temp/bin/Debug/CsProbe.dll, "
+                + "so the project's C# scripts will not load.",
+            tree["prep"]?["note"]?.GetValue<string>()
+        );
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGDScriptAutoloadThatIsNotANodeStillReportsUnderARedBuild()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

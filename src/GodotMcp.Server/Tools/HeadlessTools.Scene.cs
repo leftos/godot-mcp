@@ -369,7 +369,7 @@ internal sealed partial class HeadlessTools
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             JsonObject parameters = LoadSpriteParameters(projectDir, nodePath, texturePath);
             parameters["scene"] = CheckEditableScenePath(projectDir, scenePath);
-            HeadlessRequest request = new(projectDir, "load_sprite", parameters, Prepare: true, RunCeiling)
+            HeadlessRequest request = new(projectDir, "load_sprite", parameters, HeadlessPrep.Run, RunCeiling)
             {
                 ImportAssets = LoadSpriteImportAssets(projectDir, texturePath),
                 Writes = true,
@@ -513,7 +513,7 @@ internal sealed partial class HeadlessTools
     private Task<HeadlessResult> RunWriteAsync(string projectDir, string operation, JsonObject parameters, CancellationToken cancellationToken) =>
         HeadlessRunner.RunAsync(
             sessions,
-            new HeadlessRequest(projectDir, operation, parameters, Prepare: true, RunCeiling) { Writes = true },
+            new HeadlessRequest(projectDir, operation, parameters, HeadlessPrep.Run, RunCeiling) { Writes = true },
             cancellationToken
         );
 
@@ -550,10 +550,12 @@ internal sealed partial class HeadlessTools
     }
 
     /// <summary>
-    /// Whether the prep ran a build to its end (built, failed or stopped) or an import, so the result says what it cost, as
-    /// validate's does; a call whose prep found nothing to do carries no <c>prep</c>.
+    /// Whether the prep ran a build to its end (built, failed or stopped) or an import, or is a skipped prep whose note says what
+    /// the skipped build left, so the result says what it cost or what it left, as validate's does; a call whose prep found
+    /// nothing to do or say carries no <c>prep</c>.
     /// </summary>
-    private static bool PrepRanAStep(PrepResult prep) => prep.Import == "done" || prep.Build is "built" or "failed" or "stopped";
+    internal static bool PrepRanAStep(PrepResult prep) =>
+        prep.Import == "done" || prep.Build is "built" or "failed" or "stopped" || (prep.Import == "skipped" && prep.Note is not null);
 }
 
 /// <summary>Where duplicate_node puts the copy.</summary>

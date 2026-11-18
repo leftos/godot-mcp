@@ -96,7 +96,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             IReadOnlyList<CsTarget> csTargets = await CSharpTargetsAsync(projectDir, checkedFiles, sessions.Logger, cancellationToken);
             IReadOnlyList<string> loaded = GodotTargets(checkedFiles, csTargets);
             JsonObject parameters = new() { ["targets"] = new JsonArray([.. loaded.Select(path => (JsonNode)path)]) };
-            HeadlessRequest request = new(projectDir, "validate", parameters, prepare, RunCeiling)
+            HeadlessRequest request = new(projectDir, "validate", parameters, prepare ? HeadlessPrep.Run : HeadlessPrep.Never, RunCeiling)
             {
                 ImportSkipHint = SkipPrepHint,
                 ReportsBuild = csTargets.Count > 0,
@@ -149,7 +149,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
                 ["root"] = string.IsNullOrWhiteSpace(root) ? "." : root.Trim(),
                 ["maxDepth"] = maxDepth,
             };
-            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare, RunCeiling)
+            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare ? HeadlessPrep.Run : HeadlessPrep.Never, RunCeiling)
             {
                 ImportAssets = SceneImportAssets(projectDir, scene),
                 ImportSkipHint = SkipPrepHint,

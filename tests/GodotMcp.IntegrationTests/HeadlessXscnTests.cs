@@ -323,7 +323,7 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
             ["nodeName"] = "Part",
             ["parent"] = ".",
         };
-        HeadlessRequest request = new(ProjectPaths.Normalise(project), "add_node", parameters, Prepare: false, TimeSpan.FromSeconds(60));
+        HeadlessRequest request = new(ProjectPaths.Normalise(project), "add_node", parameters, HeadlessPrep.Off, TimeSpan.FromSeconds(60));
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             HeadlessRunner.RunAsync(_harness.Sessions, request, cancellation)

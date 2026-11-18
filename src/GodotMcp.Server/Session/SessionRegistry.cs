@@ -457,7 +457,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         GodotSession session = ReservePreview(projectDir);
         try
         {
-            PrepResult prep = request.Prepare ? await PrepareForPreviewAsync(session, limit, cancellationToken) : PrepResult.Skipped;
+            PrepResult prep = request.Prepare
+                ? await PrepareForPreviewAsync(session, limit, cancellationToken)
+                : await SkippedPrepAsync(projectDir, limit.Token);
             await session.LaunchAsync(request with { ProjectPath = projectDir, Prepare = false }, limit.Token);
             return await capture(session, prep, limit.Token);
         }
@@ -1566,6 +1568,24 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 RetryBootCrashOnce = RetryBootCrashOnce,
             };
             return await ProjectPrep.RunAsync(context, cancellationToken);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// A prepare never prep, under the folder's prep lock as a launch's is, so the note never reads an assembly a build on the
+    /// folder is writing.
+    /// </summary>
+    internal async Task<PrepResult> SkippedPrepAsync(string projectDir, CancellationToken cancellationToken)
+    {
+        SemaphoreSlim folderLock = PrepLock(projectDir);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            return PrepResult.SkippedFor(projectDir, logger);
         }
         finally
         {

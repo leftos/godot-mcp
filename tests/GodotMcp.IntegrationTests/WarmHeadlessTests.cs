@@ -229,7 +229,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
             ProjectPaths.Normalise(csProbe.Directory),
             "get_scene_file_tree",
             new JsonObject { ["scene"] = "res://level.tscn" },
-            Prepare: false,
+            HeadlessPrep.Off,
             Ceiling
         );
 
@@ -309,7 +309,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
             ProjectPaths.Normalise(projectDir),
             "get_scene_file_tree",
             new JsonObject { ["scene"] = "res://" + scene },
-            prepare,
+            prepare ? HeadlessPrep.Run : HeadlessPrep.Off,
             Ceiling
         );
         return HeadlessRunner.RunAsync(_harness.Sessions, request, cancellation);

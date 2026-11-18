@@ -62,4 +62,29 @@ public sealed class ScratchCSharpStateTests : IAsyncDisposable
         Assert.True(step["until"]!["met"]!.GetValue<bool>(), step.ToJsonString());
         Assert.InRange(step["until"]!["gameMs"]!.GetValue<int>(), 0, 1999);
     }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARunWithPrepareNeverNotesAMissingAssembly()
+    {
+        string scratch = Path.Combine(_csProbe.Directory, "Scratch");
+        Directory.CreateDirectory(scratch);
+        foreach (string name in new[] { "ScratchThrow.cs", "ScratchThrow.tscn" })
+        {
+            File.Copy(Path.Combine(RepoPaths.Root, "tests", "fixtures", "CsProbe", "Scratch", name), Path.Combine(scratch, name));
+        }
+
+        string json = await _scratch.RunScratchesAsync(
+            _csProbe.Directory,
+            ["res://Scratch/ScratchThrow.tscn"],
+            new ScratchOptions(Prepare: "never"),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonNode prep = JsonNode.Parse(json)!["prep"]!;
+        Assert.Equal(
+            "The C# build was skipped (prepare: never), and there is no assembly at .godot/mono/temp/bin/Debug/CsProbe.dll, "
+                + "so the project's C# scripts will not load.",
+            prep["note"]?.GetValue<string>()
+        );
+    }
 }
