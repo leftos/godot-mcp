@@ -28,6 +28,11 @@ const GAME_TOOLTIP_MALFORMED := (
 	"%s is in the mcp_tooltip group but its state is not a tooltip: "
 	+ "it has neither text nor pending: true"
 )
+## The warning when a pending state's dueMs is no milliseconds count: its path.
+const GAME_TOOLTIP_BAD_DUE := (
+	"%s is in the mcp_tooltip group but its pending state's dueMs is not a number of "
+	+ "milliseconds from 0 up"
+)
 
 ## The input player (godot_mcp_input.gd) and the target resolver (godot_mcp_targets.gd), set by
 ## the input player before this node enters the tree.
@@ -101,12 +106,21 @@ func near_miss_warning(control: Control, point: Vector2) -> String:
 
 
 ## params.timeoutMs, else gui/timers/tooltip_delay_sec plus a second, at most
-## HOVER_TIMEOUT_CAP_MS.
+## HOVER_TIMEOUT_CAP_MS. A limit left out grows to a pending game tooltip's due time while
+## await_game_tooltip waits (due_timeout_ms); a given one never does.
 func tooltip_timeout_ms(params: Dictionary) -> int:
 	if params.has("timeoutMs"):
 		return int(params["timeoutMs"])
 	var delay: float = float(ProjectSettings.get_setting("gui/timers/tooltip_delay_sec", 0.5))
 	return mini(int(delay * 1000.0) + 1000, HOVER_TIMEOUT_CAP_MS)
+
+
+## timeout_ms, raised to elapsed_ms plus a pending game tooltip's due_ms plus a second when that
+## is later, and never past HOVER_TIMEOUT_CAP_MS: the game's own tooltip delay, waited for without
+## the caller knowing it.
+static func due_timeout_ms(timeout_ms: int, elapsed_ms: int, due_ms: float) -> int:
+	var due: int = ceili(minf(due_ms, float(HOVER_TIMEOUT_CAP_MS)))
+	return mini(maxi(timeout_ms, elapsed_ms + due + 1000), HOVER_TIMEOUT_CAP_MS)
 
 
 ## The tooltip popup showing for tooltip_owner, checked now and then on each process_frame,
@@ -181,27 +195,53 @@ func game_tooltip_or_near_miss(control: Control, point: Vector2, params: Diction
 ## The tooltip a game draws itself, read from the nodes in the mcp_tooltip group through the state
 ## reader (godot_mcp_state.gd read_one, with params.extension or params.csharpError for a C# node)
 ## now and then on each process_frame, which fires paused or not (scene/main/scene_tree.cpp L649,
-## L713 in 4.7.2), while a node is pending, up to tooltip_timeout_ms (in a recording, its clip
-## frames) counted from the end of the first check, so a first read that loads the C# helper does
-## not use up the limit. Answers {tooltip} ({text, x?, y?, width?, height?, owner, state}) for the
-## first node in tree order showing one, {warning} when a node is still pending at the limit or one
-## cannot be read or is malformed, and {} at once when none shows and none is pending.
+## L713 in 4.7.2), while a node is pending: up to params.timeoutMs, or tooltip_timeout_ms when left
+## out, raised by each check's dueMs to that time from the end of the first check plus a second
+## (due_timeout_ms, at most HOVER_TIMEOUT_CAP_MS); a recording counts clip time. The count starts
+## at the end of the first check, so a first read that loads the C# helper does not use up the
+## limit. Answers {tooltip} ({text, x?, y?, width?, height?, owner, state}) for the first node in
+## tree order showing one, {warning} when a node is still pending at the limit or one cannot be
+## read, is malformed or has a bad dueMs, and {} at once when none shows and none is pending.
 func await_game_tooltip(params: Dictionary) -> Dictionary:
+	var given: bool = params.has("timeoutMs")
 	var timeout_ms: int = tooltip_timeout_ms(params)
 	var helper: Dictionary = {
 		"extension": _text_of(params, "extension"), "csharpError": _text_of(params, "csharpError")
 	}
+	var fps: int = gestures.clip_fps()
 	var check: Dictionary = _check_game_tooltips(helper)
-	var until: int = Time.get_ticks_msec() + timeout_ms
-	var frames: int = gestures.clip_frames(timeout_ms, gestures.clip_fps())
+	var start: int = Time.get_ticks_msec()
 	var waited: int = 0
+	timeout_ms = _grown_timeout_ms(given, timeout_ms, _waited_ms(waited, fps, start), check)
+	var until: int = start + timeout_ms
+	var frames: int = gestures.clip_frames(timeout_ms, fps)
 	while check.has("pending") and gestures.within(waited, frames, until):
 		await get_tree().process_frame
 		waited += 1
 		check = _check_game_tooltips(helper)
+		timeout_ms = _grown_timeout_ms(given, timeout_ms, _waited_ms(waited, fps, start), check)
+		until = start + timeout_ms
+		frames = gestures.clip_frames(timeout_ms, fps)
 	if check.has("pending"):
 		return {"warning": GAME_TOOLTIP_PENDING % [check["pending"], timeout_ms]}
 	return check
+
+
+## How long a wait has run at waited frames: clip time at fps in a recording, else since start.
+static func _waited_ms(waited: int, fps: int, start: int) -> int:
+	if fps <= 0:
+		return Time.get_ticks_msec() - start
+	return floori(float(waited) * 1000.0 / float(fps))
+
+
+## timeout_ms raised to the due time check names, elapsed_ms into the wait, when the caller gave
+## none; unchanged when it gave one or no check names a dueMs (due_timeout_ms).
+static func _grown_timeout_ms(
+	given: bool, timeout_ms: int, elapsed_ms: int, check: Dictionary
+) -> int:
+	if given or not check.has("dueMs"):
+		return timeout_ms
+	return due_timeout_ms(timeout_ms, elapsed_ms, check["dueMs"])
 
 
 ## params[key] when it is a String, else "" (missing, or another type).
@@ -212,10 +252,11 @@ static func _text_of(params: Dictionary, key: String) -> String:
 
 ## One check of every node in the mcp_tooltip group, in tree order, the bridge's own left out and a
 ## freed one skipped: {tooltip} for the first showing one, {warning} for the first that cannot be
-## read or is malformed before it, else {pending: path} naming the first pending one, else {}.
-## helper is {extension, csharpError}.
+## read, is malformed or has a bad dueMs before it, else {pending: path} naming the first pending
+## one plus dueMs, the largest among the pending ones that gave one, else {}. helper is
+## {extension, csharpError}.
 func _check_game_tooltips(helper: Dictionary) -> Dictionary:
-	var pending: String = ""
+	var pending: Dictionary = {}
 	for node: Variant in get_tree().get_nodes_in_group(GAME_TOOLTIP_GROUP):
 		if _skipped(node):
 			continue
@@ -224,9 +265,18 @@ func _check_game_tooltips(helper: Dictionary) -> Dictionary:
 			continue
 		if not read.has("pending"):
 			return read
-		if pending.is_empty():
-			pending = read["pending"]
-	return {} if pending.is_empty() else {"pending": pending}
+		pending = _with_pending(pending, read)
+	return pending
+
+
+## The pending reads so far merged with read's: the first path is kept, and the larger dueMs
+## counts when either read gives one.
+static func _with_pending(pending: Dictionary, read: Dictionary) -> Dictionary:
+	if pending.is_empty():
+		pending["pending"] = read["pending"]
+	if read.has("dueMs") and read["dueMs"] > float(pending.get("dueMs", -1.0)):
+		pending["dueMs"] = read["dueMs"]
+	return pending
 
 
 ## Whether an mcp_tooltip node is left out of a check: freed, or the bridge or under it.
@@ -237,8 +287,8 @@ func _skipped(node: Variant) -> bool:
 
 
 ## One mcp_tooltip node read through the state reader at its default depth: {tooltip} with owner,
-## {warning}, {pending: path}, or {} for none or a node freed during its own read. The tooltip's
-## keys come out {text, x?, y?, width?, height?, owner, state}.
+## {warning}, {pending: path} with dueMs when its state gives one, or {} for none or a node freed
+## during its own read. The tooltip's keys come out {text, x?, y?, width?, height?, owner, state}.
 func _read_game_tooltip(node: Node, helper: Dictionary) -> Dictionary:
 	var entry: Dictionary = gestures.bridge._state.read_one(
 		node, State.DEFAULT_MAX_DEPTH, helper["extension"], helper["csharpError"]
@@ -251,6 +301,12 @@ func _read_game_tooltip(node: Node, helper: Dictionary) -> Dictionary:
 		var reason: String = _unreadable_reason(str(entry["error"]))
 		return {"warning": GAME_TOOLTIP_UNREADABLE % [path, reason]}
 	var classified: Dictionary = classify_game_tooltip(entry.get("state"))
+	return _classified_read(classified, node, path)
+
+
+## A classified state as the read's result: {tooltip} with owner for a showing one, {warning} for
+## a malformed or bad-due one, {pending: path} with dueMs when it gives one, else {}.
+func _classified_read(classified: Dictionary, node: Node, path: String) -> Dictionary:
 	match classified["kind"]:
 		"showing":
 			var tooltip: Dictionary = classified["tooltip"]
@@ -260,7 +316,12 @@ func _read_game_tooltip(node: Node, helper: Dictionary) -> Dictionary:
 			tooltip["state"] = state
 			return {"tooltip": tooltip}
 		"pending":
-			return {"pending": path}
+			var pending: Dictionary = {"pending": path}
+			if classified.has("dueMs"):
+				pending["dueMs"] = classified["dueMs"]
+			return pending
+		"bad_due":
+			return {"warning": GAME_TOOLTIP_BAD_DUE % path}
 		"malformed":
 			return {"warning": GAME_TOOLTIP_MALFORMED % path}
 	return {}
@@ -273,10 +334,12 @@ static func _unreadable_reason(error: String) -> String:
 
 
 ## What an mcp_tooltip node's state value says, keys matched exactly: {kind: "none"} for null or an
-## empty Dictionary; {kind: "pending"} for a Dictionary with pending: true; {kind: "showing",
-## tooltip} for one with a text key whose value is a String or null, pending or not (text wins);
-## {kind: "malformed"} for anything else. tooltip is {text, x, y, width, height, state}, the four
-## rect keys only when the state gives all four as numbers (int or float), state the whole value.
+## empty Dictionary; {kind: "pending", dueMs?} for a Dictionary with pending: true, dueMs the
+## milliseconds until the tooltip shows when the state gives one as a number from 0 up; {kind:
+## "showing", tooltip} for one with a text key whose value is a String or null, pending or not (text
+## wins); {kind: "bad_due"} for a pending one whose dueMs is anything else; {kind: "malformed"} for
+## anything else. tooltip is {text, x, y, width, height, state}, the four rect keys only when the
+## state gives all four as numbers (int or float), state the whole value.
 static func classify_game_tooltip(value: Variant) -> Dictionary:
 	if value == null:
 		return {"kind": "none"}
@@ -288,8 +351,19 @@ static func classify_game_tooltip(value: Variant) -> Dictionary:
 	if _shows_text(state):
 		return {"kind": "showing", "tooltip": _game_tooltip(state)}
 	if state.get("pending") is bool and state["pending"]:
-		return {"kind": "pending"}
+		return _pending_kind(state)
 	return {"kind": "malformed"}
+
+
+## A pending tooltip state as {kind: "pending"}, with dueMs as a float when the state gives one as
+## a number from 0 up, else {kind: "bad_due"}.
+static func _pending_kind(state: Dictionary) -> Dictionary:
+	if not state.has("dueMs"):
+		return {"kind": "pending"}
+	var due: Variant = state["dueMs"]
+	if not (due is int or due is float) or due < 0:
+		return {"kind": "bad_due"}
+	return {"kind": "pending", "dueMs": float(due)}
 
 
 ## Whether a tooltip state has a text key holding a String or null.

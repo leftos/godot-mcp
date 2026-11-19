@@ -13,8 +13,9 @@ internal sealed record HoverOptions(
     )]
         bool Tooltip = true,
     [property: Description(
-        "How long to wait for the tooltip, 0 to 10000 ms; gui/timers/tooltip_delay_sec plus 1000 ms (at most 10000) when left out. "
-            + "In a recording, clip time: 60 movie frames a second."
+        "How long to wait for the tooltip, 0 to 10000 ms; when left out, gui/timers/tooltip_delay_sec plus 1000 ms, raised while a game "
+            + "tooltip's pending state names dueMs to that time from its read plus 1000 ms, at most 10000 either way. In a recording, clip "
+            + "time: 60 movie frames a second."
     )]
         int? TimeoutMs = null
 );

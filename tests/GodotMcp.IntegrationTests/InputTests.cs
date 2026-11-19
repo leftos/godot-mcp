@@ -1102,6 +1102,70 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWaitsAGameTooltipsDueTimeWhenNoTimeoutIsGiven()
+    {
+        await AddGameTooltipAsync("""{"pending": true, "dueMs": 9500}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), new HoverOptions(), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal($"the game tooltip of {GameTooltipPath} was still pending after 10000 ms", hovered["warning"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverKeepsAGivenTimeoutOverAGameTooltipsDueTime()
+    {
+        await AddGameTooltipAsync("""{"pending": true, "dueMs": 9500}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("SmallButton"),
+                new HoverOptions(TimeoutMs: 300),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal($"the game tooltip of {GameTooltipPath} was still pending after 300 ms", hovered["warning"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWarnsAGameTooltipWithABadDueTime()
+    {
+        await AddGameTooltipAsync("""{"pending": true, "dueMs": -5}""");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("SmallButton"),
+                new HoverOptions(TimeoutMs: 300),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal(
+            $"{GameTooltipPath} is in the mcp_tooltip group but its pending state's dueMs is not a number of milliseconds from 0 up",
+            hovered["warning"]?.GetValue<string>()
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWaitsForAGameTooltipThatShowsAfterTheDefaultLimit()
+    {
+        await AddGameTooltipAsync("""{"text": "late"}""");
+        await RunAsync($"scene_tree.root.get_node(\"{GameTooltipPath}\").set(\"show_after_ms\", 2500)\n\treturn true");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), new HoverOptions(), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        Assert.Equal("late", hovered["tooltip"]?["text"]?.GetValue<string>());
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task HoverPrefersGodotsTooltipOverTheGames()
     {
         await AddGameTooltipAsync("""{"text": "Game"}""");

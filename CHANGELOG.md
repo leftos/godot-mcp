@@ -6,10 +6,12 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Added
 
+- `hover` waits for a game-drawn tooltip that says when it is due, instead of giving up at Godot's tooltip delay.
 - `run_scratches` takes step ranges such as `"2-5"` in `options.capture.steps`, as `options.steps` does.
 
 ### For agents
 
+- `hover`: an `mcp_tooltip` node's pending state may carry `dueMs`; a `timeoutMs` left out grows to it plus 1 s, at most 10 s.
 - `run_scratches`: the step options say indices count from 0, and a refusal listing a scene's steps reads `its steps, numbered from 0, are …`.
 
 ## 0.45.1 - 2026-11-18
