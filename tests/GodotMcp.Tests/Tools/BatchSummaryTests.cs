@@ -127,6 +127,60 @@ public sealed class BatchSummaryTests : IDisposable
     }
 
     [Fact]
+    public void AShortResultLeftOutKeepsACallThatRaised()
+    {
+        JsonObject call = new() { ["value"] = null, ["raised"] = "boom" };
+        JsonObject wait = new()
+        {
+            ["met"] = true,
+            ["frames"] = 3,
+            ["call"] = call.DeepClone(),
+        };
+        JsonObject result = Result([
+            .. Enumerable.Range(0, 25).Select(index => Passed(index, "run_script", Value(880))),
+            Passed(25, "wait_for", wait),
+        ]);
+
+        JsonObject summary = Reply(result, null);
+
+        JsonObject shown = summary["steps"]![25]!.AsObject();
+        Assert.True(JsonNode.DeepEquals(new JsonObject { ["call"] = call }, shown["result"]), shown.ToJsonString());
+        Assert.Equal(wait.ToJsonString().Length, shown["resultOmitted"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void AKeptCallThatHoldsTheReplyOverTheCapIsTrimmedToItsRaisedText()
+    {
+        JsonObject[] waits = [.. Enumerable.Range(0, 12).Select(index => WaitThatRaised($"boom {index + 1}"))];
+        JsonObject result = Result([.. waits.Select((wait, index) => Passed(index, "wait_for", wait))]);
+
+        string reply = BatchSummary.Reply(result, null, _project, NullLogger.Instance);
+        JsonObject summary = JsonNode.Parse(reply)!.AsObject();
+        JsonArray steps = summary["steps"]!.AsArray();
+
+        Assert.True(reply.Length <= 20000, $"{reply.Length} characters");
+        List<int> trimmed = [.. Enumerable.Range(0, steps.Count).Where(index => !CallAt(steps, index).ContainsKey("valuePreview"))];
+        Assert.NotEmpty(trimmed);
+        int first = trimmed[0];
+        Assert.Equal(Enumerable.Range(first, steps.Count - first), trimmed);
+        for (int index = 0; index < first; index++)
+        {
+            Assert.True(JsonNode.DeepEquals(waits[index]["call"], CallAt(steps, index)), steps[index]!.ToJsonString());
+        }
+
+        for (int index = first; index < steps.Count; index++)
+        {
+            JsonObject expected = new() { ["raised"] = waits[index]["call"]!["raised"]!.DeepClone(), ["valueLength"] = 5000 };
+            Assert.True(JsonNode.DeepEquals(expected, CallAt(steps, index)), steps[index]!.ToJsonString());
+        }
+
+        Assert.True(
+            JsonNode.DeepEquals(new JsonObject { ["raised"] = "boom 12", ["valueLength"] = 5000 }, CallAt(steps, 11)),
+            CallAt(steps, 11).ToJsonString()
+        );
+    }
+
+    [Fact]
     public void ARepeatedFailedAtReasonIsShortenedBeforeAnyResultIsLeftOut()
     {
         string error = new('e', 4000);
@@ -243,6 +297,27 @@ public sealed class BatchSummaryTests : IDisposable
     }
 
     private static JsonObject Value(int characters) => new() { ["value"] = new string('v', characters) };
+
+    /// <summary>A samples array of 120 ten-character strings: over the 1000-character limit past which a result is digested.</summary>
+    private static JsonArray Samples() => new([.. Enumerable.Range(0, 120).Select(_ => (JsonNode)new string('x', 10))]);
+
+    /// <summary>A wait_for result whose call raised after a 2000-character value preview.</summary>
+    private static JsonObject WaitThatRaised(string raised) =>
+        new()
+        {
+            ["met"] = true,
+            ["frames"] = 3,
+            ["samples"] = Samples(),
+            ["call"] = new JsonObject
+            {
+                ["valuePreview"] = new string('v', 2000),
+                ["valueLength"] = 5000,
+                ["raised"] = raised,
+            },
+        };
+
+    /// <summary>The step's result call.</summary>
+    private static JsonObject CallAt(JsonArray steps, int index) => steps[index]!["result"]!["call"]!.AsObject();
 
     [Fact]
     public void ManyShortResultsPastTheCapLeaveTheLaterOnesOutUntilTheReplyFits()
@@ -459,7 +534,29 @@ public sealed class BatchSummaryTests : IDisposable
     }
 
     [Fact]
-    public void AnotherToolsLongResultKeepsOnlyItsScalarFieldsAndErrors()
+    public void AGroupMembersDigestKeepsACallThatRaised()
+    {
+        JsonObject member = Passed(0, "wait_for", WaitThatRaised("boom 1"));
+        member["session"] = "host";
+        JsonObject group = new()
+        {
+            ["index"] = 0,
+            ["parallel"] = true,
+            ["ok"] = true,
+            ["members"] = new JsonArray(member),
+        };
+
+        (JsonObject summary, int replaced) = BatchSummary.Summarise(Result(group));
+
+        JsonObject shaped = summary["steps"]![0]!["members"]![0]!.AsObject();
+        JsonObject digest = shaped["result"]!.AsObject();
+        Assert.True(JsonNode.DeepEquals(member["result"]!["call"], digest["call"]), digest.ToJsonString());
+        Assert.False(digest.ContainsKey("samples"), digest.ToJsonString());
+        Assert.Equal(1, replaced);
+    }
+
+    [Fact]
+    public void AnotherToolsLongResultKeepsItsScalarFieldsAndErrors()
     {
         JsonObject state = new()
         {
@@ -491,6 +588,44 @@ public sealed class BatchSummaryTests : IDisposable
         Assert.True(JsonNode.DeepEquals(entry["errorsElsewhere"], shaped["errorsElsewhere"]));
         Assert.Equal("get_game_state", shaped["tool"]!.GetValue<string>());
         Assert.Equal(1, replaced);
+    }
+
+    [Fact]
+    public void AnotherToolsDigestKeepsACallThatRaised()
+    {
+        JsonObject call = new() { ["value"] = null, ["raised"] = "Invalid call. Nonexistent function 'PlayStep'" };
+        JsonObject wait = new()
+        {
+            ["met"] = true,
+            ["frames"] = 3,
+            ["samples"] = Samples(),
+            ["call"] = call.DeepClone(),
+        };
+
+        (JsonObject summary, _) = BatchSummary.Summarise(Result(Passed(0, "wait_for", wait)));
+
+        JsonObject digest = summary["steps"]![0]!["result"]!.AsObject();
+        Assert.True(digest["met"]!.GetValue<bool>(), digest.ToJsonString());
+        Assert.Equal(3, digest["frames"]!.GetValue<int>());
+        Assert.False(digest.ContainsKey("samples"), digest.ToJsonString());
+        Assert.True(JsonNode.DeepEquals(call, digest["call"]), digest.ToJsonString());
+    }
+
+    [Fact]
+    public void AnotherToolsDigestDropsACallThatDidNotRaise()
+    {
+        JsonObject wait = new()
+        {
+            ["met"] = true,
+            ["frames"] = 3,
+            ["samples"] = Samples(),
+            ["call"] = new JsonObject { ["value"] = 3 },
+        };
+
+        (JsonObject summary, _) = BatchSummary.Summarise(Result(Passed(0, "wait_for", wait)));
+
+        JsonObject digest = summary["steps"]![0]!["result"]!.AsObject();
+        Assert.False(digest.ContainsKey("call"), digest.ToJsonString());
     }
 
     [Fact]

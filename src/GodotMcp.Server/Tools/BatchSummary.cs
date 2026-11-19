@@ -56,7 +56,10 @@ internal static class BatchSummary
         "errorsOmitted",
     ];
 
-    /// <summary>The result fields the summary never drops: the game's errors, kept by every digest and by a left-out result.</summary>
+    /// <summary>
+    /// The result fields the summary never drops: the game's errors, kept by every digest and by a left-out result (a call
+    /// that raised is kept beside them, see IsRaisedCall).
+    /// </summary>
     private static readonly string[] ErrorFields = ["errors", "errorsOmitted"];
 
     /// <summary>The string fields of a capture digest that the long-string cut keeps.</summary>
@@ -152,8 +155,9 @@ internal static class BatchSummary
     /// <summary>
     /// The second pass's cuts, in order, each applied only while the summary is still over the cap: a failedAt.reason that
     /// repeats the failed entry's error is shortened, capture digests' files become filesOmitted, digests' long strings go
-    /// (but a capture digest's warning and folder), and the short results kept whole go from the last entry back, keeping
-    /// their errors.
+    /// (but a capture digest's warning and folder), the short results kept whole go from the last entry back, keeping
+    /// their errors and a call that raised, and finally those kept calls are trimmed from the last entry back to their
+    /// raised text and their value's length.
     /// </summary>
     private static IEnumerable<Action> Shrinks(JsonObject summary)
     {
@@ -174,10 +178,48 @@ internal static class BatchSummary
             yield return () => DropLongStrings(digest["result"]!.AsObject(), KeptStrings(digest));
         }
 
-        foreach (JsonObject entry in Enumerable.Reverse(entries).Where(entry => IsPassed(entry) && !entry.ContainsKey("resultOmitted")))
+        foreach (JsonObject entry in OmittedResults(entries))
         {
             yield return () => OmitResult(entry);
         }
+
+        foreach (JsonObject entry in TrimmedCalls(entries))
+        {
+            yield return () => TrimCall(entry["result"]!.AsObject());
+        }
+    }
+
+    /// <summary>The passed entries whose whole result is left out, last first: the order the second pass omits them in.</summary>
+    private static IEnumerable<JsonObject> OmittedResults(List<JsonObject> entries) =>
+        Enumerable.Reverse(entries).Where(entry => IsPassed(entry) && !entry.ContainsKey("resultOmitted"));
+
+    /// <summary>The passed entries holding a call that raised, last first: the order the second pass trims them in.</summary>
+    private static IEnumerable<JsonObject> TrimmedCalls(List<JsonObject> entries) =>
+        Enumerable.Reverse(entries).Where(entry => IsPassed(entry) && HasRaisedCall(entry));
+
+    /// <summary>Whether the entry's result holds a call that raised, which a digest or a left-out result keeps.</summary>
+    private static bool HasRaisedCall(JsonObject entry) => entry["result"] is JsonObject result && IsRaisedCall("call", result["call"]);
+
+    /// <summary>Replaces the result's raised call with its raised text and, when it has one, its value's length.</summary>
+    private static void TrimCall(JsonObject result)
+    {
+        if (result["call"] is not JsonObject call)
+        {
+            return;
+        }
+
+        JsonObject trimmed = [];
+        if (call["raised"] is { } raised)
+        {
+            trimmed["raised"] = raised.DeepClone();
+        }
+
+        if (call["valueLength"] is { } length)
+        {
+            trimmed["valueLength"] = length.DeepClone();
+        }
+
+        result["call"] = trimmed;
     }
 
     /// <summary>The string fields the long-string cut keeps in the entry's digest: a capture's warning and folder, else none.</summary>
@@ -204,8 +246,8 @@ internal static class BatchSummary
         !ErrorFields.Contains(key) && value is JsonValue text && text.TryGetValue(out string? shown) && shown.Length > MaxKeptStringChars;
 
     /// <summary>
-    /// Replaces a passed entry's result with resultOmitted, its length, and keeps the result's errors and errorsOmitted when
-    /// it has them; an entry without a result is left as it is.
+    /// Replaces a passed entry's result with resultOmitted and its length, and keeps the result's errors, errorsOmitted and
+    /// its call when that raised; an entry without a result is left as it is.
     /// </summary>
     private static void OmitResult(JsonObject entry)
     {
@@ -215,11 +257,11 @@ internal static class BatchSummary
         }
 
         entry["resultOmitted"] = result.ToJsonString().Length;
-        JsonObject? errors = result is JsonObject fields ? Fields(fields, (key, _) => ErrorFields.Contains(key)) : null;
+        JsonObject? kept = result is JsonObject fields ? Fields(fields, (key, value) => ErrorFields.Contains(key) || IsRaisedCall(key, value)) : null;
         entry.Remove("result");
-        if (errors is { Count: > 0 })
+        if (kept is { Count: > 0 })
         {
-            entry["result"] = errors;
+            entry["result"] = kept;
         }
     }
 
@@ -275,21 +317,21 @@ internal static class BatchSummary
 
     private static bool IsCapture(JsonNode? tool) => Text(tool) == CaptureFrames;
 
+    /// <summary>Whether the field is a result's call and it raised: an object holding the raised error.</summary>
+    private static bool IsRaisedCall(string key, JsonNode? value) => key == "call" && value is JsonObject call && call.ContainsKey("raised");
+
     /// <summary>
     /// capture_frames' capture fields, its call when that raised, and its points' count; for any other step, its scalar
-    /// fields and errors.
+    /// fields, errors and its call when that raised.
     /// </summary>
     private static JsonObject Digest(JsonNode? tool, JsonObject result)
     {
         if (!IsCapture(tool))
         {
-            return Fields(result, (key, value) => ErrorFields.Contains(key) || IsScalar(value));
+            return Fields(result, (key, value) => ErrorFields.Contains(key) || IsScalar(value) || IsRaisedCall(key, value));
         }
 
-        JsonObject digest = Fields(
-            result,
-            (key, value) => CaptureFields.Contains(key) || (key == "call" && value is JsonObject call && call.ContainsKey("raised"))
-        );
+        JsonObject digest = Fields(result, (key, value) => CaptureFields.Contains(key) || IsRaisedCall(key, value));
         digest["pointsOmitted"] = result["points"] is JsonArray points ? points.Count : 0;
         return digest;
     }
