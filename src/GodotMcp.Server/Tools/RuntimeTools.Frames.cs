@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -99,7 +100,9 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = BuildCaptureParameters(points, allowance, options);
         FrameTargets? destination = options?.Path is { } path ? FrameDestination(path, points.Length, options.Overwrite is true, session) : null;
         await PrepareGameToolCallsAsync("capture_frames", parameters, session, cancellationToken);
-        BridgeResult result = await CallWithErrorsAsync(Find(session), CaptureCall(parameters, allowance), cancellationToken);
+        GodotSession target = Find(session);
+        using IDisposable? lane = CallHolderOf("capture_frames", parameters) is { } what ? EnterCallLane(target, what) : null;
+        BridgeResult result = await CallWithErrorsAsync(target, CaptureCall(parameters, allowance), cancellationToken);
         JsonObject compact = ShapeFrames(CaptureReply(result), IsCropped(parameters), destination is null ? null : destination.Deliver);
         return ErrorReport.AddTo(compact, result.Errors).ToJsonString();
     }

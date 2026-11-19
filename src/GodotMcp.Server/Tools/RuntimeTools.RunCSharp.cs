@@ -68,6 +68,7 @@ internal sealed partial class RuntimeTools
         int maxDepth = CheckGetDepth(options?.MaxDepth);
         int timeoutMs = CheckCallTimeout(options?.TimeoutMs);
         GodotSession game = Find(session);
+        using IDisposable lane = EnterCallLane(game, "run_csharp");
         string framework = await GameRuntimeDirectoryAsync(RunCSharpToolName, game, session, cancellationToken);
         JsonObject request = BuildRunRequest(game.ProjectDir, framework, code, usings);
         request["maxDepth"] = maxDepth;

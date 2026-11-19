@@ -415,6 +415,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         }
 
         GodotSession target = Find(session);
+        using IDisposable lane = EnterCallLane(target, "run_script");
         long mark = target.Errors.Mark();
         JsonNode? reply = await RunScriptOnBridgeAsync(target, script, TimeSpan.FromMilliseconds(timeoutMs), mark, cancellationToken);
         IReadOnlyList<ErrorEntry> errors = target.Errors.ErrorsSince(mark);

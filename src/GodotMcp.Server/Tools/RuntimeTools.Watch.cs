@@ -132,6 +132,7 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = BuildWatchParameters(action, tracks, window, options);
         await PrepareGameToolCallsAsync("watch", parameters, session, cancellationToken);
         GodotSession target = Find(session);
+        using IDisposable? lane = CallHolderOf("watch", parameters) is { } what ? EnterCallLane(target, what) : null;
         BridgeResult result = await CallWithErrorsAsync(target, WatchCall(action, parameters), cancellationToken);
         JsonObject reply =
             result.Reply?.DeepClone() as JsonObject

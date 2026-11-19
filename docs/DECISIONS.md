@@ -983,6 +983,13 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
     - **A `timeoutMs` left out grows to the pending tooltip's due time**: from the end of the first check the limit becomes elapsed plus `ceil(dueMs)` plus 1000 ms, never shrinking, at most 10000 ms, the largest `dueMs` among the pending nodes counting. A given `timeoutMs` is never changed.
     - **The result carries the node's whole state** as `tooltip.state` beside `owner`, so a game field such as `locked` is read; a Godot tooltip has no `state` key.
     - **Tried and ruled out**: a `[GodotMcpTool]` game tool (C# only, and a helper request prepared by the server per hover) and a new `_mcp_tooltip` method (a second helper op for the same read).
+58. **A session runs one game-code call at a time; a second is refused, not queued** (GMCP-655; the orchestrator's call, from an invariant pass; not an owner ruling). Two calls that run game code sent in one turn ran side by side, so a method that must finish before it starts again ran twice at once.
+    - **The ruling**: each session has a call lane (`CallLane`). `call_method`, `run_script`, `cs_call`, `call_game_tool` and `run_csharp` take it for the request's whole life, and `wait_for` (`batch_drive`'s wait-backed assertions too), `capture_frames` and `watch` take it when they carry `call`, `then.call`, `start.call` or `start.then.call`.
+
+      A second request is refused at once with `session '<name>' is running <what> for <n.n> s; send this call after it returns, or chain both as steps of one batch_drive.`
+    - **Not gated**: `cs_get`, `cs_set`, `set_property`, the input tools, plain waits and reads, output waits, `batch_drive` itself (its steps run one at a time and each takes the lane through its tool) and `run_scratches`' own walk.
+    - **Ruled out: a queue that runs the calls in the order sent.** The MCP SDK starts each request on the thread pool in no set order, so the order sent cannot be known: a queue would only fix the order the race produced. Under refusal the race still decides which of two same-turn calls wins, so the refused one may be the one sent first; the text says what to do either way.
+    - **Not covered**: a fire-and-forget method (`PlayStep` through `call_method`, whose step's task outlives the call), since the request ends before its step does (GMCP-656).
 
 ## Wire
 

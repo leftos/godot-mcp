@@ -156,6 +156,7 @@ internal sealed partial class RuntimeTools
     {
         JsonObject request = BuildCallRequest(target, member, args, options);
         int timeoutMs = CheckCallTimeout(options?.TimeoutMs);
+        using IDisposable lane = EnterCallLane(Find(session), $"cs_call {member}");
         (CSharpReply reply, IReadOnlyList<ErrorEntry> errors) = await SendCSharpAsync(CsCallToolName, request, timeoutMs, session, cancellationToken);
         JsonObject result = GetResult(reply);
         if (reply.Result?["outs"] is JsonObject outs)

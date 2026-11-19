@@ -640,6 +640,7 @@ internal sealed partial class RuntimeTools
 
         await PrepareGameToolCallsAsync("wait_for", parameters, session, cancellationToken);
         GodotSession target = Find(session);
+        using IDisposable? lane = CallHolderOf("wait_for", parameters) is { } what ? EnterCallLane(target, what) : null;
         AddConditionStateHelper(parameters, csharp, target.ProjectDir);
         int timeoutMs = parameters["timeoutMs"]!.GetValue<int>();
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);

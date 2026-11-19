@@ -70,6 +70,14 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Two sessions on one folder need distinct names: pass `options.session` to `run_project`, `run_editor` or `attach_project`. The headless tools and `preview_scene` take `projectPath` instead and no session.
 - **Calls sent in one turn run at once.** A client may send a turn's tool calls together, and the server runs each as it arrives: only input tools wait for one another (one input call at a time per session). Calls whose order matters, such as a game method that must finish before the next call starts it again, go in separate turns or as the steps of one `batch_drive`, which runs them in order.
+
+  **The call lane.** A session runs one request that runs game code through a call at a time. A second one while the first runs is refused at once, never queued: `session '<name>' is running <what> for <n.n> s; send this call after it returns, or chain both as steps of one batch_drive.`
+
+  `<what>` names the holder, such as `call_method /root/A.f(0, 1)`, `run_script`, `cs_call <member>`, `call_game_tool <name>`, `run_csharp`, `wait_for with call /root/Main.PlayStep(0)`, `capture_frames with start.then.call …` or `watch with call …`; a description past 120 characters is cut to 119 plus `…`.
+
+  `call_method`, `run_script`, `cs_call`, `call_game_tool` and `run_csharp` hold the lane for the request's whole life, and so do `wait_for` (`batch_drive`'s wait-backed assertions too), `capture_frames` and `watch` when they carry `call`, `then.call`, `start.call` or `start.then.call`. Not gated: `cs_get`, `cs_set`, `set_property`, the input tools, plain waits and reads, output waits, `batch_drive` itself (each step takes the lane through its tool) and `run_scratches`' own walk.
+
+  It refuses rather than queues because the MCP SDK starts each request on the thread pool in no set order: the race decides which of two same-turn calls wins, so the refused one may be the one sent first. A fire-and-forget method, such as a `PlayStep` through `call_method` whose step's task outlives the call, is not covered: the request ends before its step does.
 - **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. The key is present only when the game raised an error during the call: its absence means none. Read `errors` in every result before the next step.
 - **Viewport coordinates.** Every `x`, `y` an input tool takes is in root-viewport coordinates, as `get_ui_elements` reports rects; the bridge maps them to the window whether it is stretched or letterboxed.
 
@@ -1811,7 +1819,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   It counts wall time only, the same in a recording (where `timeoutMs` counts clip time). Refused: a value outside 1 to 120000 or not whole (`options.maxWallMs must be an integer from 1 to 120000: it caps the wait's wall time.`) and `timeoutMs: 0` with it (`timeoutMs 0 checks once, which leaves options.maxWallMs nothing to cap; drop it or give a timeout.`). `batch_drive`'s wait assertion and `frame_control`'s `until` take none.
 
-  A `gameMs`, `frames`, `exists`, `property`, `expression`, `text`, `settled`, `state` or `signal` wait takes `options.call {node, method, args?}` or `{tool, args?}`, as `capture_frames` does (a `PlayStep` name too, in `then.call` as well).
+  A `gameMs`, `frames`, `exists`, `property`, `expression`, `text`, `settled`, `state` or `signal` wait takes `options.call {node, method, args?}` or `{tool, args?}`, as `capture_frames` does (a `PlayStep` name too, in `then.call` as well). A wait that carries a call holds the session's call lane while it runs, so it is refused at once while another game-code call runs on the session (see "Rules every tool shares").
 
   The method or game tool is called in the frame the checks start (the next process frame), so a `gameMs` or `frames` count runs from the call's entry, and another wait's first check follows the call in that frame, its `frames` and `elapsedMs` counted from that check (a wait met there reports `frames: 0`).
 
@@ -2003,6 +2011,8 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 - **Does:** calls `method` on a live `node` with `args` converted by the parameters' declared types, awaiting a coroutine: `{path, method, value}`.
 - **Use:** triggering game logic directly (spawn, damage, load a level); C# methods, `internal` ones included, are reached. `options {timeoutMs}` (1 to 120000, default 10000, load-adjusted).
 - **Edges:** fails when the method is missing, the argument count does not fit, an argument does not convert (an array of Objects says why), or Godot refuses the call. A scratch root's `PlayStep` called with one string plays the step of that name (the scratch protocol under `run_scratches`). A GDScript error inside it ends it with a null `value` and comes back in `errors`; the call itself succeeds, so read `errors`.
+
+  It holds the session's call lane for the whole request: while another game-code call runs on the session it is refused at once (see "Rules every tool shares").
 
   Past `timeoutMs` the call fails, `Engine.time_scale` and `SceneTree.paused` go back to their values at the call's start (the error names what it restored), and the method keeps running on its node: only `restart_project` stops it.
 

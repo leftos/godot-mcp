@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -612,6 +613,88 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         );
         Assert.Equal(1.0, timeScale.GetValue<double>());
     }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASecondCallOnASessionIsRefusedWhileTheFirstRuns()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(GateNodeScript, cancellation);
+        GodotSession session = _shared.Sessions.Resolve(null);
+
+        Task<string> held = _tools.CallMethodAsync("/root/Gate655", "hold", options: new CallOptions(60000), cancellationToken: cancellation);
+        await WaitForLaneAsync(session, cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CallMethodAsync("/root/Gate655", "get_name", cancellationToken: cancellation)
+        );
+        Assert.StartsWith($"session '{session.Name}' is running call_method /root/Gate655.hold() for ", refused.Message, StringComparison.Ordinal);
+        Assert.EndsWith(" s; send this call after it returns, or chain both as steps of one batch_drive.", refused.Message, StringComparison.Ordinal);
+
+        // A plain wait runs no game code through a call, so it is not refused while the lane is held.
+        string met = await _tools.WaitForAsync(new WaitCondition(Frames: 1), null, (MethodCall?)null, null, cancellation);
+        Assert.True(JsonNode.Parse(met)!["met"]!.GetValue<bool>(), met);
+
+        await ReleaseGateAsync(cancellation);
+        Assert.True(JsonNode.Parse(await held)!["value"]!.GetValue<bool>());
+        string after = await _tools.CallMethodAsync("/root/Gate655", "get_name", cancellationToken: cancellation);
+        Assert.Equal("Gate655", JsonNode.Parse(after)!["value"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitForWithACallHoldsTheLane()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(GateNodeScript, cancellation);
+        GodotSession session = _shared.Sessions.Resolve(null);
+
+        Task<IEnumerable<ContentBlock>> waiting = _tools.WaitForAsync(
+            new WaitCondition(Expression: "root.get_node(\"Gate655\").released"),
+            60000,
+            new WaitOptions(Call: new MethodCall(Node: "/root/Gate655", Method: "get_name")),
+            cancellationToken: cancellation
+        );
+        await WaitForLaneAsync(session, cancellation);
+
+        Assert.Equal("wait_for with call /root/Gate655.get_name()", session.CallLane.Holder);
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CallMethodAsync("/root/Gate655", "get_name", cancellationToken: cancellation)
+        );
+        Assert.StartsWith(
+            $"session '{session.Name}' is running wait_for with call /root/Gate655.get_name() for ",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+
+        await ReleaseGateAsync(cancellation);
+        await waiting;
+        string after = await _tools.CallMethodAsync("/root/Gate655", "get_name", cancellationToken: cancellation);
+        Assert.Equal("Gate655", JsonNode.Parse(after)!["value"]!.GetValue<string>());
+    }
+
+    // Adds Gate655 under the root: hold() awaits a frame until released is set, and get_name is a plain call. The reset frees it
+    // with the other root children.
+    private const string GateNodeScript =
+        "var script := GDScript.new()\n\t"
+        + "script.source_code = \"extends Node\\n\\nvar released := false\\n\\n\\nfunc hold() -> bool:\\n\\twhile not released:\\n\\t\\t"
+        + "await get_tree().process_frame\\n\\treturn true\\n\"\n\t"
+        + "script.reload()\n\t"
+        + "var gate := Node.new()\n\t"
+        + "gate.name = \"Gate655\"\n\t"
+        + "gate.set_script(script)\n\t"
+        + "scene_tree.root.add_child(gate)\n\t"
+        + "return true";
+
+    // Waits until a call holds the session's lane; the test's timeout is the hang guard.
+    private static async Task WaitForLaneAsync(GodotSession session, CancellationToken cancellation)
+    {
+        while (session.CallLane.Holder is null)
+        {
+            await Task.Delay(20, cancellation);
+        }
+    }
+
+    private Task<string> ReleaseGateAsync(CancellationToken cancellation) =>
+        _tools.SetPropertyAsync("/root/Gate655", "released", JsonSerializer.SerializeToElement(true), cancellationToken: cancellation);
 
     private async Task<JsonNode> RunAsync(string body, CancellationToken cancellation) =>
         (await RunForResultAsync(_tools, body, cancellation))["value"]!;

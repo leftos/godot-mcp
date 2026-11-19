@@ -84,6 +84,7 @@ internal sealed partial class RuntimeTools
     {
         JsonObject request = CallGameToolRequest(name, args, options);
         int timeoutMs = CheckCallTimeout(options?.TimeoutMs);
+        using IDisposable lane = EnterCallLane(Find(session), $"call_game_tool {name}");
         await AddGameAsync(CallGameToolToolName, request, session, cancellationToken);
         (CSharpReply reply, IReadOnlyList<ErrorEntry> errors) = await SendCSharpAsync(
             CallGameToolToolName,

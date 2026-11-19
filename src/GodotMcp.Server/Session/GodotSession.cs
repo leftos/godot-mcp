@@ -186,6 +186,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>Plays one input call at a time on this session; calls to other sessions play alongside.</summary>
     public SemaphoreSlim InputGate { get; } = new(1, 1);
 
+    /// <summary>One request that runs game code through a call at a time on this session; a second is refused while the first runs.</summary>
+    internal CallLane CallLane { get; } = new();
+
     /// <summary>The errors and warnings the game's bridge has reported, from the run or the attached game.</summary>
     public ErrorFeed Errors { get; } = new();
 

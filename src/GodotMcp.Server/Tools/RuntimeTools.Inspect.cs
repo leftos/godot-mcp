@@ -171,6 +171,7 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = MethodCallParameters(node, method, args ?? []);
         var timeout = TimeSpan.FromMilliseconds(CheckCallTimeout(options?.TimeoutMs));
         GodotSession target = Find(session);
+        using IDisposable lane = EnterCallLane(target, $"call_method {DescribeCall(parameters)}");
         long mark = target.Errors.Mark();
         JsonNode? reply = await CallStoppableAsync(target, "call_method", parameters, timeout, cancellationToken);
         BridgeResult result = new(reply, target.Errors.ErrorsSince(mark));

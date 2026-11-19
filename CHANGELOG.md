@@ -8,9 +8,14 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `batch_drive`'s property, expression, state and wait assertions take a call, so one step can play a scratch step and wait for it.
 
+### Changed
+
+- Two calls that run game code on one session at once no longer overlap: the second is refused, naming the call still running.
+
 ### For agents
 
 - `batch_drive`: `property`, `expression`, `state` and `wait` take `call` as `wait_for`'s `options.call`; the result adds `call: {value}`.
+- A second `call_method`, `run_script`, `cs_call`, `call_game_tool`, `run_csharp`, or call-carrying wait, capture or watch on a busy session fails: `session '<name>' is running <what> for <n> s; …`.
 
 ## 0.46.1 - 2026-11-19
 
