@@ -74,8 +74,8 @@ public sealed class ScratchRunOrderTests
     }
 
     [Theory]
-    [InlineData("5", "setup \"5\" of A matches no step; its steps are 0 open, 1 hit, 2 hit")]
-    [InlineData("shut", "setup \"shut\" of A matches no step; its steps are 0 open, 1 hit, 2 hit")]
+    [InlineData("5", "setup \"5\" of A matches no step; its steps, numbered from 0, are 0 open, 1 hit, 2 hit")]
+    [InlineData("shut", "setup \"shut\" of A matches no step; its steps, numbered from 0, are 0 open, 1 hit, 2 hit")]
     [InlineData("hit", "setup \"hit\" of A names 2 steps (1, 2); key it by index")]
     public void ASetupKeyNamingNoStepOrASharedNameIsAnError(string key, string refusal)
     {
@@ -185,7 +185,7 @@ public sealed class ScratchRunOrderTests
 
         (ScratchSelection selection, string? error) = ScratchRun.SelectSteps(scene, Steps("""["open"]"""), ["open", "hit", "hit"]);
 
-        Assert.Equal("setup for step \"shut\" of A matches no step; its steps are 0 open, 1 hit, 2 hit", error);
+        Assert.Equal("setup for step \"shut\" of A matches no step; its steps, numbered from 0, are 0 open, 1 hit, 2 hit", error);
         Assert.Null(selection.Selected);
         Assert.Empty(selection.Played);
     }
@@ -209,7 +209,10 @@ public sealed class ScratchRunOrderTests
 
         (ScratchSelection selection, string? error) = ScratchRun.SelectSteps(scene, Steps("""["fight"]"""), ["build", "fight", "batch", "note"]);
 
-        Assert.Equal("setup for step \"fight\" \"nope\" of A matches no step; its steps are 0 build, 1 fight, 2 batch, 3 note", error);
+        Assert.Equal(
+            "setup for step \"fight\" \"nope\" of A matches no step; its steps, numbered from 0, are 0 build, 1 fight, 2 batch, 3 note",
+            error
+        );
         Assert.Null(selection.Selected);
         Assert.Empty(selection.Played);
     }
@@ -221,7 +224,10 @@ public sealed class ScratchRunOrderTests
 
         (ScratchSelection selection, string? error) = ScratchRun.SelectSteps(scene, Steps("""["note"]"""), ["build", "fight", "batch", "note"]);
 
-        Assert.Equal("setup for step \"fight\" \"nope\" of A matches no step; its steps are 0 build, 1 fight, 2 batch, 3 note", error);
+        Assert.Equal(
+            "setup for step \"fight\" \"nope\" of A matches no step; its steps, numbered from 0, are 0 build, 1 fight, 2 batch, 3 note",
+            error
+        );
         Assert.Null(selection.Selected);
         Assert.Empty(selection.Played);
     }

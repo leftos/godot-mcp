@@ -207,7 +207,7 @@ internal sealed record ScratchPlan(
 }
 
 /// <summary>
-/// options.capture as a plan holds it: the tokens naming the steps to shoot, by index or name, for every scene (Steps) or per scene
+/// options.capture as a plan holds it: the tokens naming the steps to shoot, by index, name or range, for every scene (Steps) or per scene
 /// (StepsByScene); a scene with no tokens has every played step shot.
 /// </summary>
 internal sealed record ScratchCapture(IReadOnlyList<ScratchStepToken>? Steps)
@@ -819,7 +819,7 @@ internal sealed class ScratchRun
         SortedSet<int> played = [];
         foreach (ScratchStepToken token in tokens)
         {
-            (IEnumerable<int> steps, string? error) = TokenSteps(token, scene, names);
+            (IEnumerable<int> steps, string? error) = TokenSteps(token, StepsTokenLabel, scene, names);
             if (error is not null)
             {
                 return ([], error);
@@ -833,8 +833,9 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The steps <paramref name="capture"/> shoots among those <paramref name="names"/> lists, ascending, each once, null for every
-    /// played step; or why a token names no step, as an options.steps token naming none is refused. A number is an index; a string
-    /// is an index spelled plainly, else a step's exact name.
+    /// played step; or why a token names no step, as an options.steps token naming none is refused. A token is read as options.steps
+    /// reads one: a number is an index; a string is an index spelled plainly, else a step's exact name, else an inclusive range such
+    /// as "2-5".
     /// </summary>
     internal static (int[]? Steps, string? Error) CaptureSteps(ScratchCapture capture, string scene, ScratchStepNames names)
     {
@@ -846,40 +847,37 @@ internal sealed class ScratchRun
         SortedSet<int> steps = [];
         foreach (ScratchStepToken token in tokens)
         {
-            (int step, string? error) = token.IsNumber ? CaptureIndex(token, scene, names) : StepOf(token.Text, CaptureTokenLabel, scene, names);
+            (IEnumerable<int> shot, string? error) = TokenSteps(token, CaptureTokenLabel, scene, names);
             if (error is not null)
             {
                 return (null, error);
             }
 
-            steps.Add(step);
+            steps.UnionWith(shot);
         }
 
         return ([.. steps], null);
     }
 
-    /// <summary>A number token of options.capture.steps as its step, or why the scene has no step of that index.</summary>
-    private static (int Step, string? Error) CaptureIndex(ScratchStepToken token, string scene, ScratchStepNames names)
-    {
-        int index = int.Parse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture);
-        return index < names.Count ? (index, null) : (-1, NoStep($"{CaptureTokenLabel} {token}", scene, names));
-    }
-
-    private static (IEnumerable<int> Steps, string? Error) TokenSteps(ScratchStepToken token, string scene, ScratchStepNames names)
+    /// <summary>
+    /// The steps <paramref name="token"/> selects among those <paramref name="names"/> lists, or why it selects none;
+    /// <paramref name="label"/> names the token's options key in a refusal.
+    /// </summary>
+    private static (IEnumerable<int> Steps, string? Error) TokenSteps(ScratchStepToken token, string label, string scene, ScratchStepNames names)
     {
         if (token.IsNumber)
         {
             int index = int.Parse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture);
-            return index < names.Count ? ([index], null) : ([], NoStep($"{StepsTokenLabel} {token}", scene, names));
+            return index < names.Count ? ([index], null) : ([], NoStep($"{label} {token}", scene, names));
         }
 
         bool named = IsIndex(token.Text, names.Count, out _) || names.Contains(token.Text, StringComparer.Ordinal);
         if (!named && token.IsRange(out string first, out string last))
         {
-            return RangeSteps(token, (first, last), scene, names);
+            return RangeSteps(token, (first, last), label, scene, names);
         }
 
-        (int step, string? error) = StepOf(token.Text, StepsTokenLabel, scene, names);
+        (int step, string? error) = StepOf(token.Text, label, scene, names);
         return error is null ? ([step], null) : ([], error);
     }
 
@@ -887,13 +885,14 @@ internal sealed class ScratchRun
     private static (IEnumerable<int> Steps, string? Error) RangeSteps(
         ScratchStepToken token,
         (string First, string Last) bounds,
+        string label,
         string scene,
         ScratchStepNames names
     )
     {
         if (!int.TryParse(bounds.Last, NumberStyles.None, CultureInfo.InvariantCulture, out int last) || last >= names.Count)
         {
-            return ([], $"{StepsTokenLabel} {token} of {scene} reaches past its last step; {StepList(names)}");
+            return ([], $"{label} {token} of {scene} reaches past its last step; {StepList(names)}");
         }
 
         int first = int.Parse(bounds.First, NumberStyles.None, CultureInfo.InvariantCulture);
@@ -928,9 +927,9 @@ internal sealed class ScratchRun
 
     private static string NoStep(string key, string scene, ScratchStepNames names) => $"{key} of {scene} matches no step; {StepList(names)}";
 
-    /// <summary>The scene's steps as a refusal lists them, each as <see cref="ScratchStepNames.Lines"/> writes it.</summary>
+    /// <summary>The scene's steps as a refusal lists them, numbered from 0, each as <see cref="ScratchStepNames.Lines"/> writes it.</summary>
     private static string StepList(ScratchStepNames names) =>
-        names.Count == 0 ? "it has no steps" : "its steps are " + string.Join(", ", names.Lines());
+        names.Count == 0 ? "it has no steps" : "its steps, numbered from 0, are " + string.Join(", ", names.Lines());
 
     /// <summary>
     /// GetStepHidden(index)'s answer: true marks the step hidden; false or null leaves it shown, as a GetStepUntil answer of null

@@ -1927,7 +1927,7 @@ public sealed class ScratchVerdictTests
     [Fact]
     public void AStepsRefusalMarksAHiddenStepAndKeepsItsIndex() =>
         Assert.Equal(
-            "options.steps token \"nope\" of Base matches no step; its steps are 0 (hidden) fight setup, 1 first view",
+            "options.steps token \"nope\" of Base matches no step; its steps, numbered from 0, are 0 (hidden) fight setup, 1 first view",
             ScratchRun.ResolveSteps(Tokens("""["nope"]"""), "Base", new ScratchStepNames(["fight setup", "first view"], new HashSet<int> { 0 })).Error
         );
 
@@ -2098,7 +2098,7 @@ public sealed class ScratchVerdictTests
             StepNames = names,
         };
 
-    private const string TwoRedSteps = "its steps are 0 calm, 1 first, 2 second, 3 last";
+    private const string TwoRedSteps = "its steps, numbered from 0, are 0 calm, 1 first, 2 second, 3 last";
 
     private static readonly ScratchStepNames TwoRed = ["calm", "first", "second", "last"];
 

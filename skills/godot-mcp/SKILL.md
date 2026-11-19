@@ -132,7 +132,7 @@ A red scene names its failing step with the errors from the error feed (identica
 
 A red scene stops there unless `options.keepGoing` plays on so `failures` lists every red step.
 
-`options.steps` plays only some steps (an array of indices, names or ranges like `["2-5"]`, or one token alone, `"2-5"`).
+`options.steps` plays only some steps (an array of indices counted from 0, names or ranges like `["2-5"]`, or one token alone, `"2-5"`); `options.capture.steps` takes the same tokens.
 
 An object `{"<Scene>": [...]}` gives each scene its own list and a scene it leaves out plays every step.
 

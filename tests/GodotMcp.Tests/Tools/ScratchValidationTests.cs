@@ -1308,12 +1308,12 @@ public sealed class ScratchValidationTests : IDisposable
         ScratchPlan indexed = Plan(["res://Other.tscn"], CaptureOf("[2]"));
 
         Assert.StartsWith(
-            "options.capture.steps token \"nope\" of Other matches no step; its steps are ",
+            "options.capture.steps token \"nope\" of Other matches no step; its steps, numbered from 0, are ",
             ScratchRun.CaptureSteps(named.Capture!, "Other", names).Error,
             StringComparison.Ordinal
         );
         Assert.StartsWith(
-            "options.capture.steps token 2 of Other matches no step; its steps are ",
+            "options.capture.steps token 2 of Other matches no step; its steps, numbered from 0, are ",
             ScratchRun.CaptureSteps(indexed.Capture!, "Other", names).Error,
             StringComparison.Ordinal
         );
@@ -1334,18 +1334,95 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Null(Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true)).Capture);
     }
 
+    [Fact]
+    public void CaptureStepsTakeARangeAsOptionsStepsDo()
+    {
+        ScratchStepNames names = new(["open", "fight", "close", "end"], new HashSet<int>());
+        ScratchPlan plan = Plan(["res://Other.tscn"], CaptureOf("""["1-2", 0, 2]"""));
+
+        (int[]? steps, string? error) = ScratchRun.CaptureSteps(plan.Capture!, "Other", names);
+
+        Assert.Null(error);
+        Assert.Equal([0, 1, 2], steps!);
+    }
+
+    [Fact]
+    public void ACaptureRangePastTheLastStepIsRefused()
+    {
+        ScratchStepNames names = new(["open", "fight", "close"], new HashSet<int>());
+        ScratchPlan plan = Plan(["res://Other.tscn"], CaptureOf("""["2-9"]"""));
+
+        (int[]? steps, string? error) = ScratchRun.CaptureSteps(plan.Capture!, "Other", names);
+
+        Assert.Null(steps);
+        Assert.Equal(
+            "options.capture.steps token \"2-9\" of Other reaches past its last step; its steps, numbered from 0, are 0 open, 1 fight, " + "2 close",
+            error
+        );
+    }
+
+    [Fact]
+    public void ABackwardsCaptureRangeIsRefusedAtPlanTime() =>
+        Assert.Equal(
+            "options.capture.steps token \"5-2\" is a range whose start is after its end; write it \"2-5\".",
+            Refused(() => Plan(["res://Other.tscn"], CaptureOf("""["5-2"]""")))
+        );
+
+    [Fact]
+    public void ABackwardsCaptureRangeInTheMapIsRefusedAtPlanTime() =>
+        Assert.Equal(
+            "options.capture.steps for Other token \"5-2\" is a range whose start is after its end; write it \"2-5\".",
+            Refused(() => Plan(["res://Other.tscn"], CaptureOf("""{ "Other": ["5-2"] }""")))
+        );
+
+    [Fact]
+    public void ACaptureMapRangeResolvesToItsSteps()
+    {
+        ScratchStepNames names = new(["open", "fight", "close"], new HashSet<int>());
+        ScratchPlan plan = Plan(["res://Other.tscn"], CaptureOf("""{ "Other": ["1-2"] }"""));
+
+        (int[]? steps, string? error) = ScratchRun.CaptureSteps(plan.Capture!, "Other", names);
+
+        Assert.Null(error);
+        Assert.Equal([1, 2], steps!);
+    }
+
+    [Fact]
+    public void AStepNamedLikeARangeIsShotByName()
+    {
+        ScratchStepNames names = new(["open", "1-2", "close"], new HashSet<int>());
+        ScratchPlan plan = Plan(["res://Other.tscn"], CaptureOf("""["1-2"]"""));
+
+        (int[]? steps, string? error) = ScratchRun.CaptureSteps(plan.Capture!, "Other", names);
+
+        Assert.Null(error);
+        Assert.Equal([1], steps!);
+    }
+
     [Theory]
     [InlineData(
         "true",
-        "options.capture.steps is a true; it must be a step index or name, an array of them, or an object mapping a scene name to one or an "
-            + "array."
+        "options.capture.steps is a true; it must be a step index, name or range, an array of them, or an object mapping a scene name to "
+            + "one or an array."
     )]
-    [InlineData("[]", "options.capture.steps is empty; list the steps to shoot by index or name, or leave it out to shoot every played step.")]
-    [InlineData("[-1]", "options.capture.steps token -1 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
-    [InlineData("[1.5]", "options.capture.steps token 1.5 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
+    [InlineData(
+        "[]",
+        "options.capture.steps is empty; list the steps to shoot by index, name or range (\"2-5\"), or leave it out to shoot every played " + "step."
+    )]
+    [InlineData(
+        "[-1]",
+        "options.capture.steps token -1 is not a step; a token is a step index, a whole number from 0 up, a step's exact name, or a range "
+            + "such as \"2-5\"."
+    )]
+    [InlineData(
+        "[1.5]",
+        "options.capture.steps token 1.5 is not a step; a token is a step index, a whole number from 0 up, a step's exact name, or a range "
+            + "such as \"2-5\"."
+    )]
     [InlineData(
         "[true]",
-        "options.capture.steps token true is not a step; a token is a step index, a whole number from 0 up, or a step's exact name."
+        "options.capture.steps token true is not a step; a token is a step index, a whole number from 0 up, a step's exact name, or a range "
+            + "such as \"2-5\"."
     )]
     public void CaptureStepsThatAreNoListOfStepsAreRefused(string steps, string refusal) =>
         Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], CaptureOf(steps))));
@@ -1420,7 +1497,8 @@ public sealed class ScratchValidationTests : IDisposable
         WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
 
         Assert.Equal(
-            "options.capture.steps for Beta is empty; list the steps to shoot by index or name, or leave it out to shoot every played step.",
+            "options.capture.steps for Beta is empty; list the steps to shoot by index, name or range (\"2-5\"), or leave it out to shoot "
+                + "every played step.",
             Refused(() => Plan(["Beta"], CaptureOf("""{ "Beta": [] }""")))
         );
     }
@@ -1431,17 +1509,19 @@ public sealed class ScratchValidationTests : IDisposable
         WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
 
         Assert.Equal(
-            "options.capture.steps for Beta is null; list that scene's steps by index or name, or leave the scene out to shoot every played step.",
+            "options.capture.steps for Beta is null; list that scene's steps by index, name or range, or leave the scene out to shoot every "
+                + "played step.",
             Refused(() => Plan(["Beta"], CaptureOf("""{ "Beta": null }""")))
         );
     }
 
     [Theory]
-    [InlineData("""{ "Beta": true }""", "options.capture.steps for Beta is a true; it must be a step index or name, or an array of them.")]
-    [InlineData("""{ "Beta": {} }""", "options.capture.steps for Beta is a object; it must be a step index or name, or an array of them.")]
+    [InlineData("""{ "Beta": true }""", "options.capture.steps for Beta is a true; it must be a step index, name or range, or an array of them.")]
+    [InlineData("""{ "Beta": {} }""", "options.capture.steps for Beta is a object; it must be a step index, name or range, or an array of them.")]
     [InlineData(
         """{ "Beta": [-1] }""",
-        "options.capture.steps for Beta token -1 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name."
+        "options.capture.steps for Beta token -1 is not a step; a token is a step index, a whole number from 0 up, a step's exact name, or a "
+            + "range such as \"2-5\"."
     )]
     public void ACaptureMapValueThatIsNoListOfStepsIsRefusedNamingTheScene(string steps, string refusal)
     {

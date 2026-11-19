@@ -266,7 +266,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
         Assert.Equal("red", unknown["verdict"]!.GetValue<string>());
         Assert.Equal(-1, failedAt["index"]!.GetValue<int>());
         Assert.Equal(
-            "options.steps token \"nope\" of ScratchTwoRed matches no step; its steps are 0 calm, 1 first, 2 second, 3 last",
+            "options.steps token \"nope\" of ScratchTwoRed matches no step; its steps, numbered from 0, are 0 calm, 1 first, 2 second, 3 last",
             failedAt["error"]!.GetValue<string>()
         );
         Assert.Equal((0, 4), (unknown["steps"]!["played"]!.GetValue<int>(), unknown["steps"]!["total"]!.GetValue<int>()));

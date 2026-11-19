@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `run_scratches` takes step ranges such as `"2-5"` in `options.capture.steps`, as `options.steps` does.
+
+### For agents
+
+- `run_scratches`: the step options say indices count from 0, and a refusal listing a scene's steps reads `its steps, numbered from 0, are …`.
+
 ## 0.45.1 - 2026-11-18
 
 ### Added

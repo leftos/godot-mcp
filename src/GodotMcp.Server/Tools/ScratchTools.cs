@@ -88,7 +88,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "load-adjusted time fails the step: such a step, or one whose condition is refused, is red and stops the scene, even "
             + "with options.keepGoing; the step's details carry until "
             + "{met, gameMs, elapsedMs, frames} in place of gameMs. A scene stops at its first failed step unless "
-            + "options.keepGoing; options.steps [3, \"name\", \"2-5\"] (or a lone token, \"2-5\") plays only those steps, by index, "
+            + "options.keepGoing; options.steps [3, \"name\", \"2-5\"] (or a lone token, \"2-5\") plays only those steps, by index "
+            + "(the first step is 0), "
             + "name or inclusive range, in ascending order, and never runs the others beyond the setup steps its profile's "
             + "scratch.setup declares, which a run "
             + "given options.steps adds to the selection, so a later step that depends on a skipped one is the caller's choice. "
@@ -194,8 +195,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "(else scratch.parallel, else 1); "
                 + "session a prefix for the scenes' session names, in place of the project folder's; keepGoing true (default false) "
                 + "plays a scene's next step after one red on a pushed error or a matching line, but a step whose own call failed "
-                + "(the game gone or stuck) still stops the scene; steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or "
-                + "inclusive range, in ascending order, and never runs the others, so a later step that depends on a skipped one is "
+                + "(the game gone or stuck) still stops the scene; steps [3, \"name\", \"2-5\"] plays only those steps, by index "
+                + "(the first step is 0), name or inclusive range, in ascending order, and never runs the others, so a later step "
+                + "that depends on a skipped one is "
                 + "the caller's choice, and a scene it plays only part of is not checked for scratch.expect and scratch.expectFor "
                 + "lines; background true returns {runId, statusFile, logFile, scenes} at once and plays the run on "
                 + "in the server, read and ended with scratch_status; only \"red\" (default \"all\") lists in each scene's details "
@@ -552,13 +554,16 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>The option name every options.capture.steps refusal opens with.</summary>
     private const string CaptureStepsLabel = "options.capture.steps";
 
+    /// <summary>The option name every options.steps token refusal opens with.</summary>
+    private const string StepsLabel = "options.steps";
+
     /// <summary>
     /// options.capture as the plan holds it: the steps to shoot for every scene or per scene; null when left out, which shoots every
     /// played step.
     /// </summary>
     /// <exception cref="McpException">
     /// options.capture is given without options.windowed true, its screenshot is not true, or its steps are not a list of step
-    /// indices and names or a map of scene names to one.
+    /// indices, names and ranges or a map of scene names to one.
     /// </exception>
     private static ScratchCapture? PlanCapture(ScratchOptions options, List<string> resPaths)
     {
@@ -584,7 +589,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 
     /// <summary>options.capture.steps as a map of scene names to their own steps, each scene's list checked as a lone token or array is.</summary>
     /// <exception cref="McpException">
-    /// The map is empty, a key names no scene of the plan, or a value is null or no list of step indices and names.
+    /// The map is empty, a key names no scene of the plan, or a value is null or no list of step indices, names and ranges.
     /// </exception>
     private static ScratchCapture CaptureStepsByScene(JsonElement map, List<string> resPaths)
     {
@@ -610,7 +615,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             if (entry.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
             {
                 throw new McpException(
-                    $"options.capture.steps for {entry.Name} is null; list that scene's steps by index or name, or leave the scene out to "
+                    $"options.capture.steps for {entry.Name} is null; list that scene's steps by index, name or range, or leave the scene out to "
                         + "shoot every played step."
                 );
             }
@@ -622,7 +627,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 
     /// <summary>options.capture.steps as tokens, each step once, under <paramref name="label"/>; null when left out.</summary>
-    /// <exception cref="McpException">The steps are no array or lone token, they are empty, or a token is no step index or name.</exception>
+    /// <exception cref="McpException">The steps are no array or lone token, they are empty, or a token is no step index, name or range.</exception>
     private static ScratchStepToken[]? CaptureTokens(JsonElement? steps, string label)
     {
         if (steps is not { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } given)
@@ -634,9 +639,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         {
             throw new McpException(
                 label == CaptureStepsLabel
-                    ? $"{label} is a {Kind(given)}; it must be a step index or name, an array of them, or an object mapping a scene name to "
-                        + "one or an array."
-                    : $"{label} is a {Kind(given)}; it must be a step index or name, or an array of them."
+                    ? $"{label} is a {Kind(given)}; it must be a step index, name or range, an array of them, or an object mapping a "
+                        + "scene name to one or an array."
+                    : $"{label} is a {Kind(given)}; it must be a step index, name or range, or an array of them."
             );
         }
 
@@ -644,10 +649,14 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         ScratchStepToken[] tokens = [.. elements.Select(element => CaptureToken(element, label)).Distinct()];
         return tokens.Length > 0
             ? tokens
-            : throw new McpException($"{label} is empty; list the steps to shoot by index or name, or leave it out to shoot every played step.");
+            : throw new McpException(
+                $"{label} is empty; list the steps to shoot by index, name or range (\"2-5\"), or leave it out to shoot every played step."
+            );
     }
 
-    /// <exception cref="McpException">The token is neither a whole number from 0 up nor a string.</exception>
+    /// <exception cref="McpException">
+    /// The token is neither a whole number from 0 up nor a string, or a range whose start is after its end.
+    /// </exception>
     private static ScratchStepToken CaptureToken(JsonElement element, string label) =>
         element.ValueKind switch
         {
@@ -655,9 +664,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 index.ToString(CultureInfo.InvariantCulture),
                 IsNumber: true
             ),
-            JsonValueKind.String => new ScratchStepToken(element.GetString()!, IsNumber: false),
+            JsonValueKind.String => ForwardRange(new ScratchStepToken(element.GetString()!, IsNumber: false), label),
             _ => throw new McpException(
-                $"{label} token {element.GetRawText()} is not a step; a token is a step index, a whole number from 0 up, or a step's exact name."
+                $"{label} token {element.GetRawText()} is not a step; a token is a step index, a whole number from 0 up, a step's exact "
+                    + "name, or a range such as \"2-5\"."
             ),
         };
 
@@ -931,7 +941,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         element.ValueKind switch
         {
             JsonValueKind.Number => new ScratchStepToken(StepIndex(element), IsNumber: true),
-            JsonValueKind.String => ForwardRange(new ScratchStepToken(element.GetString()!, IsNumber: false)),
+            JsonValueKind.String => ForwardRange(new ScratchStepToken(element.GetString()!, IsNumber: false), StepsLabel),
             _ => throw new McpException(
                 $"options.steps token {element.GetRawText()} is neither a number nor a string; a token is a step index, a step's name, "
                     + "or a range such as \"2-5\"."
@@ -948,10 +958,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             );
 
     /// <exception cref="McpException">The token is a range whose start is after its end.</exception>
-    private static ScratchStepToken ForwardRange(ScratchStepToken token) =>
+    private static ScratchStepToken ForwardRange(ScratchStepToken token, string label) =>
         token.IsRange(out string first, out string last)
         && BigInteger.Parse(first, CultureInfo.InvariantCulture) > BigInteger.Parse(last, CultureInfo.InvariantCulture)
-            ? throw new McpException($"options.steps token {token} is a range whose start is after its end; write it \"{last}-{first}\".")
+            ? throw new McpException($"{label} token {token} is a range whose start is after its end; write it \"{last}-{first}\".")
             : token;
 
     /// <summary>The prefix the plan names its sessions with: options.session when given, else the project folder's name.</summary>
@@ -1626,7 +1636,8 @@ internal sealed record ScratchOptions(
     )]
         bool? KeepGoing = null,
     [property: Description(
-        "The steps to play, the others never run: an array of tokens (a lone token is a one-item list), each a step index (3, or \"3\" "
+        "The steps to play, the others never run: an array of tokens (a lone token is a one-item list), each a step index counted "
+            + "from 0 (3, or \"3\" "
             + "spelled plainly), a step's "
             + "exact name, or an inclusive range of indices (\"2-5\"); a string is read as an index first, then a name, then a range. "
             + "The union plays in ascending order, each step once, and one list applies to every scene: a token naming no step of a "
@@ -1683,8 +1694,9 @@ internal sealed record ScratchOptions(
         bool? Audible = null,
     [property: Description(
         "{steps?, screenshot: true}: a screenshot at each named step's moment, for a windowed run only (refused without "
-            + "options.windowed: true, since a headless scene draws no frames). steps lists step indices or exact names (a lone "
-            + "token is a one-item list) for every scene, or maps a scene's name to its own list ({\"<Scene>\": steps}, as "
+            + "options.windowed: true, since a headless scene draws no frames). steps takes options.steps' tokens, a step index "
+            + "counted from 0, a step's exact name or an inclusive range (\"2-5\") (a lone token is a one-item list), for every scene, "
+            + "or maps a scene's name to its own list ({\"<Scene>\": steps}, as "
             + "options.steps does; a scene the map leaves out has every played step shot, and a key that is no scene of the run is "
             + "refused); every played step when left out. A step its scene lacks turns the scene red before any step plays. "
             + "When the root's GetStepShotUntil(i) gives a step a condition, the step is shot on the first drawn frame "
@@ -1710,9 +1722,9 @@ internal sealed record ScratchOptions(
 /// <summary>run_scratches' options.capture: the steps a windowed run takes a screenshot at.</summary>
 internal sealed record ScratchCaptureOptions(
     [property: Description(
-        "Step indices or exact names to shoot, each a whole number from 0 up or a string (a lone one is a one-item list), for every "
-            + "scene; or an object mapping a scene's name to its own list, a scene left out having every played step shot. Every played "
-            + "step when left out."
+        "The steps to shoot, written as options.steps' tokens: a step index counted from 0, a step's exact name, or an inclusive "
+            + "range of indices (\"2-5\") (a lone token is a one-item list), for every scene; or an object mapping a scene's name to "
+            + "its own list, a scene left out having every played step shot. Every played step when left out."
     )]
         JsonElement? Steps = null,
     [property: Description("Must be true: a screenshot at each step's moment.")] bool? Screenshot = null

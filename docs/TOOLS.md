@@ -994,7 +994,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `steps` (an array of tokens, or an object mapping a scene name to such an array; left out, `null` or `{}`: every step) plays only some steps, once each, in ascending order. An array applies to every scene of the call; an object gives each scene it names its own list, and a scene it leaves out plays every step.
 
-  A lone token (`"2-5"`, `3`, `"name"`) is a one-item list, in `options.steps`, a scene map's value and `options.capture.steps` alike. A number is a step index. A string is read as a plain index first (as `scratch.pace` `steps` keys are, below the scene's step count), then as an exact step name, then as an inclusive range `"2-5"` of ASCII digits; `03` and `+3` are names, `"02-05"` is a range, and a name wins over a range reading.
+  A lone token (`"2-5"`, `3`, `"name"`) is a one-item list, in `options.steps`, a scene map's value and `options.capture.steps` alike.
+
+  A number is a step index, counted from 0 (the first step is 0, the index the game's own `PlayStep(i)` takes); a refusal that lists a scene's steps numbers them from 0 too (`its steps, numbered from 0, are 0 open, 1 fight, 2 close`).
+
+  A string is read as a plain index first (as `scratch.pace` `steps` keys are, below the scene's step count), then as an exact step name, then as an inclusive range `"2-5"` of ASCII digits; `03` and `+3` are names, `"02-05"` is a range, and a name wins over a range reading.
 
   A `steps` that is none of these is refused with `steps is a {kind}; it must be a step index, name or range, an array of them, or an object mapping a scene name to one or an array.`
 
@@ -1084,7 +1088,9 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `capture {steps?, screenshot: true}` takes a screenshot at chosen steps of each scene, and needs `windowed: true`: without it the call is refused when planned, `options.capture needs options.windowed: true, since a headless scene draws no frames`.
 
-  `steps` is an array of step names or 0-based indexes, or an object mapping a scene name to such an array, as `options.steps` takes; an array (or a lone token) applies to every scene, and left out, every played step is shot. A scene the object leaves out has every played step shot.
+  `steps` is an array of step indices (counted from 0), exact step names or inclusive ranges (`"2-5"`), or an object mapping a scene name to such an array, as `options.steps` takes; an array (or a lone token) applies to every scene, and left out, every played step is shot. A scene the object leaves out has every played step shot.
+
+  A token resolves as an `options.steps` token does (plain index, then exact name, then range, so `"1-2"` is a step's name when a step has it); a step a list covers twice is shot once, with no duplicate refusal. A reversed range (`"5-2"`) is refused when planned, and a range past a scene's last step turns that scene red before any step.
 
   A key that is no scene of the run is refused before launch, `options.capture.steps scene '<key>' is not in the plan; its scenes are <names>. Pass one of those; a scene the map leaves out has every played step shot.`; an empty object, and a scene's list that is empty, null or not a list, are refused naming the scene (`options.capture.steps for <scene> is empty; ...`). A name the scene lacks is not skipped: that scene turns red before any step, like an unknown `options.steps` name.
 
@@ -1142,7 +1148,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The ceiling below counts it at its guard plus 10 s in place of its pace; when that step is the last, its pace is still the wait after it, and `exitHold` sets that wait.
 
-  A `steps` name matching more than one step, or two keys naming one step, makes the scene red before it plays (names are known only after launch). A `setup` entry matching no step, or a name two steps share, does the same, with `setup "<key>" of <Scene> matches no step; its steps are …` or `… names 2 steps (1, 2); key it by index`; a malformed `setup` value is refused when the profile loads.
+  A `steps` name matching more than one step, or two keys naming one step, makes the scene red before it plays (names are known only after launch). A `setup` entry matching no step, or a name two steps share, does the same, with `setup "<key>" of <Scene> matches no step; its steps, numbered from 0, are …` or `… names 2 steps (1, 2); key it by index`; a malformed `setup` value is refused when the profile loads.
 
   A `steps` key that matches no step (a renamed step, an index past the last) is not refused: it sets no step's pace and the scene's `warnings` (a list of sentences, left out when empty) says `scratch.pace.steps key "<key>" matches no step of <Scene>, so it sets no step's pace`.
 
