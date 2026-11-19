@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.46.0 - 2026-11-19
 
 ### Added
 
@@ -17,7 +17,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `batch_drive`: a digested or left-out passed step keeps its `call` when it raised, trimmed to `{raised, valueLength}` if the reply stays over.
 - `hover`: an `mcp_tooltip` node's pending state may carry `dueMs`; a `timeoutMs` left out grows to it plus 1 s, at most 10 s.
-- `run_scratches`: the step options say indices count from 0, and a refusal listing a scene's steps reads `its steps, numbered from 0, are …`.
+- `run_scratches`: `options.capture.steps` takes ranges; the step options say indices count from 0, and a refusal listing a scene's steps reads `its steps, numbered from 0, are …`.
 
 ## 0.45.1 - 2026-11-18
 
