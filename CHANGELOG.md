@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `batch_drive`'s property, expression, state and wait assertions take a call, so one step can play a scratch step and wait for it.
+
+### For agents
+
+- `batch_drive`: `property`, `expression`, `state` and `wait` take `call` as `wait_for`'s `options.call`; the result adds `call: {value}`.
+
 ## 0.46.1 - 2026-11-19
 
 ### Fixed

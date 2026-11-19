@@ -1819,7 +1819,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
   The result adds `call` as `capture_frames`' does; a refused call fails the wait, while an error the method raises sets `call.raised` and lands in `errors`, and the wait goes on. A check-once wait (`timeoutMs: 0`) with a call waits for the next frame, calls, then checks once.
 
-  A `uiChanged` or `output` wait refuses `options.call` (`options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; this condition is {kind}.`), and `batch_drive`'s wait assertion has none: put a `call_method` step before it.
+  A `uiChanged` or `output` wait refuses `options.call` (`options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; this condition is {kind}.`), and `batch_drive`'s wait-backed assertions take it as `call`.
 
   In a recording (`run_project` `options.record`) a bridge wait counts clip time instead, 60 movie frames a second, however slowly the game runs, so a timed-out `expression: "false"` wait holds a still of exactly that length in the clip, and the result adds `clipMs`, the clip time waited (`elapsedMs` stays real time).
 
@@ -2186,6 +2186,10 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
   A `wait` takes any `wait_for` condition, `uiChanged` (`true` or `"now"`), `gameMs`, `frames`, `text` (with `match`, `under`, `exists`), `stable` (with `property`), `state` and `output` (with `stream`, `after`) included, and `wait_for`'s own default timeout, `stable` growing it as it does there; the other assertions are `no_errors {sessions?}`, `screenshot {name, tolerance?, maxChangedRatio?}` and `fired {node, signal, equals?}`.
 
   A tool step's `{text}` targets take `match` through its args, and a `match` refusal in a batch is prefixed `step N: `. A `match` on a property or state assertion with a string `equals` is `wait_for`'s; on an expression assertion, or one whose `equals` is not a string, it is refused (`step N: match "prefix" compares strings; equals here is a number.`), and on a `fired` assertion with `the fired assertion takes node, signal and equals; got match.`
+
+  `property`, `expression`, `state` and `wait` also take `call`, `{node, method, args}` or `{tool, args}`, called in the frame their checks start exactly as `wait_for`'s `options.call`, so one assertion plays a scratch step and waits for it to settle; the step's `result` adds `call: {value}`, and an error the method raises comes back as `call.raised`.
+
+  A `call` is refused before any step runs on a `uiChanged` or `output` wait (`step <n>: call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; this condition is <kind>.`), on `no_errors` and `screenshot` (`step <n>: the <assert> assertion takes no call; only property, expression, state and wait do.`) and on `fired` (`the fired assertion takes node, signal and equals; got call.`).
 
   Any tool or assertion step may carry `session`; the batch's `session` is the default.
 

@@ -251,11 +251,31 @@ internal sealed partial class RuntimeTools
 
     /// <summary>wait_for without a capture, answered as its JSON text: the form a batch step runs.</summary>
     /// <exception cref="McpException">The condition or timeoutMs is refused, or the call failed.</exception>
-    internal async Task<string> WaitForAsync(WaitCondition condition, int? timeoutMs, string? session, CancellationToken cancellationToken)
+    internal async Task<string> WaitForAsync(WaitCondition condition, int? timeoutMs, string? session, CancellationToken cancellationToken) =>
+        await WaitForAsync(condition, timeoutMs, (MethodCall?)null, session, cancellationToken);
+
+    /// <summary>
+    /// wait_for without a capture, answered as its JSON text, after a call the bridge makes in the frame the checks start.
+    /// </summary>
+    /// <exception cref="McpException">The condition, timeoutMs or call is refused, or the call failed.</exception>
+    internal async Task<string> WaitForAsync(
+        WaitCondition condition,
+        int? timeoutMs,
+        MethodCall? call,
+        string? session,
+        CancellationToken cancellationToken
+    )
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
+        if (call is not null)
+        {
+            AddWaitCall(parameters, call, "call");
+        }
+
         BridgeResult result = await CallWaitAsync(parameters, null, session, cancellationToken);
-        return ErrorReport.AddTo(WaitReply(result), result.Errors).ToJsonString();
+        JsonObject reply = WaitReply(result);
+        CutMethodValue(reply["call"] as JsonObject);
+        return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
     }
 
     /// <summary>The bridge's frame parameters: {action}, plus {count, unit, screenshot, until, input} for step and {scale} for
@@ -386,7 +406,7 @@ internal sealed partial class RuntimeTools
 
         if (options.Call is { } call)
         {
-            AddWaitCall(parameters, call);
+            AddWaitCall(parameters, call, "options.call");
         }
 
         if (options.Then is { } then)
@@ -440,13 +460,16 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    private static void AddWaitCall(JsonObject parameters, MethodCall call)
+    /// <summary>Adds call to a wait's parameters, naming it as <paramref name="field"/> in a refusal.</summary>
+    /// <exception cref="McpException">The wait is a uiChanged or output wait, or the call is refused as
+    /// <see cref="CallOptionParameters"/> refuses it.</exception>
+    private static void AddWaitCall(JsonObject parameters, MethodCall call, string field)
     {
         string kind = parameters["kind"]!.GetValue<string>();
         parameters["call"] = kind is not ("uiChanged" or "output")
-            ? CallOptionParameters(call, "options.call")
+            ? CallOptionParameters(call, field)
             : throw new McpException(
-                "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; "
+                $"{field} is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; "
                     + $"this condition is {kind}."
             );
     }

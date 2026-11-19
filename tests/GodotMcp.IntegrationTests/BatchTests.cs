@@ -237,6 +237,42 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnExpressionAssertionChecksAfterItsCall()
+    {
+        JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
+            new BatchStep(
+                Assert: "expression",
+                Expression: "root.get_node(\"Main/SmallButton\").get_meta(\"gmcp654\", 0) == 1",
+                Call: new MethodCall(Node: SmallButton, Method: "set_meta", Args: JsonSerializer.Deserialize<JsonElement>("[\"gmcp654\", 1]"))
+            )
+        );
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        JsonNode step = Assert.Single(batch["steps"]!.AsArray())!;
+        Assert.True(step["result"]!["value"]!.GetValue<bool>(), step.ToJsonString());
+        Assert.IsType<JsonObject>(step["result"]!["call"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitAssertionPlaysItsCallAndWaits()
+    {
+        JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
+            new BatchStep(
+                Assert: "wait",
+                Expression: "root.get_node(\"Main/SmallButton\").get_meta(\"gmcp654w\", 0) == 2",
+                Call: new MethodCall(Node: SmallButton, Method: "set_meta", Args: JsonSerializer.Deserialize<JsonElement>("[\"gmcp654w\", 2]"))
+            )
+        );
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        JsonNode step = Assert.Single(batch["steps"]!.AsArray())!;
+        Assert.True(step["result"]!["met"]!.GetValue<bool>(), step.ToJsonString());
+        Assert.IsType<JsonObject>(step["result"]!["call"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AWaitForToolStepCarriesThen()
     {
         JsonObject batch = await BatchAsync(

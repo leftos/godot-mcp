@@ -656,17 +656,72 @@ public sealed class BatchValidationTests : IDisposable
     public void AGameMsWaitAssertionIsAccepted() => RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", GameMs: 500)]);
 
     [Fact]
-    public void AWaitAssertionHasNoCallToGive()
+    public void AWaitAssertionWithACallIsAccepted()
     {
-        const string Wait = """{"assert":"wait","gameMs":500""";
+        BatchStep step = new(Assert: "wait", GameMs: 500, Call: new MethodCall(Node: "TimeProbe", Method: "start_clock"));
 
-        BatchStep? bound = JsonSerializer.Deserialize<BatchStep>(Wait + "}", ToolJson.Options);
-        JsonException refused = Assert.Throws<JsonException>(() =>
-            JsonSerializer.Deserialize<BatchStep>(Wait + ""","call":{"node":"TimeProbe","method":"start_clock"}}""", ToolJson.Options)
+        RuntimeTools.CheckBatch([step]);
+    }
+
+    [Fact]
+    public async Task ACallOnAUiChangedWaitAssertionIsRefused()
+    {
+        BatchStep wait = new(
+            Assert: "wait",
+            UiChanged: JsonSerializer.Deserialize<JsonElement>("true"),
+            Call: new MethodCall(Node: "TimeProbe", Method: "start_clock")
         );
 
-        Assert.Equal(500, bound?.GameMs);
-        Assert.Contains("call", refused.Message, StringComparison.Ordinal);
+        McpException refused = await RefusedAsync([wait]);
+
+        Assert.Equal(
+            "step 0: call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; "
+                + "this condition is uiChanged.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public async Task ACallOnANoErrorsAssertionIsRefused()
+    {
+        BatchStep noErrors = new(Assert: "no_errors", Call: new MethodCall(Node: "TimeProbe", Method: "start_clock"));
+
+        McpException refused = await RefusedAsync([noErrors]);
+
+        Assert.Equal("step 0: the no_errors assertion takes no call; only property, expression, state and wait do.", refused.Message);
+    }
+
+    [Fact]
+    public async Task ACallOnAScreenshotAssertionIsRefused()
+    {
+        BatchStep screenshot = new(Assert: "screenshot", Name: "menu", Call: new MethodCall(Node: "TimeProbe", Method: "start_clock"));
+
+        McpException refused = await RefusedAsync([screenshot]);
+
+        Assert.Equal("step 0: the screenshot assertion takes no call; only property, expression, state and wait do.", refused.Message);
+    }
+
+    [Fact]
+    public async Task ACallOnAFiredAssertionIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", Call: new MethodCall(Node: "Ready", Method: "press"));
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got call.", refused.Message);
+    }
+
+    [Fact]
+    public async Task ACallGivingBothFormsIsRefused()
+    {
+        BatchStep wait = new(Assert: "wait", GameMs: 500, Call: new MethodCall(Node: "TimeProbe", Method: "start_clock", Tool: "start_clock"));
+
+        McpException refused = await RefusedAsync([wait]);
+
+        Assert.Equal(
+            "step 0: call takes either {node, method, args: [...]} for a method or {tool, args: {...}} for a game tool, not both.",
+            refused.Message
+        );
     }
 
     [Fact]

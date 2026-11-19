@@ -85,6 +85,11 @@ internal sealed record BatchStep(
     [property: Description("wait: scan only lines numbered after this one with output, 0 or more, as wait_for's condition.after.")]
         long? After = null,
     [property: Description(
+        "property, expression, state, wait: {node, method, args} or {tool, args}, called in the frame the checks start, as "
+            + "wait_for's options.call; the result adds call: {value}."
+    )]
+        MethodCall? Call = null,
+    [property: Description(
         "no_errors: the sessions it checks in place of its own: \"all\" for every session another step of the batch addresses, "
             + "except process sessions, or a list of session names; not with session."
     )]

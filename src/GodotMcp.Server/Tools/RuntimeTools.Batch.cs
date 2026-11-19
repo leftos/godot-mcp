@@ -94,6 +94,7 @@ internal sealed partial class RuntimeTools
         ("output", step => step.Output is not null),
         ("stream", step => step.Stream is not null),
         ("after", step => step.After is not null),
+        ("call", step => step.Call is not null),
         ("sessions", step => step.Sessions is not null),
     ];
 
@@ -122,8 +123,9 @@ internal sealed partial class RuntimeTools
             + "for every session another step of the batch addresses, except process sessions, or a list of names, in place of "
             + "session; with sessions, a pass is {errors: 0, sessions: [names checked]}), screenshot {name, "
             + "tolerance?, maxChangedRatio?} (compare_screenshot must match), fired {node, signal, equals?} (the nearest "
-            + "earlier tool step's fired list has that node's signal, with those arguments when equals is given). Any tool or "
-            + "assertion step may carry session. At most 100 steps; "
+            + "earlier tool step's fired list has that node's signal, with those arguments when equals is given). property, "
+            + "expression, state and wait also take call {node, method, args} or {tool, args}, called in the frame their checks "
+            + "start as wait_for's options.call, the result adding call: {value}. Any tool or assertion step may carry session. At most 100 steps; "
             + "the whole batch stops after 300 s of load-adjusted time. Returns {passed, steps: [{index, tool or assert, ok, result or error}], "
             + "failedAt?: {index, reason}}. A step may be {parallel: [steps]} (see the step's parallel field); a group's entry is "
             + "{index, parallel: true, ok, startMs, endMs, members: [entries]} and failedAt.member names the member that failed. The "
@@ -608,6 +610,7 @@ internal sealed partial class RuntimeTools
         }
 
         CheckSessionsField(at, step);
+        CheckCallField(at, step);
         try
         {
             kind.Check(step);
@@ -624,6 +627,15 @@ internal sealed partial class RuntimeTools
         if (step.Sessions is not null && step.Assert != "no_errors")
         {
             throw new McpException($"{at}: the {step.Assert} assertion does not take sessions; only no_errors does.");
+        }
+    }
+
+    /// <summary>Refuses call on an assertion of a kind that cannot make one: only property, expression, state and wait can.</summary>
+    private static void CheckCallField(string at, BatchStep step)
+    {
+        if (step.Call is not null && step.Assert is "no_errors" or "screenshot")
+        {
+            throw new McpException($"{at}: the {step.Assert} assertion takes no call; only property, expression, state and wait do.");
         }
     }
 
@@ -706,7 +718,14 @@ internal sealed partial class RuntimeTools
     private static string NeedsToolStepRefusal(string at, string assert) =>
         $"{at}: assert '{assert}' needs a tool step before it, whose fired list it checks.";
 
-    private static void CheckWaitAssertion(BatchStep step) => _ = BuildWaitParameters(ConditionOf(step), TimeoutOf(step));
+    private static void CheckWaitAssertion(BatchStep step)
+    {
+        JsonObject parameters = BuildWaitParameters(ConditionOf(step), TimeoutOf(step));
+        if (step.Call is { } call)
+        {
+            AddWaitCall(parameters, call, "call");
+        }
+    }
 
     private static void CheckScreenshotAssertion(BatchStep step)
     {
@@ -938,7 +957,7 @@ internal sealed partial class RuntimeTools
         WaitCondition condition = ConditionOf(call.Step);
         int? given = TimeoutOf(call.Step);
         int timeoutMs = WaitTimeoutMs(condition, given);
-        JsonObject reply = JsonNode.Parse(await WaitForAsync(condition, given, call.Session, call.Run.Cancellation))!.AsObject();
+        JsonObject reply = JsonNode.Parse(await WaitForAsync(condition, given, call.Step.Call, call.Session, call.Run.Cancellation))!.AsObject();
         if (reply["met"]?.GetValue<bool>() is true)
         {
             return StepOutcome.Passed(reply);
