@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- `validate` under `prepare: never` with no saved C# build no longer reports its C# scripts as clean: it marks them unchecked.
+
+### For agents
+
+- `validate`: with no build read, each `csharp.files` entry is `{path, unchecked: true, from, scenes}`, left out of `checked`, and `csharp` has no `otherErrors`.
+
 ## 0.46.0 - 2026-11-19
 
 ### Added

@@ -144,34 +144,63 @@ internal sealed partial class HeadlessTools
     /// <summary>
     /// csharp's <c>files</c> (one per .cs target: its errors and warnings, which build they came from, and the scenes checked) and
     /// <c>otherErrors</c> (the errors in every other file), from the last saved build; each list at most <see cref="CompilerErrors.Limit"/>.
+    /// A target no build was read for is marked <c>unchecked</c> and carries no errors or warnings, and <c>otherErrors</c> is left out.
     /// </summary>
     internal static CsReport ReportCSharp(HeadlessResult run, IReadOnlyList<CsTarget> csTargets)
     {
         IReadOnlyList<BuildDiagnostic> diagnostics = run.LastBuild?.Diagnostics ?? [];
         string from = BuildSource(run);
-        JsonArray files = [];
-        foreach (CsTarget target in csTargets)
+        bool buildRead = BuildRead(run);
+        JsonArray files = [.. csTargets.Select(target => buildRead ? CheckedFile(target, diagnostics, from) : UncheckedFile(target, from))];
+        JsonObject report = new() { ["files"] = files };
+        if (!buildRead)
         {
-            BuildDiagnostic[] own = [.. diagnostics.Where(diagnostic => IsIn(diagnostic, target.FullPath))];
-            JsonObject file = new() { ["path"] = target.ResPath };
-            AddCapped(file, "errors", [.. own.Where(IsError)]);
-            AddCapped(file, "warnings", [.. own.Where(diagnostic => !IsError(diagnostic))]);
-            file["from"] = from;
-            file["scenes"] = new JsonArray([.. target.Scenes.Select(scene => (JsonNode)scene)]);
-            if (target.ScenesOmitted > 0)
-            {
-                file["scenesOmitted"] = target.ScenesOmitted;
-            }
-
-            files.Add(file);
+            return new CsReport(report, false, false);
         }
 
         BuildDiagnostic[] errors = [.. diagnostics.Where(IsError)];
         BuildDiagnostic[] other = [.. errors.Where(error => !csTargets.Any(target => IsIn(error, target.FullPath)))];
-        JsonObject report = new() { ["files"] = files };
         AddCapped(report, "otherErrors", other);
-        return new CsReport(report, errors.Length > 0);
+        return new CsReport(report, errors.Length > 0, true);
     }
+
+    /// <summary>An entry for a .cs target a build's diagnostics covered: its errors and warnings, and the scenes checked.</summary>
+    private static JsonObject CheckedFile(CsTarget target, IReadOnlyList<BuildDiagnostic> diagnostics, string from)
+    {
+        BuildDiagnostic[] own = [.. diagnostics.Where(diagnostic => IsIn(diagnostic, target.FullPath))];
+        JsonObject file = new() { ["path"] = target.ResPath };
+        AddCapped(file, "errors", [.. own.Where(IsError)]);
+        AddCapped(file, "warnings", [.. own.Where(diagnostic => !IsError(diagnostic))]);
+        file["from"] = from;
+        AddScenes(file, target);
+        return file;
+    }
+
+    /// <summary>An entry for a .cs target no build checked, which says so rather than reading as clean: no errors or warnings.</summary>
+    private static JsonObject UncheckedFile(CsTarget target, string from)
+    {
+        JsonObject file = new()
+        {
+            ["path"] = target.ResPath,
+            ["unchecked"] = true,
+            ["from"] = from,
+        };
+        AddScenes(file, target);
+        return file;
+    }
+
+    /// <summary>Sets the versioned scenes and resources that attach the target, and how many more there were.</summary>
+    private static void AddScenes(JsonObject file, CsTarget target)
+    {
+        file["scenes"] = new JsonArray([.. target.Scenes.Select(scene => (JsonNode)scene)]);
+        if (target.ScenesOmitted > 0)
+        {
+            file["scenesOmitted"] = target.ScenesOmitted;
+        }
+    }
+
+    /// <summary>Whether a build's diagnostics were read, this call's or a saved one's; otherwise no .cs target was checked.</summary>
+    private static bool BuildRead(HeadlessResult run) => run.Prep.Build is "built" or "failed" || run.LastBuild is not null;
 
     /// <summary>Which build the diagnostics came from: this call's, the last saved one's, or none.</summary>
     private static string BuildSource(HeadlessResult run)
@@ -181,10 +210,12 @@ internal sealed partial class HeadlessTools
             return "this build";
         }
 
-        return run.LastBuild is { } last
-            ? "last build at " + last.BuiltAt.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture)
-            : NoBuildYet;
+        return !BuildRead(run) ? NoBuildYet : LastBuildAt(run.LastBuild!);
     }
+
+    /// <summary>The saved build's end, in UTC, as the .cs targets' source of diagnostics.</summary>
+    private static string LastBuildAt(SavedBuild last) =>
+        "last build at " + last.BuiltAt.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 
     private static bool IsError(BuildDiagnostic diagnostic) => diagnostic.Severity == BuildDiagnostic.Error;
 
@@ -222,5 +253,8 @@ internal sealed partial class HeadlessTools
 /// </summary>
 internal sealed record CsTarget(string ResPath, string FullPath, IReadOnlyList<string> Scenes, int ScenesOmitted);
 
-/// <summary>csharp's <c>files</c> and <c>otherErrors</c>, and whether the build had any error, which makes validate's result invalid.</summary>
-internal sealed record CsReport(JsonObject Shaped, bool HasErrors);
+/// <summary>
+/// csharp's <c>files</c> and <c>otherErrors</c> (left out when no build was read), whether the build had any error (which makes
+/// validate's result invalid), and whether a build was read, which covers the .cs targets and counts them in <c>checked</c>.
+/// </summary>
+internal sealed record CsReport(JsonObject Shaped, bool HasErrors, bool BuildRead);

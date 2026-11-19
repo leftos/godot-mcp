@@ -2409,6 +2409,8 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
   A `.cs` target's Compile-items listing runs through the project's `prepWrapper` when it has one (see the prepWrapper section).
   Errors make `valid` false; warnings never do. With nothing stale no build runs, so the diagnostics come from the last prep build (`from: "last build at <UTC>"`); a project with no saved build is rebuilt once (`--no-incremental`). A `.cs` target is refused in a project with no `.csproj` or several, and when it is outside the csproj's `Compile` items.
 
+  When no build was read (`options.prepare` is `never` and no earlier build was saved), each `.cs` entry is `{path, unchecked: true, from: "no build: options.prepare is never and no earlier build was saved", scenes, scenesOmitted?}` with no `errors` or `warnings`, and `csharp` has no `otherErrors`. Such a target is not counted in `checked` and never makes `valid` false.
+
 ### `get_scene_file_tree`
 
 - **Does:** lists a scene file's nodes without running any code, instanced scenes expanded and an inherited scene's base merged: path (from the root, `.`), name, type, script, instance, groups, childCount.

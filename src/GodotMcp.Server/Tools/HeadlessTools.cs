@@ -66,9 +66,11 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             + "in a file, so fix it and validate again to see the next. A C# build that fails does not stop the check: it comes "
             + "back as csharp {build: \"failed\", errors} and makes valid false. A .cs target is checked through the C# build and "
             + "through the versioned scenes and resources that attach it (at most 20 each, checked as targets): csharp.files lists, "
-            + "per .cs target, {path, errors, warnings, from, scenes}, each diagnostic {file, line, column, code, message, severity}, "
-            + "and csharp.otherErrors the errors in the assembly's other files; from says whether they came from this call's build "
-            + "or the last saved one. Errors make valid false, warnings never do. Errors Godot logs before the first file is "
+            + "per checked .cs target, {path, errors, warnings, from, scenes}, each diagnostic {file, line, column, code, message, "
+            + "severity}, and csharp.otherErrors the errors in the assembly's other files; from says whether they came from this "
+            + "call's build or the last saved one. With options.prepare never and no saved build, no build is read: each .cs target "
+            + "is listed {path, unchecked: true, from, scenes}, is not counted in checked, and csharp has no otherErrors. Errors make "
+            + "valid false, warnings never do. Errors Godot logs before the first file is "
             + "checked (an autoload's _init, the project's settings) are listed under the res:// file they name, else in "
             + "engineErrors [{message, file, line}]; either makes valid false. While the C# build fails, the lines a missing "
             + "project assembly causes (a C# autoload that \"does not inherit from 'Node'\", a C# script whose class could not "
@@ -249,7 +251,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     /// <summary>
     /// validate's result: <c>{valid, checked, results, notes?, engineErrors?, csharp?, prep}</c>; <c>notes</c>, the notes on
     /// .gdshaderinc targets, passes through when there are any and never makes <c>valid</c> false; <c>checked</c> counts the files Godot
-    /// checked and the .cs targets. While the prep's C# build failed, the errors a missing project assembly causes
+    /// checked and the .cs targets a build checked. While the prep's C# build failed, the errors a missing project assembly causes
     /// (<see cref="MissingAssembly.IsSymptom"/>) are left out of <c>results</c> and <c>engineErrors</c> and counted under
     /// <c>csharp</c>: the build's failure still makes <c>valid</c> false.
     /// </summary>
@@ -266,7 +268,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         JsonObject shaped = new()
         {
             ["valid"] = results.Count == 0 && unattributed.Count == 0 && !IsBuildRed(run, report),
-            ["checked"] = CountOf(reply["checked"]) + csTargets.Count,
+            ["checked"] = CountOf(reply["checked"]) + CheckedCsTargets(report, csTargets),
             ["results"] = results,
         };
         AddNotes(reply, shaped);
@@ -295,6 +297,9 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     /// <summary>Whether this call's build failed, or the build the .cs targets are reported from had an error.</summary>
     private static bool IsBuildRed(HeadlessResult run, CsReport? report) => run.Prep.Build == "failed" || report is { HasErrors: true };
+
+    /// <summary>The .cs targets counted in <c>checked</c>: those a build's diagnostics covered.</summary>
+    private static int CheckedCsTargets(CsReport? report, IReadOnlyList<CsTarget> csTargets) => report is { BuildRead: true } ? csTargets.Count : 0;
 
     private static JsonArray ArrayOf(JsonObject reply, string key) => reply[key]?.DeepClone() as JsonArray ?? [];
 

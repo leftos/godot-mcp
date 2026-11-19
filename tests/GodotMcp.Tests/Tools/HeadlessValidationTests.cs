@@ -231,6 +231,52 @@ public sealed class HeadlessValidationTests : IDisposable
     }
 
     [Fact]
+    public void ACsTargetWithNoBuildReadIsUnchecked()
+    {
+        string main = Path.Combine(_project, "Main.cs");
+        CsTarget target = new("res://Main.cs", main, ["res://main.tscn"], 3);
+        JsonNode reply = JsonNode.Parse("""{"checked": 1, "results": [], "engineErrors": []}""")!;
+
+        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], PrepResult.Skipped, null), [target]);
+
+        Assert.True(shaped["valid"]!.GetValue<bool>(), shaped.ToJsonString());
+        Assert.Equal(1, shaped["checked"]!.GetValue<int>());
+        Assert.Null(shaped["csharp"]!["otherErrors"]);
+        JsonNode file = Assert.Single(shaped["csharp"]!["files"]!.AsArray())!;
+        Assert.Equal(["path", "unchecked", "from", "scenes", "scenesOmitted"], file.AsObject().Select(field => field.Key));
+        Assert.Equal("res://Main.cs", file["path"]!.GetValue<string>());
+        Assert.True(file["unchecked"]!.GetValue<bool>());
+        Assert.Equal("no build: options.prepare is never and no earlier build was saved", file["from"]!.GetValue<string>());
+        Assert.Equal(["res://main.tscn"], file["scenes"]!.AsArray().Select(scene => scene!.GetValue<string>()));
+        Assert.Equal(3, file["scenesOmitted"]!.GetValue<int>());
+        Assert.Null(file["errors"]);
+        Assert.Null(file["errorsOmitted"]);
+        Assert.Null(file["warnings"]);
+        Assert.Null(file["warningsOmitted"]);
+    }
+
+    [Fact]
+    public void ACsTargetWithASavedBuildIsNotMarkedUnchecked()
+    {
+        string main = Path.Combine(_project, "Main.cs");
+        DateTime builtAt = new(2026, 9, 27, 10, 11, 12, DateTimeKind.Utc);
+        PrepResult upToDate = new() { Build = "up-to-date", Import = "not-needed" };
+        CsTarget target = new("res://Main.cs", main, ["res://main.tscn"], 0);
+        JsonNode reply = JsonNode.Parse("""{"checked": 1, "results": []}""")!;
+
+        JsonObject shaped = HeadlessTools.ShapeValidation(
+            new HeadlessResult(reply, [], upToDate, null) { LastBuild = new SavedBuild(builtAt, "built", []) },
+            [target]
+        );
+
+        Assert.Equal(2, shaped["checked"]!.GetValue<int>());
+        JsonNode file = Assert.Single(shaped["csharp"]!["files"]!.AsArray())!;
+        Assert.Null(file["unchecked"]);
+        Assert.NotNull(file["errors"]);
+        Assert.NotNull(file["warnings"]);
+    }
+
+    [Fact]
     public void ResAndRelativeTargetsAreAccepted()
     {
         string[] targets = ["res://main.gd", "levels/a.tscn", @"levels\a.tscn", Path.Combine(_project, "data", "x.tres")];
