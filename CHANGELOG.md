@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.47.1 - 2026-11-23
 
 ### Fixed
 
@@ -10,7 +10,9 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### For agents
 
-- `scroll` refuses a negative `notches` by naming `direction`; the skill names `crop_screenshot`'s required `projectPath` and `inspect_node`'s `node` argument.
+- `run_project`, `validate` and every prep through a gate `prepWrapper`: a cold cache's import runs twice instead of refusing with `exited 1`, so no `import` beforehand is needed.
+- `scroll`: a negative `notches` is refused with `… A negative notches does not reverse the scroll: set direction to up, down, left or right instead.`
+- `crop_screenshot` and `inspect_node`: the skill now names `projectPath` as required and `node` (not `target`) as `inspect_node`'s argument.
 
 ## 0.47.0 - 2026-11-19
 
