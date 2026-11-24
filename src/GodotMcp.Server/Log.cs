@@ -293,6 +293,18 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the prep wrapper's log {Path} failed; its gate verdict is left out.")]
     public static partial void PrepVerdictReadFailed(ILogger logger, Exception exception, string path);
 
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "The prep wrapper's marker scan failed the Godot import of {ProjectDir}, which exited 0; judging it by Godot's exit"
+    )]
+    public static partial void PrepMarkerScanJudged(ILogger logger, string projectDir);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Reading the prep wrapper's log {Path} failed; the import is judged by the wrapper's exit {ExitCode}."
+    )]
+    public static partial void PrepMarkerScanReadFailed(ILogger logger, Exception exception, string path, int exitCode);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the headless run's file {Path} failed; it is left behind.")]
     public static partial void HeadlessFileDeleteFailed(ILogger logger, Exception exception, string path);
 

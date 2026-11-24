@@ -49,6 +49,9 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     /// <summary>What follows the timestamp of a gate line in its own log: <c>2026-01-01T10:00:00+00:00 gat gate: …</c>.</summary>
     private const string StampedTag = "gat ";
 
+    /// <summary>The line a gate prints when its failure-marker scan failed a command that exited 0, so the command's own status was 0.</summary>
+    public const string ZeroExitFailureForm = "gate: command exited 0 but its log reports a failure";
+
     /// <summary>How much of a verdict line a result carries.</summary>
     public const int VerdictLength = 200;
 
@@ -106,6 +109,44 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
         string? verdict = LastLineStartingWith(lines, KillForms) ?? LastLineStartingWith(lines, VerdictForms);
         return verdict is null || verdict.Length <= VerdictLength ? verdict : verdict[..VerdictLength];
     }
+
+    /// <summary>
+    /// Whether the gate's failure-marker scan alone failed the last run in a step's capture log: a line of it, bare or after the
+    /// gate's <c>&lt;stamp&gt; gat </c> prefix, starts with <see cref="ZeroExitFailureForm"/> and comes in the run that printed the
+    /// log's last verdict (<see cref="VerdictForms"/>), since a wrapper that does not own the step's log appends each pass to the
+    /// same file. A log with no verdict line counts any such line. The command itself exited 0, so the gate turned that 0 into
+    /// its own failure status.
+    /// </summary>
+    internal static bool FailedOnlyItsMarkerScan(string logText)
+    {
+        string[] lines = [.. logText.Split('\n').Select(BareGateLine)];
+        int last = Array.FindLastIndex(lines, IsVerdict);
+        if (last < 0)
+        {
+            return lines.Any(IsZeroExitFailure);
+        }
+
+        for (int index = last - 1; index >= 0; index--)
+        {
+            if (IsZeroExitFailure(lines[index]))
+            {
+                return true;
+            }
+
+            if (IsVerdict(lines[index]))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether a bare line is one of a gate's closing verdicts (<see cref="VerdictForms"/>).</summary>
+    private static bool IsVerdict(string bareLine) => VerdictForms.Any(form => bareLine.StartsWith(form, StringComparison.Ordinal));
+
+    /// <summary>Whether a bare line is the gate's zero-exit marker verdict (<see cref="ZeroExitFailureForm"/>).</summary>
+    private static bool IsZeroExitFailure(string bareLine) => bareLine.StartsWith(ZeroExitFailureForm, StringComparison.Ordinal);
 
     /// <summary>
     /// What a wrapper's console line says about its wait for a slot: <see cref="WaitState.Waiting"/> for a gate's

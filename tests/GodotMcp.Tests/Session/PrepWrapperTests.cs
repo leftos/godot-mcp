@@ -209,6 +209,29 @@ public sealed class PrepWrapperTests : IDisposable
     public void AKillLineBeatsTheFailedLineThatFollowsIt(string kill) =>
         Assert.Equal(kill, PrepWrapper.GateVerdict(kill + "\ngate: FAILED (status 124). Full output: l\n"));
 
+    [Theory]
+    [InlineData(
+        "gate: command exited 0 but its log reports a failure -> C:/p/import.log\ngate: FAILED (status 1). Full output: C:/p/import.log\n",
+        true
+    )]
+    [InlineData("2026-01-01T10:00:00+00:00 gat gate: command exited 0 but its log reports a failure -> l\r\n", true)]
+    [InlineData("gate: FAILED (status 1). Full output: l\n", false)]
+    [InlineData("Godot said gate: command exited 0 but its log reports a failure\n", false)]
+    [InlineData(
+        "gate: command exited 0 but its log reports a failure -> l\ngate: FAILED (status 1). Full output: l\nGodot output\n"
+            + "gate: FAILED (status 1). Full output: l\n",
+        false
+    )]
+    [InlineData(
+        "gate: command exited 0 but its log reports a failure -> l\ngate: FAILED (status 1). Full output: l\nmore\n"
+            + "gate: command exited 0 but its log reports a failure -> l\ngate: FAILED (status 1). Full output: l\n",
+        true
+    )]
+    [InlineData("gate: passed in 1 s\ngate: command exited 0 but its log reports a failure -> l\ngate: FAILED (status 1). Full output: l\n", true)]
+    [InlineData("", false)]
+    public void FailedOnlyItsMarkerScanReadsTheGatesZeroExitLine(string logText, bool expected) =>
+        Assert.Equal(expected, PrepWrapper.FailedOnlyItsMarkerScan(logText));
+
     [Fact]
     public void ALogOfOnlyProseHasNoVerdict() =>
         Assert.Null(PrepWrapper.GateVerdict("gate: waiting for a heavy slot\ngate: not routed: no builder free\n"));

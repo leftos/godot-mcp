@@ -390,6 +390,7 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
   `PrepScan.IsFormatClassStale` also makes it due when a built assembly declares a `[GlobalClass]` class deriving directly from `ResourceFormatLoader` or `ResourceFormatSaver`, named after its file, that the class cache lacks, as an import before the first C# build leaves it empty and a build does not refresh it; a class through an intermediate base is not seen and a plain `[GlobalClass]` makes no import due.
 
   A second pass runs when the first logged `ERROR:`, bare or after a gate's line stamp, or when it registered a new `[GlobalClass]` loader or saver, which only a later pass's scan uses (`ProjectPrep.SecondPassReason`).
+  A wrapped pass that exits 1 with the gate's zero-exit marker line from its last run (`PrepWrapper.FailedOnlyItsMarkerScan`) is judged by Godot's exit 0 first (`ProjectPrep.JudgedByGodotsExit`), since a gate's marker scan turns a cold pass's `ERROR:` lines into its own failure status.
 
   A red build or a failed import refuses the launch with the parsed compiler errors or the log path; an import is refused while another session's game runs on the folder. A build is not: a running game reads its assembly and pdb into memory and holds no file open (`PluginLoadContext.cs` L59-69 in 4.7.2; measured with two games on one CsProbe copy, four rebuilds, each exit 0), and it keeps the code it loaded.
 

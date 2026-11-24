@@ -148,6 +148,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   One that registers a new `[GlobalClass]` loader or saver runs twice, since only a later pass's scan uses the new loaders, and says so in `prep`: `The import ran twice, because its first pass registered the project's [GlobalClass] loaders or savers, which only a later pass's scan uses: <a> ms, then <b> ms; …`. A `.xres` never counts as needing an import.
 
+  Through a gate `prepWrapper`, an import pass the gate failed only for its log's failure markers (`gate: command exited 0 but its log reports a failure`, then status 1) is judged by Godot's own exit 0. A cold first pass then runs its second pass, as it does unwrapped; any other non-zero exit, or a gate kill, still refuses.
+
   A failed build refuses a launch with its compiler errors, naming the configuration built (`The Debug C# build of …`).
 
   The headless write tools will not save a scene that uses C# scripts while the build fails (nor `attach_script` a `.cs`, nor `connect_signal` to a C# method), and the refusal quotes up to 20 compiler errors, then `(and N more)`.

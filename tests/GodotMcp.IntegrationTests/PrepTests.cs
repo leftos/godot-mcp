@@ -36,6 +36,36 @@ public sealed partial class PrepTests : IAsyncDisposable
         + "Write-Output 'gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)'\n"
         + "exit $LASTEXITCODE\n";
 
+    // A prep wrapper that fails the first Godot command the way a gate does when its marker scan finds an error in the log of a
+    // command that exited 0: it appends an ERROR line to {log}, prints the gate's marker verdict line and its FAILED line, and
+    // exits 1. A later Godot command, and any other command, passes.
+    private const string MarkerFailingWrapper =
+        "$log = $args[0]\n"
+        + "$command = @($args | Select-Object -Skip 1)\n"
+        + "if ($command.Count -gt 0 -and $command[0] -eq '--') { $command = @($command | Select-Object -Skip 1) }\n"
+        + "$name = [IO.Path]::GetFileName($command[0])\n"
+        + "$marker = Join-Path $PSScriptRoot 'prep-wrapper-ran.txt'\n"
+        + "Add-Content -LiteralPath $marker -Value $name\n"
+        + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
+        + "$godotRuns = @(Get-Content -LiteralPath $marker | Where-Object { $_.ToLowerInvariant().Contains('godot') })\n"
+        + "if ($name.ToLowerInvariant().Contains('godot') -and $godotRuns.Count -eq 1 -and $LASTEXITCODE -eq 0) {\n"
+        + "  Add-Content -LiteralPath $log -Value \"ERROR: Cannot open file 'res://.godot/imported/cold.fontdata'.\"\n"
+        + "  [Console]::Error.WriteLine(\"gate: command exited 0 but its log reports a failure -> $log\")\n"
+        + "  Write-Output \"gate: FAILED (status 1). Full output: $log\"\n"
+        + "  exit 1\n"
+        + "}\n"
+        + "Write-Output 'gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)'\n"
+        + "exit $LASTEXITCODE\n";
+
+    // A prep wrapper that runs the command and exits 1 when it was Godot, without the gate's marker-scan line.
+    private const string GodotFailingWrapper =
+        "$log = $args[0]\n"
+        + "$command = @($args | Select-Object -Skip 1)\n"
+        + "if ($command.Count -gt 0 -and $command[0] -eq '--') { $command = @($command | Select-Object -Skip 1) }\n"
+        + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
+        + "if ([IO.Path]::GetFileName($command[0]).ToLowerInvariant().Contains('godot')) { exit 1 }\n"
+        + "exit $LASTEXITCODE\n";
+
     // A prep wrapper like RunningWrapper whose log prefixes every line of the command's output with a timestamp and "out", as
     // a gate's does. It reads the raw argv, since pwsh -File splits a -name:value argument at the colon.
     private const string PrefixingWrapper =
@@ -404,6 +434,40 @@ public sealed partial class PrepTests : IAsyncDisposable
 
         Assert.StartsWith("the prep wrapper stopped the import", refused.Message, StringComparison.Ordinal);
         Assert.EndsWith(" Before it stopped, the import wrote res://stopped.gd.uid.", refused.Message, StringComparison.Ordinal);
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AGateMarkerVerdictOnAColdFirstImportRunsTheSecondPass()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await ImportIconThenDeleteGodotFolderAsync(probe.Directory, cancellation);
+        string marker = WritePrepWrapper(probe.Directory, MarkerFailingWrapper);
+        string logFolder = Path.Combine(probe.Directory, ".godot", "godot-mcp");
+
+        LaunchResult launched = await LaunchAsync(probe.Directory, prepare: true, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Equal("done", launched.Prep.Import);
+        Assert.Contains("The import ran twice, because its first pass logged errors", launched.Prep.Note, StringComparison.Ordinal);
+        Assert.Equal(2, File.ReadAllLines(marker).Count(line => line.Contains("godot", StringComparison.OrdinalIgnoreCase)));
+        Assert.True(File.Exists(Path.Combine(logFolder, "import.2.log")), "import.2.log does not exist");
+        Assert.Equal("gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)", launched.Prep.ImportGate);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AWrapperExiting1WithoutTheGatesLineRefusesTheImport()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await ImportIconThenDeleteGodotFolderAsync(probe.Directory, cancellation);
+        WritePrepWrapper(probe.Directory, GodotFailingWrapper);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() => LaunchAsync(probe.Directory, prepare: true, cancellation));
+
+        Assert.StartsWith("The Godot import of ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(" exited 1, so the game was not started.", refused.Message, StringComparison.Ordinal);
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
     }
 

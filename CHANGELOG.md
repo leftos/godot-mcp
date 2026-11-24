@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Fixed
+
+- A project whose `prepWrapper` is a gate no longer refuses its prep on a cold `.godot` cache: the import runs its second pass.
+
 ### For agents
 
 - `scroll` refuses a negative `notches` by naming `direction`; the skill names `crop_screenshot`'s required `projectPath` and `inspect_node`'s `node` argument.

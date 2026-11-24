@@ -800,9 +800,51 @@ internal static partial class ProjectPrep
             throw new SessionException(wrapper.StoppedNote("the import", log));
         }
 
+        imported = JudgedByGodotsExit(imported, wrapper, log, context);
         return imported.ExitCode == 0
             ? imported
             : throw new SessionException($"The Godot import of {projectDir} exited {imported.ExitCode}, so the game was not started. Its log: {log}");
+    }
+
+    /// <summary>
+    /// The result the import is judged by: one the gate's failure-marker scan alone failed, though the command exited 0, is the
+    /// successful run it was (<see cref="PrepWrapper.FailedOnlyItsMarkerScan"/>); any other result is unchanged, so a kill and
+    /// any other non-zero exit still refuse. The wrapper's capture log is read while another process may still hold it, and one
+    /// that cannot be read is logged and leaves the refusal.
+    /// </summary>
+    private static ToolProcessResult JudgedByGodotsExit(ToolProcessResult imported, PrepWrapper? wrapper, string stepLog, PrepContext context)
+    {
+        if (wrapper is null || imported.ExitCode != 1 || !MarkerScanFailedOnly(wrapper.CaptureLog(stepLog), imported.ExitCode, context.Logger))
+        {
+            return imported;
+        }
+
+        Log.PrepMarkerScanJudged(context.Logger, context.ProjectDir);
+        return imported with { ExitCode = 0 };
+    }
+
+    /// <summary>
+    /// Whether <paramref name="captureLog"/> exists and holds the gate's zero-exit marker verdict; an unreadable log is logged
+    /// and reads as false.
+    /// </summary>
+    private static bool MarkerScanFailedOnly(string captureLog, int exitCode, ILogger logger)
+    {
+        if (!File.Exists(captureLog))
+        {
+            return false;
+        }
+
+        try
+        {
+            using FileStream stream = new(captureLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using StreamReader reader = new(stream);
+            return PrepWrapper.FailedOnlyItsMarkerScan(reader.ReadToEnd());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.PrepMarkerScanReadFailed(logger, e, captureLog, exitCode);
+            return false;
+        }
     }
 
     /// <summary>
