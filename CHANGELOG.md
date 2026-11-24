@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### For agents
+
+- `scroll` refuses a negative `notches` by naming `direction`; the skill names `crop_screenshot`'s required `projectPath` and `inspect_node`'s `node` argument.
+
 ## 0.47.0 - 2026-11-19
 
 ### Added

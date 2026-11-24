@@ -361,6 +361,20 @@ public sealed class InputValidationTests : IDisposable
     }
 
     [Theory]
+    [InlineData(-1)]
+    [InlineData(-3)]
+    public void NegativeNotchesAreRefusedNamingDirection(int notches)
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckScrollNotches(notches));
+
+        Assert.Equal(
+            $"notches must be 1 to 100; got {notches}. "
+                + "A negative notches does not reverse the scroll: set direction to up, down, left or right instead.",
+            refused.Message
+        );
+    }
+
+    [Theory]
     [InlineData(0.25)]
     [InlineData(1)]
     [InlineData(10)]

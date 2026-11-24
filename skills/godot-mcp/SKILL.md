@@ -106,7 +106,7 @@ To keep a still anywhere else in the project, `save_screenshot` takes `take_scre
 
 It refuses a `.git` folder and a `.godot` folder outside a `.tmp`, refuses an existing file without `options.overwrite`, and is not batchable.
 
-To read small print in a capture already taken, `crop_screenshot {image, rect, scale}` cuts `rect` out of any PNG on a local drive (a capture, a `run_scratches` step shot, a committed screenshot, a file in your scratchpad; never a network path) and enlarges it by an integer `scale` (1 to 8, nearest-neighbour), with no game running; Windows only. `options.path` (a `.png` in the checkout's `.tmp`, `overwrite` to replace) names the file it writes instead of a `-crop-<n>` file beside the source.
+To read small print in a capture already taken, `crop_screenshot {projectPath, image, rect, scale}` cuts `rect` out of any PNG on a local drive (a capture, a `run_scratches` step shot, a committed screenshot, a file in your scratchpad; never a network path) and enlarges it by an integer `scale` (1 to 8, nearest-neighbour), with no game running; Windows only. `projectPath` is required even then: it is the folder whose checkout decides where the crop is written, and a relative `image` is read from it. `options.path` (a `.png` in the checkout's `.tmp`, `overwrite` to replace) names the file it writes instead of a `-crop-<n>` file beside the source.
 
 The `rect` is in the PNG's own pixels, not viewport coordinates; it returns the crop as an image and writes it as `<name>-crop-<n>.png`, never changing the source: beside an untracked capture under `.godot/godot-mcp/` or in a checkout's `.tmp`, else in the checkout's `.tmp` (the project's `.godot/godot-mcp/screenshots/` with no checkout), and the `path` in the result says where.
 
@@ -244,7 +244,7 @@ One watch per game run: always `stop` the one you started.
 
 **Inspecting and changing the live game.**
 
-`inspect_node` reads a node's properties (a C# node's `[Export]` members by default; name a private field in `properties` to read it, as `set_property`, `wait_for` and `watch` do).
+`inspect_node {node}` reads a node's properties (it takes the node's path as `node`, not the `target` the input tools take; a C# node's `[Export]` members by default; name a private field in `properties` to read it, as `set_property`, `wait_for` and `watch` do).
 
 `set_property` sets one from JSON by its declared type and reads it back (`{x, y}` for a Vector2, `"#rrggbb"` for a Color, the `.tscn` constructor text for a transform, basis, quaternion, AABB or plane, `"Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)"`, as every read returns them).
 

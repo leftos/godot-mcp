@@ -350,9 +350,22 @@ internal sealed partial class RuntimeTools
             ? direction
             : throw new McpException($"direction '{direction}' is not one of {string.Join(", ", ScrollDirections)}.");
 
-    /// <exception cref="McpException">notches is outside 1 to <see cref="MaxScrollNotches"/>.</exception>
-    internal static int CheckScrollNotches(int notches) =>
-        notches is >= 1 and <= MaxScrollNotches ? notches : throw new McpException($"notches must be 1 to {MaxScrollNotches}; got {notches}.");
+    /// <exception cref="McpException">
+    /// notches is outside 1 to <see cref="MaxScrollNotches"/>; a negative notches does not reverse the scroll, so its
+    /// refusal names direction.
+    /// </exception>
+    internal static int CheckScrollNotches(int notches)
+    {
+        if (notches is >= 1 and <= MaxScrollNotches)
+        {
+            return notches;
+        }
+
+        string range = $"notches must be 1 to {MaxScrollNotches}; got {notches}.";
+        throw new McpException(
+            notches < 0 ? range + " A negative notches does not reverse the scroll: set direction to up, down, left or right instead." : range
+        );
+    }
 
     /// <exception cref="McpException">factor is not more than 0 and at most <see cref="MaxScrollFactor"/> (NaN included).</exception>
     internal static double CheckScrollFactor(double factor) =>

@@ -1473,7 +1473,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
 ### `scroll`
 
-- **Does:** closes a showing tooltip, moves the pointer to `target` (hit-checked as a press is, held buttons kept in the motion), then plays `notches` (1 to 100, default 1) notches one frame apart in `direction` (`up`, `down` default, `left`, `right`).
+- **Does:** closes a showing tooltip, moves the pointer to `target` (hit-checked as a press is, held buttons kept in the motion), then plays `notches` (1 to 100, default 1) notches one frame apart in `direction` (`up`, `down` default, `left`, `right`). A negative `notches` is refused with a pointer to `direction`, since it never reverses the scroll.
 
   A wheel notch is a press and a release of the wheel button in the same frame, both carrying `factor`, as Godot's Windows display server sends one (4.7.2 `display_server_windows.cpp` L6472-6499, L6577-6585); the wheel never joins `heldButtonMask`. Returns `{pointer, heldButtonMask, scrolledOn}`: the Control under the point (`{path, class}`, null over none).
 - **Use:** scrolling a `ScrollContainer`, a long `ItemList` or log, or a game's wheel zoom. `options {factor, via}`: `factor` more than 0 and at most 10 (default 1, one standard wheel notch); `via` `wheel` (default) or `pan`, which sends each notch as one `InputEventPanGesture` whose delta is the direction times `factor` (down and right positive), as a trackpad does.
