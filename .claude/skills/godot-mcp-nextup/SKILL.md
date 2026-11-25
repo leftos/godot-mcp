@@ -34,7 +34,7 @@ Each runs through `run.ps1`, which wraps it in `gate run` through `tools/gate.ps
 
 ## Release step
 
-A Ship (`/monitor-inbox`, `/ship`, a `nextup` checkpoint) cuts a release without asking whenever `CHANGELOG.md` has an `## Unreleased` section with bullets; landings that took no bullet (docs only) wait for the next one.
+A Ship (`/monitor-inbox`, `/ship-to-main`, a `nextup` checkpoint) cuts a release without asking whenever `CHANGELOG.md` has an `## Unreleased` section with bullets; landings that took no bullet (docs only) wait for the next one.
 
 1. Run the release gates: `pwsh run.ps1 build`, `test`, `gdtest`, `format-check` and the full `pwsh run.ps1 itest`. A red gate holds the release and becomes the next item, booked Urgent.
 2. Run DEVELOPMENT.md's "CI and releases" procedure as written: choose the version by its rule, land the version commit, push the tag, `linear release complete`, `pwsh run.ps1 install` from the main checkout, then the announcement to every repo that registers `godot`.
